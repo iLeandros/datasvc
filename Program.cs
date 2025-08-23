@@ -678,14 +678,18 @@ public sealed class DetailsScraperService
 	    return new RefreshSummary(refreshed, skipped, errors, DateTimeOffset.UtcNow);
 	}
 
-
-    public async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
+    public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
 	    var abs = DetailsStore.Normalize(href);
 	    Debug.WriteLine($"[details] fetching: {abs}");
 	
-	    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-	    cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds)); // per-request deadline
+	    // env-configurable per-request timeout (default 10s)
+	    var timeoutSeconds = 10;
+	    if (int.TryParse(Environment.GetEnvironmentVariable("DETAILS_TIMEOUT_SECONDS"), out var t) && t > 0)
+	        timeoutSeconds = t;
+	
+	    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+	    linkedCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
 	
 	    using var req = new HttpRequestMessage(HttpMethod.Get, abs)
 	    {
@@ -697,11 +701,11 @@ public sealed class DetailsScraperService
 	    req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
 	    req.Headers.Referrer = new Uri("https://www.statarea.com/");
 	
-	    using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+	    using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
 	    res.EnsureSuccessStatusCode();
-	    var html = await res.Content.ReadAsStringAsync(cts.Token);
+	    var html = await res.Content.ReadAsStringAsync(linkedCts.Token);
 	
-	    // Parse 5 divs (same as before)
+	    // Parse the 5 sections
 	    var doc = new HtmlDocument();
 	    doc.LoadHtml(html);
 	
@@ -718,6 +722,7 @@ public sealed class DetailsScraperService
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
 	}
+
 
 }
 
