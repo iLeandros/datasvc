@@ -132,9 +132,13 @@ app.MapGet("/data/details/allhrefs", ([FromServices] DetailsStore store) =>
             i => i.Href, // key
             i => new
             {
-                href                   = i.Href, // <— added for easy identification in each object
-                lastUpdatedUtc         = i.LastUpdatedUtc,
-                teamsInfoHtml          = i.Payload.TeamsInfoHtml,
+                href            = i.Href,
+                lastUpdatedUtc  = i.LastUpdatedUtc,
+
+                // NEW: parsed object instead of raw HTML
+                teamsInfo       = TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
+
+                // keep the rest as-is (HTML for now)
                 matchBetweenHtml       = i.Payload.MatchBetweenHtml,
                 lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
                 teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
@@ -151,6 +155,7 @@ app.MapGet("/data/details/allhrefs", ([FromServices] DetailsStore store) =>
         items        = byHref
     });
 });
+
 // Optional: refresh then return the aggregated payload in one call
 app.MapPost("/data/details/refresh-and-get",
     async ([FromServices] DetailsScraperService svc,
