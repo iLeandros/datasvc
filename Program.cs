@@ -114,9 +114,20 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
     if (string.IsNullOrWhiteSpace(href))
         return Results.BadRequest(new { message = "href is required" });
 
-    var rec = store.Get(href);
-    if (rec is null) return Results.NotFound(new { message = "No details for href (yet)" });
+    var rec = store.Get(href); // store.Get() normalizes internally
+    if (rec is null)
+        return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
+
     return Results.Json(rec.Payload);
+});
+app.MapGet("/data/details/has", ([FromServices] DetailsStore store, [FromQuery] string href) =>
+{
+    if (string.IsNullOrWhiteSpace(href))
+        return Results.BadRequest(new { message = "href is required" });
+
+    var norm = DetailsStore.Normalize(href);
+    var present = store.Index().Any(x => string.Equals(x.href, norm, StringComparison.OrdinalIgnoreCase));
+    return Results.Json(new { normalized = norm, present });
 });
 
 // List first 50 cache keys we currently have in memory
@@ -271,7 +282,7 @@ public class GetStartupMainPageFullInfo2024
         AllowAutoRedirect = true,
         UseCookies = true,
         CookieContainer = Cookies
-    }) { Timeout = TimeSpan.FromSeconds(30) };
+    }) { Timeout = TimeSpan.FromSeconds(60) };
 
     public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
     {
@@ -528,30 +539,31 @@ public sealed class DetailsStore
 
     public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
 
-    public static string Normalize(string href)
-	{
-	    if (string.IsNullOrWhiteSpace(href)) return "";
+   public static string Normalize(string href)
+{
+    if (string.IsNullOrWhiteSpace(href)) return "";
 
-	    var s = WebUtility.HtmlDecode(href).Trim();
+    var s = WebUtility.HtmlDecode(href).Trim();
 
-	    // Already absolute?
-	    if (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-	        s.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-	        return s;
+    // If it's already absolute, return the canonical AbsoluteUri.
+    // This handles inputs like ".../Slough Town (England)/..." by encoding to %20.
+    if (Uri.TryCreate(s, UriKind.Absolute, out var abs))
+        return abs.AbsoluteUri;
 
-	    // Protocol-relative: //www.statarea.com/...
-	    if (s.StartsWith("//")) return "https:" + s;
+    // Protocol-relative (//host/...)
+    if (s.StartsWith("//")) return "https:" + s;
 
-	    // Host without scheme: www.statarea.com/..., statarea.com/...
-	    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
-	        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
-	        return "https://" + s.TrimStart('/');
+    // Host without scheme
+    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
+        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
+        return "https://" + s.TrimStart('/');
 
-	    // Otherwise treat as site-relative path; let Uri handle encoding safely
-	    var baseUri = new Uri("https://www.statarea.com/");
-	    if (!s.StartsWith("/")) s = "/" + s;
-	    return new Uri(baseUri, s).ToString();
-	}
+    // Site-relative
+    var baseUri = new Uri("https://www.statarea.com/");
+    if (!s.StartsWith("/")) s = "/" + s;
+    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
+}
+
 
 
 }
