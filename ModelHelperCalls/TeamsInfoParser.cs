@@ -3,56 +3,46 @@ using System.Text.Json.Serialization;
 
 namespace DataSvc.ModelHelperCalls;
 
-public class TeamBasicInfo : INotifyPropertyChanged
+public static class TeamsInfoParser
 {
-    private string teamName;
-    private string teamFlag;
-    private string country;
-    private string countryFlag;
-
-    public string TeamName
+    public static List<TeamBasicInfoDto>? Parse(string? htmlContent)
     {
-        get => teamName;
-        set
+        if (string.IsNullOrWhiteSpace(htmlContent)) return null;
+
+        try
         {
-            teamName = value;
-            OnPropertyChanged(nameof(TeamName));
-        }
-    }
+            var website = new HtmlAgilityPack.HtmlDocument();
+            website.LoadHtml(htmlContent);
 
-    public string TeamFlag
-    {
-        get => teamFlag;
-        set
+            var halfContainers = website.DocumentNode.Descendants("div")
+                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "teamsinfo")?
+                .Descendants("div").Where(o => o.GetAttributeValue("class", "") == "halfcontainer")
+                .ToList();
+
+            if (halfContainers == null || halfContainers.Count < 2) return null;
+
+            var list = new List<TeamBasicInfoDto>(capacity: halfContainers.Count);
+            foreach (var container in halfContainers)
+            {
+                var teamName    = container.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText?.Trim();
+                var teamLogo    = container.Descendants("img").FirstOrDefault()?.GetAttributeValue("src", string.Empty);
+                var countryEl   = container.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("id", "") == "teamcountry");
+                var country     = countryEl?.Descendants("span").FirstOrDefault()?.InnerText?.Trim();
+                var countryFlag = countryEl?.Descendants("img").FirstOrDefault()?.GetAttributeValue("src", string.Empty);
+
+                list.Add(new TeamBasicInfoDto
+                {
+                    TeamName    = teamName,
+                    TeamFlag    = teamLogo,
+                    Country     = country,
+                    CountryFlag = countryFlag
+                });
+            }
+            return list;
+        }
+        catch
         {
-            teamFlag = value;
-            OnPropertyChanged(nameof(TeamFlag));
+            return null;
         }
-    }
-
-    public string Country
-    {
-        get => country;
-        set
-        {
-            country = value;
-            OnPropertyChanged(nameof(Country));
-        }
-    }
-
-    public string CountryFlag
-    {
-        get => countryFlag;
-        set
-        {
-            countryFlag = value;
-            OnPropertyChanged(nameof(CountryFlag));
-        }
-    }
-
-    public event PropertyChangedEventHandler PropertyChanged;
-    protected virtual void OnPropertyChanged(string propertyName)
-    {
-        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
