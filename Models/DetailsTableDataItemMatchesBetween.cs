@@ -1,5 +1,7 @@
 namespace DataSvc.Models;
 
+public class DetailsTableDataItemMatchesBetween
+{
     public DetailsTableDataItemMatchesBetween(Match match, Details details)
     {
         this.sMatch = match;
