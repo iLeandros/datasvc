@@ -119,6 +119,16 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
     return Results.Json(rec.Payload);
 });
 
+// List first 50 cache keys we currently have in memory
+app.MapGet("/data/details/debug/keys", ([FromServices] DetailsStore store) =>
+{
+    var keys = store.Index()
+                    .Select(x => x.href)
+                    .Take(50)
+                    .ToList();
+    return Results.Json(keys);
+});
+
 // Manual refresh (details for all current items)
 app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService svc) =>
 {
@@ -126,13 +136,13 @@ app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService
     return Results.Json(new { refreshed = result.Refreshed, skipped = result.Skipped, errors = result.Errors.Count, result.LastUpdatedUtc });
 });
 // Returns the first href currently in memory so we can copy/paste it
+// Quick ping to see if the main scraper produced hrefs right now
 app.MapGet("/data/first-href", ([FromServices] ResultStore store) =>
 {
     var href = store.Current?.Payload?.TableDataGroup?
         .SelectMany(g => g)
         .Select(i => i.Href)
         .FirstOrDefault(h => !string.IsNullOrWhiteSpace(h));
-
     return Results.Json(new { href });
 });
 
@@ -144,6 +154,18 @@ app.MapGet("/data/details/fetch", async ([FromQuery] string href) =>
 
     var rec = await DetailsScraperService.FetchOneAsync(href);
     return Results.Json(rec.Payload);
+});
+
+// Fetch ONE details page and STORE it (also save to disk)
+app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore store, [FromQuery] string href) =>
+{
+    if (string.IsNullOrWhiteSpace(href))
+        return Results.BadRequest(new { message = "href is required" });
+
+    var rec = await DetailsScraperService.FetchOneAsync(href);
+    store.Set(rec);                          // put into the in-memory map
+    await DetailsFiles.SaveAsync(store);     // persist to /var/lib/datasvc/details.json
+    return Results.Json(new { ok = true, href = rec.Href });
 });
 
 app.Run();
@@ -621,6 +643,7 @@ public sealed class DetailsScraperService
 
         await Task.WhenAll(tasks);
         await DetailsFiles.SaveAsync(_store);
+		Debug.WriteLine($"[details] batch refreshed={refreshed} errors={errors.Count}");
         return new RefreshSummary(refreshed, skipped, errors, DateTimeOffset.UtcNow);
     }
 
