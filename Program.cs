@@ -713,13 +713,20 @@ public sealed class DetailsScraperService
         _store = store;
     }
 
-    public sealed record RefreshSummary(int Refreshed, int Skipped, List<string> Errors, DateTimeOffset LastUpdatedUtc);
+    public sealed record RefreshSummary(
+									    int Refreshed,
+									    int Skipped,
+									    int Deleted,
+									    List<string> Errors,
+									    DateTimeOffset LastUpdatedUtc
+									);
+
 
     public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
 	{
 	    var current = _root.Current?.Payload?.TableDataGroup;
 	    if (current is null)
-	        return new RefreshSummary(0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
+	        return new RefreshSummary(0, 0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
 	
 	    var hrefs = current.SelectMany(g => g)
 	                       .Select(i => i.Href)
@@ -730,8 +737,7 @@ public sealed class DetailsScraperService
 	
 	    int refreshed = 0, skipped = 0;
 	    var errors = new List<string>();
-	    var sem = new SemaphoreSlim(_maxParallel); // was fixed at 4
-	
+	    var sem = new SemaphoreSlim(_maxParallel);
 	    var now = DateTimeOffset.UtcNow;
 	
 	    var tasks = hrefs.Select(async href =>
@@ -739,7 +745,6 @@ public sealed class DetailsScraperService
 	        await sem.WaitAsync(ct);
 	        try
 	        {
-	            // TTL: skip if recently fetched
 	            var existing = _store.Get(href);
 	            if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
 	            {
@@ -755,16 +760,18 @@ public sealed class DetailsScraperService
 	        {
 	            lock (errors) errors.Add($"{href}: {ex.Message}");
 	        }
-	        finally
-	        {
-	            sem.Release();
-	        }
+	        finally { sem.Release(); }
 	    });
 	
 	    await Task.WhenAll(tasks);
+	
+	    // NEW: prune anything not in today’s/current parsed set
+	    var deleted = _store.ShrinkTo(hrefs);
+	
 	    await DetailsFiles.SaveAsync(_store);
-	    return new RefreshSummary(refreshed, skipped, errors, DateTimeOffset.UtcNow);
+	    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
 	}
+
 
     public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
