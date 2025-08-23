@@ -738,22 +738,41 @@ public sealed class DetailsRefreshJob : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // load previous details cache
+        // Load previous cache on startup
         var prev = await DetailsFiles.LoadAsync();
         if (prev.Count > 0) _store.Import(prev);
 
-        // initial delay to let the main page load first
+        // Let the main page warm up first
         try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); } catch { }
 
-        // initial run
-        try { await _svc.RefreshAllFromCurrentAsync(stoppingToken); } catch { }
+        // Initial run (guarded)
+        try
+        {
+            var r = await _svc.RefreshAllFromCurrentAsync(stoppingToken);
+            Debug.WriteLine($"[details] initial refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[details] initial run failed: {ex}");
+        }
 
-        // every 5 minutes
-        var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        // Every 5 minutes — never die on exceptions
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
-                await _svc.RefreshAllFromCurrentAsync(stoppingToken);
+            {
+                try
+                {
+                    var r = await _svc.RefreshAllFromCurrentAsync(stoppingToken);
+                    Debug.WriteLine($"[details] tick refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"[details] tick failed: {ex}");
+                    // keep looping
+                }
+            }
         }
         catch (OperationCanceledException) { }
     }
