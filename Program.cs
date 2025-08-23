@@ -120,6 +120,63 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
 
     return Results.Json(rec.Payload);
 });
+// All details for all hrefs in one response (keyed by normalized href)
+app.MapGet("/data/details/allhrefs", ([FromServices] DetailsStore store) =>
+{
+    var (items, generatedUtc) = store.Export();
+
+    var byHref = items
+        .OrderByDescending(i => i.LastUpdatedUtc)
+        .ToDictionary(
+            i => i.Href, // key
+            i => new
+            {
+                href                   = i.Href, // <— added for easy identification in each object
+                lastUpdatedUtc         = i.LastUpdatedUtc,
+                teamsInfoHtml          = i.Payload.TeamsInfoHtml,
+                matchBetweenHtml       = i.Payload.MatchBetweenHtml,
+                lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
+                teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
+                teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
+            },
+            StringComparer.OrdinalIgnoreCase
+        );
+
+    return Results.Json(new
+    {
+        total        = byHref.Count,
+        lastSavedUtc = store.LastSavedUtc,
+        generatedUtc,
+        items        = byHref
+    });
+});
+// Optional: refresh then return the aggregated payload in one call
+app.MapPost("/data/details/refresh-and-get",
+    async ([FromServices] DetailsScraperService svc,
+           [FromServices] DetailsStore store) =>
+{
+    await svc.RefreshAllFromCurrentAsync();
+
+    var (items, generatedUtc) = store.Export();
+
+    var byHref = items.ToDictionary(
+        i => i.Href,
+        i => new
+        {
+            href                   = i.Href,  // include href in each object
+            lastUpdatedUtc         = i.LastUpdatedUtc,
+            teamsInfoHtml          = i.Payload.TeamsInfoHtml,
+            matchBetweenHtml       = i.Payload.MatchBetweenHtml,
+            lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
+            teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
+            teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
+        },
+        StringComparer.OrdinalIgnoreCase
+    );
+
+    return Results.Json(new { total = byHref.Count, generatedUtc, items = byHref });
+});
+
 app.MapGet("/data/details/has", ([FromServices] DetailsStore store, [FromQuery] string href) =>
 {
     if (string.IsNullOrWhiteSpace(href))
