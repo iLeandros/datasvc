@@ -122,23 +122,32 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
     return Results.Json(rec.Payload);
 });
 // All details for all hrefs in one response (keyed by normalized href)
-app.MapGet("/data/details/allhrefs", ([FromServices] DetailsStore store) =>
+app.MapGet("/data/details/allhrefs",
+    ([FromServices] DetailsStore store,
+     HttpContext ctx,
+     [FromQuery] string? teamsInfo) =>
 {
+    var preferHtml = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     var (items, generatedUtc) = store.Export();
+
+    // Weak ETag so clients can cache by last save time
+    var etag = $"W/\"{store.LastSavedUtc:yyyyMMddHHmmss}\"";
+    ctx.Response.Headers.ETag = etag;
 
     var byHref = items
         .OrderByDescending(i => i.LastUpdatedUtc)
         .ToDictionary(
-            i => i.Href, // key
+            i => i.Href,
             i => new
             {
-                href            = i.Href,
-                lastUpdatedUtc  = i.LastUpdatedUtc,
+                href           = i.Href,
+                lastUpdatedUtc = i.LastUpdatedUtc,
 
-                // NEW: parsed object instead of raw HTML
-                teamsInfo       = TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
+                teamsInfo = preferHtml
+                    ? null
+                    : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
 
-                // keep the rest as-is (HTML for now)
+                teamsInfoHtml          = preferHtml ? i.Payload.TeamsInfoHtml : null,
                 matchBetweenHtml       = i.Payload.MatchBetweenHtml,
                 lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
                 teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
