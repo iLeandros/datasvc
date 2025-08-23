@@ -1,3 +1,5 @@
+namespace DataSvc.ViewModelsAssists;
+
 public static class TeamsInfoParser
 {
     // Parse the <div class="teamsinfo">...</div> block into TeamBasicInfo[]
