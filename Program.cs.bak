@@ -1,0 +1,661 @@
+using System.Collections.ObjectModel;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using System.Diagnostics;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using System.Net;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using System.Text.Json;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using System.Text.Json.Serialization;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using HtmlAgilityPack;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using Microsoft.AspNetCore.Builder;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using Microsoft.Extensions.Hosting;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+using System.Linq;
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+var builder = WebApplication.CreateBuilder(args);
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+// Compression helps browsers display large JSON responses
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddSingleton<ResultStore>();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddSingleton<ScraperService>();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+builder.Services.AddHostedService<RefreshJob>();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+var app = builder.Build();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseResponseCompression();
+app.UseCors();
+
+// ---------- API ----------
+app.MapGet("/", () => Results.Redirect("/data/status"));
+
+app.MapGet("/data/status", (ResultStore store) =>
+{
+    var s = store.Current;
+    if (s is null) return Results.Json(new { ready = false, message = "No data yet. Initial refresh pending." });
+    return Results.Json(new { ready = s.Ready, s.LastUpdatedUtc, s.Error });
+});
+
+// IMPORTANT: return only parsed data (JSON), not the raw HTML
+app.MapGet("/data/latest", (ResultStore store) =>
+{
+    var s = store.Current;
+    if (s is null || s.Payload is null)
+        return Results.NotFound(new { message = "No data yet" });
+
+    var dto = new
+    {
+        titlesAndHrefs = s.Payload.TitlesAndHrefs,
+        tableDataGroup = s.Payload.TableDataGroup
+    };
+
+    return Results.Json(dto);
+});
+
+    var dto = new
+    {
+        titlesAndHrefs = s.Payload.TitlesAndHrefs,
+        tableDataGroup = s.Payload.TableDataGroup
+    };
+
+    // Force application/json so browsers render it as JSON
+    var json = JsonSerializer.Serialize(dto);
+    return Results.Text(json, "application/json; charset=utf-8");
+});
+
+// Raw HTML (if you want to inspect what was fetched)
+app.MapGet("/data/html", (ResultStore store) =>
+{
+    var s = store.Current;
+    if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
+    return Results.Text(s.Payload.HtmlContent ?? "", "text/html; charset=utf-8");
+});
+
+// Serve the saved snapshot file directly (full payload including htmlContent)
+app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
+
+// Manual refresh
+app.MapPost("/data/refresh", async (ScraperService svc) =>
+{
+    var snap = await svc.FetchAndStoreAsync();
+    return Results.Json(new { ok = snap.Ready, snap.LastUpdatedUtc, snap.Error });
+});
+
+app.Run();
+
+// ---------- Models & storage ----------
+public sealed class ResultStore
+{
+    private readonly object _gate = new();
+    private DataSnapshot? _current;
+    public DataSnapshot? Current { get { lock (_gate) return _current; } }
+    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
+}
+public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
+public record DataPayload(string HtmlContent,
+                          ObservableCollection<TitlesAndHrefs> TitlesAndHrefs,
+                          ObservableCollection<TableDataGroup> TableDataGroup);
+
+public static class DataFiles
+{
+    public const string Dir = "/var/lib/datasvc";
+    public const string File = "/var/lib/datasvc/latest.json";
+
+    public static async Task SaveAsync(DataSnapshot snap)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
+        var tmp = File + ".tmp";
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, File, overwrite: true);
+    }
+
+    public static async Task<DataSnapshot?> LoadAsync()
+    {
+        if (!System.IO.File.Exists(File)) return null;
+        try
+        {
+            var json = await System.IO.File.ReadAllTextAsync(File);
+            return JsonSerializer.Deserialize<DataSnapshot>(json);
+        }
+        catch { return null; }
+    }
+}
+
+// ---------- Background job ----------
+public sealed class ScraperService
+{
+    private readonly ResultStore _store;
+    public ScraperService(ResultStore store) => _store = store;
+
+    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo();
+            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+
+            var payload = new DataPayload(html, titles, table);
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+            _store.Set(snap);
+            await DataFiles.SaveAsync(snap);
+            return snap;
+        }
+        catch (Exception ex)
+        {
+            var last = _store.Current;
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
+            _store.Set(snap);
+            await DataFiles.SaveAsync(snap);
+            return snap;
+        }
+    }
+}
+
+public sealed class RefreshJob : BackgroundService
+{
+    private readonly ScraperService _svc;
+    private readonly ResultStore _store;
+    public RefreshJob(ScraperService svc, ResultStore store) { _svc = svc; _store = store; }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        var prev = await DataFiles.LoadAsync();
+        if (prev is not null) _store.Set(prev);
+
+        await _svc.FetchAndStoreAsync(stoppingToken);
+        var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try { while (await timer.WaitForNextTickAsync(stoppingToken)) await _svc.FetchAndStoreAsync(stoppingToken); }
+        catch (OperationCanceledException) { }
+    }
+}
+
+// ---------- Glue types ----------
+public class TitlesAndHrefs
+{
+    [JsonPropertyName("dates")] public string? dates { get; set; }
+    [JsonPropertyName("href")]  public string? href  { get; set; }
+}
+
+public class TableDataGroup : ObservableCollection<TableDataItem>
+{
+    [JsonPropertyName("groupImage")] public string? GroupImage { get; set; }
+    [JsonPropertyName("groupName")]  public string? GroupName  { get; set; }
+    [JsonPropertyName("tipLabel")]   public string? TipLabel   { get; set; }
+
+    public TableDataGroup() { }
+    public TableDataGroup(string groupImage, string groupName, string tipLabel, ObservableCollection<TableDataItem> items)
+        : base(items) { GroupImage = groupImage; GroupName = groupName; TipLabel = tipLabel; }
+}
+
+public class TableDataItem
+{
+    public string? Flag { get; set; }
+    public string? BackgroundTipColour { get; set; }
+    public string? Time { get; set; }
+    public string? HostTeam { get; set; }
+    public string? HostScore { get; set; }
+    public string? GuestScore { get; set; }
+    public string? GuestTeam { get; set; }
+    public string? Tip { get; set; }
+    public string? LikeButtonImage { get; set; }
+    public string? DislikeButtonImage { get; set; }
+    public string? LikePositive { get; set; }
+    public string? LikeNegative { get; set; }
+    public string? Coef1 { get; set; }
+    public string? Coef2 { get; set; }
+    public string? Coef3 { get; set; }
+    public string? Coef4 { get; set; }
+    public string? Coef5 { get; set; }
+    public string? Coef6 { get; set; }
+    public string? Coef7 { get; set; }
+    public string? Coef8 { get; set; }
+    public string? Coef9 { get; set; }
+    public string? Coef10 { get; set; }
+    public string? Coef11 { get; set; }
+    public string? Version { get; set; }
+    public string? Href { get; set; }
+    public string? RowBackground { get; set; }
+
+    public TableDataItem() { }
+    public TableDataItem(
+        string flag, string backgroundTipColour, string time,
+        string hostTeam, string? hostScore, string? guestScore, string guestTeam,
+        string? tip, string likeButtonImage, string dislikeButtonImage,
+        string? likePositive, string? likeNegative,
+        string? coef1, string? coef2, string? coef3, string? coef4, string? coef5,
+        string? coef6, string? coef7, string? coef8, string? coef9, string? coef10, string? coef11,
+        string version, string? href, string rowBackground)
+    {
+        Flag = flag; BackgroundTipColour = backgroundTipColour; Time = time;
+        HostTeam = hostTeam; HostScore = hostScore; GuestScore = guestScore; GuestTeam = guestTeam;
+        Tip = tip; LikeButtonImage = likeButtonImage; DislikeButtonImage = dislikeButtonImage;
+        LikePositive = likePositive; LikeNegative = likeNegative;
+        Coef1 = coef1; Coef2 = coef2; Coef3 = coef3; Coef4 = coef4; Coef5 = coef5;
+        Coef6 = coef6; Coef7 = coef7; Coef8 = coef8; Coef9 = coef9; Coef10 = coef10; Coef11 = coef11;
+        Version = version; Href = href; RowBackground = rowBackground;
+
+        // local var for property above
+    }
+}
+
+public static class Colors
+{
+    public static readonly string Green = "Green";
+    public static readonly string Red = "Red";
+    public static readonly string DarkSlateGray = "DarkSlateGray";
+    public static readonly string LightGray = "LightGray";
+}
+
+public static class renameTeam
+{
+    public static string renameTeamNameToFitDisplayLabel(string? name) => name?.Trim() ?? "";
+}
+
+// ---------- Your 3 methods ----------
+public class GetStartupMainPageFullInfo2024
+{
+    public static async Task<string> GetStartupMainPageFullInfo(string url = "https://www.statarea.com/predictions/date/2025-01-25/competition")
+    {
+        try
+        {
+            using (HttpClient client = new HttpClient())
+            {
+                client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible, MSIE 11, Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko");
+                using (HttpResponseMessage response = await client.GetAsync(url))
+                {
+                    response.EnsureSuccessStatusCode();
+                    return await response.Content.ReadAsStringAsync();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            throw new Exception("GetStartupMainPageFullInfo error: " + ex.Message);
+        }
+    }
+}
+
+public static class GetStartupMainTitlesAndHrefs2024
+{
+    public static ObservableCollection<TitlesAndHrefs> GetStartupMainTitlesAndHrefs(string htmlContent)
+    {
+        try
+        {
+            var website = new HtmlDocument();
+            website.LoadHtml(htmlContent);
+
+            var titlesAndhrefs = new ObservableCollection<TitlesAndHrefs>();
+            var topbar = website.DocumentNode.Descendants("div")
+                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "navigator")?
+                .Descendants("div")
+                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "buttons")?
+                .Elements("a")
+                .ToList();
+
+            if (topbar != null)
+            {
+                foreach (var item in topbar)
+                {
+                    var titleAndHref = new TitlesAndHrefs
+                    {
+                        dates = item.InnerText,
+                        href = item.Attributes["href"].Value
+                    };
+                    titlesAndhrefs.Add(titleAndHref);
+                }
+            }
+
+            return titlesAndhrefs;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("GetStartupMainTitlesAndHrefs2024 error: " + ex.Message);
+            throw new Exception("Couldn't get GetStartupMainTitlesAndHrefs2024", ex.InnerException);
+        }
+    }
+}
+
+public static class GetStartupMainTableDataGroup2024
+{
+    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent)
+    {
+        try
+        {
+            var website = new HtmlDocument();
+            website.LoadHtml(htmlContent);
+
+            var tableDataGroup = new ObservableCollection<TableDataGroup>();
+
+            var matchesGroups = website.DocumentNode.Descendants("div")
+                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "datacotainer full")?
+                .Descendants("div")
+                .Where(o => o.GetAttributeValue("class", "") == "predictions")
+                .Skip(1)
+                .FirstOrDefault()?
+                .Elements("div")
+                .Where(o => o.Attributes["id"] != null);
+
+            if (matchesGroups != null)
+            {
+                foreach (var group in matchesGroups)
+                {
+                    var items = new ObservableCollection<TableDataItem>();
+
+                    var body = group.Descendants("div")
+                        .FirstOrDefault(o => o.GetAttributeValue("class", "") == "body");
+
+                    var matchesItems = body?.Elements("div")
+                        .Where(o => o.GetAttributeValue("class", "") == "match");
+
+                    if (matchesItems != null)
+                    {
+                        foreach (var matchItem in matchesItems)
+                        {
+                            var time = matchItem.Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "date")?.InnerText;
+
+                            var teamone = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?
+                                .Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?.InnerText;
+
+                            var hrefs = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?
+                                .Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?
+                                .Element("a")?.Attributes["href"].Value;
+
+                            if (hrefs != null) hrefs = hrefs.Replace(" ", "%20");
+
+                            var teamonescore = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?.FirstChild?.InnerText;
+
+                            var teamtwo = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "guestteam")?
+                                .Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?.InnerText;
+
+                            var teamtwoscore = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "guestteam")?.FirstChild?.InnerText;
+
+                            var tip = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "tip")?
+                                .Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("value"));
+
+                            var backgroundtipcolor = Colors.DarkSlateGray;
+                            if (tip != null)
+                            {
+                                var tipClass = tip.Attributes["class"].Value;
+                                if (tipClass == "value success") backgroundtipcolor = Colors.Green;
+                                else if (tipClass == "value failed") backgroundtipcolor = Colors.Red;
+                                else backgroundtipcolor = Colors.DarkSlateGray;
+                            }
+
+                            var likebutton = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "like");
+
+                            var likepositive = likebutton?.Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likepositive")?
+                                .Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "value")?.InnerText;
+
+                            var likenegative = likebutton?.Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likenegative")?
+                                .Elements("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "value")?.InnerText;
+
+                            const string likebuttonimage = @"https://cdn0.iconfinder.com/data/icons/essentials-solid-glyphs-vol-1/100/Facebook-Like-Good-512.png";
+                            const string dislikebuttonimage = @"https://cdn3.iconfinder.com/data/icons/wpzoom-developer-icon-set/500/139-512.png";
+
+                            var likesandvotes = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "inforow")?
+                                .FirstChild?
+                                .Elements("div")
+                                .Where(a => a.GetAttributeValue("class", "").Contains("coefbox")).ToList();
+
+                            if (likesandvotes != null && likesandvotes.Count >= 11)
+                            {
+                                items.Add(new TableDataItem(
+                                    "flag",
+                                    backgroundtipcolor,
+                                    time ?? "",
+                                    renameTeam.renameTeamNameToFitDisplayLabel(teamone ?? ""),
+                                    teamonescore,
+                                    teamtwoscore,
+                                    renameTeam.renameTeamNameToFitDisplayLabel(teamtwo ?? ""),
+                                    tip?.InnerText,
+                                    likebuttonimage,
+                                    dislikebuttonimage,
+                                    likepositive,
+                                    likenegative,
+                                    likesandvotes[0].InnerText,
+                                    likesandvotes[1].InnerText,
+                                    likesandvotes[2].InnerText,
+                                    likesandvotes[3].InnerText,
+                                    likesandvotes[4].InnerText,
+                                    likesandvotes[5].InnerText,
+                                    likesandvotes[6].InnerText,
+                                    likesandvotes[7].InnerText,
+                                    likesandvotes[8].InnerText,
+                                    likesandvotes[9].InnerText,
+                                    likesandvotes[10].InnerText,
+                                    "Beta",
+                                    hrefs,
+                                    Colors.LightGray
+                                ));
+                            }
+                        }
+
+                        var groupImage = group.Descendants("img").FirstOrDefault()?.Attributes["src"].Value;
+                        var groupName = group.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText.Trim();
+
+                        if (groupImage != null && groupName != null)
+                        {
+                            tableDataGroup.Add(new TableDataGroup(groupImage, groupName, "TIP", items));
+                        }
+                    }
+                }
+            }
+
+            return tableDataGroup;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("GetStartupMainTableDataGroup2024 error: " + ex.Message);
+            throw new Exception("Couldn't get GetStartupMainTableDataGroup2024", ex);
+        }
+    }
+}
