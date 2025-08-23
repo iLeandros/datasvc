@@ -5,74 +5,83 @@ using DataSvc.Models;
 
 namespace DataSvc.ModelHelperCalls;
 
-public static async Task<ObservableCollection<DetailsTableDataGroupMatchesBetween>> GetMatchesBetweenTeams(TableDataItem item)
+public static class GetMatchesBetweenTeamsHelper
 {
-    using (HttpClient client = new HttpClient())
+    // ✅ Preferred in the server: parse the HTML we already cached
+    public static ObservableCollection<DetailsTableDataGroupMatchesBetween>? ParseFromHtml(string? html)
     {
-        client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible, MSIE 11, Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko");
-        using (HttpResponseMessage response = await client.GetAsync(item.Href))
-        using (HttpContent content = response.Content)
+        if (string.IsNullOrWhiteSpace(html)) return null;
+
+        try
         {
-            try
+            var website = new HtmlDocument();
+            website.LoadHtml(html);
+
+            // .matchbtwteams > .matchitem
+            var matchesGroups = website.DocumentNode.Descendants("div")
+                .Where(o => o.GetAttributeValue("class", "") == "matchbtwteams")
+                .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
+                .ToList();
+
+            if (matchesGroups == null || matchesGroups.Count == 0)
+                return new ObservableCollection<DetailsTableDataGroupMatchesBetween>();
+
+            var itemToAdd = new ObservableCollection<DetailsTableDataItemMatchesBetween>();
+
+            foreach (var matchGroup in matchesGroups)
             {
-                string result = await content.ReadAsStringAsync();
-                var website = new HtmlDocument();
-                website.LoadHtml(result);
+                var match = matchGroup.Descendants("div")
+                    .FirstOrDefault(o => o.GetAttributeValue("class", "") == "match");
+                if (match == null) continue;
 
-                // Find the match items
-                var matchesGroups = website.DocumentNode.Descendants("div")
-                    .Where(o => o.GetAttributeValue("class", "") == "matchbtwteams")
-                    .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
-                    .ToList();
+                var hostteam = match.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "hostteam");
+                var guestteam = match.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "guestteam");
 
-                if (matchesGroups == null || matchesGroups.Count == 0)
-                    throw new Exception("Matches not found");
+                static int toInt(string? s) => int.TryParse(s, out var v) ? v : 0;
 
-                ObservableCollection<DetailsTableDataGroupMatchesBetween> items = new ObservableCollection<DetailsTableDataGroupMatchesBetween>();
-                ObservableCollection<DetailsTableDataItemMatchesBetween> itemToAdd = new ObservableCollection<DetailsTableDataItemMatchesBetween>();
+                int hostGoals = toInt(hostteam?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "goals")?.InnerText);
+                int guestGoals = toInt(guestteam?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "goals")?.InnerText);
 
-                foreach (var matchGroup in matchesGroups)
-                {
-                    DateTime date;
-                    if (!DateTime.TryParse(matchGroup.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "date")?.InnerText, out date))
-                    {
-                        date = DateTime.Now;
-                    }
+                string hostName = hostteam?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "").Contains("name"))?.Element("a")?.InnerText?.Trim() ?? "";
+                string guestName = guestteam?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "").Contains("name"))?.Element("a")?.InnerText?.Trim() ?? "";
 
-                    var match = matchGroup.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "match");
+                var details = matchGroup.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "details");
+                var info = details?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "info")
+                    ?.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "holder")
+                    ?.Descendants("div").Where(o => o.GetAttributeValue("class", "") == "goals").ToList();
 
-                    var hostteam = match.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "hostteam");
-                    int hostteamGoals = int.Parse(hostteam.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "goals")?.InnerText ?? "0");
-                    string hostteamName = hostteam.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "").Contains("name"))?.Element("a")?.InnerText.Trim();
+                int hostHTGoals = toInt(info?.ElementAtOrDefault(0)?.InnerText);
+                int guestHTGoals = toInt(info?.ElementAtOrDefault(1)?.InnerText);
 
-                    var guestteam = match.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "guestteam");
-                    int guestteamGoals = int.Parse(guestteam.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "goals")?.InnerText ?? "0");
-                    string guestteamName = guestteam.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "").Contains("name"))?.Element("a")?.InnerText.Trim();
+                // optional display rename (as in your code)
+                var hostDisplay = renameTeam.renameTeamNameToFitDisplayLabel(hostName);
+                var guestDisplay = renameTeam.renameTeamNameToFitDisplayLabel(guestName);
 
-                    var details = matchGroup.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "details");
-                    var info = details.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "info")?
-                        .Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "holder")?
-                        .Descendants("div").Where(o => o.GetAttributeValue("class", "") == "goals").ToList();
-
-                    int hosthtgoals = int.Parse(info?[0].InnerText ?? "0");
-                    int guesthtgoals = int.Parse(info?[1].InnerText ?? "0");
-
-                    itemToAdd.Add(new DetailsTableDataItemMatchesBetween(new
-                    Match(new hostTeam() { name = renameTeam.renameTeamNameToFitDisplayLabel(hostteamName), goals = hostteamGoals }, new guestTeam()
-                    {
-                        name = renameTeam.renameTeamNameToFitDisplayLabel(guestteamName),
-                        goals = guestteamGoals
-                    }), new Details(new info() { hostHTGoals = hosthtgoals, guestHTGoals = guesthtgoals })));
-                }
-
-                items.Add(new DetailsTableDataGroupMatchesBetween(itemToAdd));
-                return items;
+                itemToAdd.Add(new DetailsTableDataItemMatchesBetween(
+                    new Match(new hostTeam { name = hostDisplay, goals = hostGoals },
+                              new guestTeam { name = guestDisplay, goals = guestGoals }),
+                    new Details(new info { hostHTGoals = hostHTGoals, guestHTGoals = guestHTGoals })
+                ));
             }
-            catch (Exception ex)
+
+            return new ObservableCollection<DetailsTableDataGroupMatchesBetween>
             {
-                Debug.WriteLine("GetMatchesBetweenTeams Error: " + ex.Message);
-                return null;
-            }
+                new DetailsTableDataGroupMatchesBetween(itemToAdd)
+            };
         }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("GetMatchesBetweenTeams.ParseFromHtml error: " + ex.Message);
+            return null;
+        }
+    }
+
+    // ❗ Kept for completeness (uses HTTP like your original code) — not used by the server path
+    public static async Task<ObservableCollection<DetailsTableDataGroupMatchesBetween>?> GetFromHrefAsync(string href)
+    {
+        using var client = new HttpClient();
+        client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible, MSIE 11, Windows NT 6.3; Trident/7.0; rv:11.0) like Gecko");
+        var html = await client.GetStringAsync(href);
+        return ParseFromHtml(html);
     }
 }
