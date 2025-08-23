@@ -121,36 +121,48 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
 
     return Results.Json(rec.Payload);
 });
+// All details for all hrefs in one response (keyed by normalized href)
+// Optional toggles:
+//   ?teamsInfo=html        -> return original teamsinfo HTML (omit parsed object)
+//   ?matchBetween=html     -> return original matchbtwteams HTML (omit parsed object)
 app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
-     HttpContext ctx,
-     [FromQuery] string? teamsInfo) =>
+     [FromQuery] string? teamsInfo,
+     [FromQuery] string? matchBetween) =>
 {
-    var preferHtml = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
-    var (items, generatedUtc) = store.Export();
+    bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
 
-    // Weak ETag so clients can cache by last save time
-    var etag = $"W/\"{store.LastSavedUtc:yyyyMMddHHmmss}\"";
-    ctx.Response.Headers.ETag = etag;
+    var (items, generatedUtc) = store.Export();
 
     var byHref = items
         .OrderByDescending(i => i.LastUpdatedUtc)
         .ToDictionary(
             i => i.Href,
-            i => new
+            i =>
             {
-                href           = i.Href,
-                lastUpdatedUtc = i.LastUpdatedUtc,
+                // parse only when requested (and keep types opaque so we don’t couple to TeamBasicInfo)
+                var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+                var parsedBetween   = preferMatchBetweenHtml ? null : GetMatchesBetweenTeamsHelper.ParseFromHtml(i.Payload.MatchBetweenHtml);
 
-                teamsInfo = preferHtml
-                    ? null
-                    : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
+                return new
+                {
+                    href           = i.Href,
+                    lastUpdatedUtc = i.LastUpdatedUtc,
 
-                teamsInfoHtml          = preferHtml ? i.Payload.TeamsInfoHtml : null,
-                matchBetweenHtml       = i.Payload.MatchBetweenHtml,
-                lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
-                teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
-                teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
+                    // Teams info: either parsed object or original HTML (never both)
+                    teamsInfo      = parsedTeamsInfo,
+                    teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+
+                    // Matches between: either parsed object or original HTML (never both)
+                    matchesBetween   = parsedBetween,
+                    matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+                    // Others unchanged for now (still HTML)
+                    lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
+                    teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
+                    teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
+                };
             },
             StringComparer.OrdinalIgnoreCase
         );
