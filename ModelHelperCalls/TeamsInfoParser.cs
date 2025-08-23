@@ -5,7 +5,7 @@ namespace DataSvc.ModelHelperCalls;
 
 public static class TeamsInfoParser
 {
-    public static List<TeamBasicInfoDto>? Parse(string? htmlContent)
+    public static List<TeamBasicInfo>? Parse(string? htmlContent)
     {
         if (string.IsNullOrWhiteSpace(htmlContent)) return null;
 
@@ -21,7 +21,7 @@ public static class TeamsInfoParser
 
             if (halfContainers == null || halfContainers.Count < 2) return null;
 
-            var list = new List<TeamBasicInfoDto>(capacity: halfContainers.Count);
+            var list = new List<TeamBasicInfo>(capacity: halfContainers.Count);
             foreach (var container in halfContainers)
             {
                 var teamName    = container.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText?.Trim();
@@ -30,7 +30,7 @@ public static class TeamsInfoParser
                 var country     = countryEl?.Descendants("span").FirstOrDefault()?.InnerText?.Trim();
                 var countryFlag = countryEl?.Descendants("img").FirstOrDefault()?.GetAttributeValue("src", string.Empty);
 
-                list.Add(new TeamBasicInfoDto
+                list.Add(new TeamBasicInfo
                 {
                     TeamName    = teamName,
                     TeamFlag    = teamLogo,
