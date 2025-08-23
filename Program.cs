@@ -123,12 +123,15 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
 });
 app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
-     [FromQuery] string? teamsInfo,
-     [FromQuery] string? matchBetween) =>
+     HttpContext ctx,
+     [FromQuery] string? teamsInfo) =>
 {
-    var preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-
+    var preferHtml = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     var (items, generatedUtc) = store.Export();
+
+    // Weak ETag so clients can cache by last save time
+    var etag = $"W/\"{store.LastSavedUtc:yyyyMMddHHmmss}\"";
+    ctx.Response.Headers.ETag = etag;
 
     var byHref = items
         .OrderByDescending(i => i.LastUpdatedUtc)
@@ -139,15 +142,12 @@ app.MapGet("/data/details/allhrefs",
                 href           = i.Href,
                 lastUpdatedUtc = i.LastUpdatedUtc,
 
-                // your existing teamsInfo parsing (keep whatever you already wired)
-                // teamsInfo = TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
-                // teamsInfoHtml = null or original — as you have it
+                teamsInfo = preferHtml
+                    ? null
+                    : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml),
 
-                // NEW: typed matchesBetween from the cached HTML (no extra HTTP)
-                matchesBetween   = preferMatchBetweenHtml ? null : GetMatchesBetweenTeamsHelper.ParseFromHtml(i.Payload.MatchBetweenHtml),
-                matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-                // unchanged sections for now
+                teamsInfoHtml          = preferHtml ? i.Payload.TeamsInfoHtml : null,
+                matchBetweenHtml       = i.Payload.MatchBetweenHtml,
                 lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
                 teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
                 teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
@@ -163,6 +163,7 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+
 
 
 // Optional: refresh then return the aggregated payload in one call
