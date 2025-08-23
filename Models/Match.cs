@@ -1,5 +1,7 @@
 namespace DataSvc.Models;
 
+public class Match
+{
     public Match(hostTeam hostteam, guestTeam guestteam)
     {
         this.hostTeam = hostteam;
