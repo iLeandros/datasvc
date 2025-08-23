@@ -601,13 +601,23 @@ public sealed class DetailsScraperService
 {
     private readonly ResultStore _root;
     private readonly DetailsStore _store;
+	
+	static int GetEnvInt(string name, int def)
+    => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
 
-    static readonly HttpClient http = new(new HttpClientHandler
-    {
-        AutomaticDecompression = DecompressionMethods.Brotli | DecompressionMethods.GZip | DecompressionMethods.Deflate,
-        AllowAutoRedirect = true
-    })
-    { Timeout = TimeSpan.FromSeconds(30) };
+	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
+	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
+	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 180)); // 3h default
+
+    static readonly SocketsHttpHandler _handler = new()
+	{
+	    AutomaticDecompression = DecompressionMethods.Brotli | DecompressionMethods.GZip | DecompressionMethods.Deflate,
+	    AllowAutoRedirect = true,
+	    MaxConnectionsPerServer = 100,
+	    PooledConnectionLifetime = TimeSpan.FromMinutes(10),
+	    EnableMultipleHttp2Connections = true,
+	};
+	static readonly HttpClient http = new(_handler);
 
     public DetailsScraperService(ResultStore root, DetailsStore store)
     {
@@ -618,78 +628,97 @@ public sealed class DetailsScraperService
     public sealed record RefreshSummary(int Refreshed, int Skipped, List<string> Errors, DateTimeOffset LastUpdatedUtc);
 
     public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
-    {
-        var current = _root.Current?.Payload?.TableDataGroup;
-        if (current is null) return new RefreshSummary(0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
+	{
+	    var current = _root.Current?.Payload?.TableDataGroup;
+	    if (current is null)
+	        return new RefreshSummary(0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
+	
+	    var hrefs = current.SelectMany(g => g)
+	                       .Select(i => i.Href)
+	                       .Where(h => !string.IsNullOrWhiteSpace(h))
+	                       .Select(DetailsStore.Normalize)
+	                       .Distinct(StringComparer.OrdinalIgnoreCase)
+	                       .ToList();
+	
+	    int refreshed = 0, skipped = 0;
+	    var errors = new List<string>();
+	    var sem = new SemaphoreSlim(_maxParallel); // was fixed at 4
+	
+	    var now = DateTimeOffset.UtcNow;
+	
+	    var tasks = hrefs.Select(async href =>
+	    {
+	        await sem.WaitAsync(ct);
+	        try
+	        {
+	            // TTL: skip if recently fetched
+	            var existing = _store.Get(href);
+	            if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
+	            {
+	                Interlocked.Increment(ref skipped);
+	                return;
+	            }
+	
+	            var rec = await FetchOneAsync(href, ct);
+	            _store.Set(rec);
+	            Interlocked.Increment(ref refreshed);
+	        }
+	        catch (Exception ex)
+	        {
+	            lock (errors) errors.Add($"{href}: {ex.Message}");
+	        }
+	        finally
+	        {
+	            sem.Release();
+	        }
+	    });
+	
+	    await Task.WhenAll(tasks);
+	    await DetailsFiles.SaveAsync(_store);
+	    return new RefreshSummary(refreshed, skipped, errors, DateTimeOffset.UtcNow);
+	}
 
-        var hrefs = current.SelectMany(g => g)
-                           .Select(i => i.Href)
-                           .Where(h => !string.IsNullOrWhiteSpace(h))
-                           .Select(DetailsStore.Normalize)
-                           .Distinct(StringComparer.OrdinalIgnoreCase)
-                           .ToList();
 
-        int refreshed = 0, skipped = 0;
-        var errors = new List<string>();
-        var sem = new SemaphoreSlim(4); // limit parallelism
+    public async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
+	{
+	    var abs = DetailsStore.Normalize(href);
+	    Debug.WriteLine($"[details] fetching: {abs}");
+	
+	    using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+	    cts.CancelAfter(TimeSpan.FromSeconds(_timeoutSeconds)); // per-request deadline
+	
+	    using var req = new HttpRequestMessage(HttpMethod.Get, abs)
+	    {
+	        Version = HttpVersion.Version20,
+	        VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
+	    };
+	    req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+	    req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+	    req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+	    req.Headers.Referrer = new Uri("https://www.statarea.com/");
+	
+	    using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+	    res.EnsureSuccessStatusCode();
+	    var html = await res.Content.ReadAsStringAsync(cts.Token);
+	
+	    // Parse 5 divs (same as before)
+	    var doc = new HtmlDocument();
+	    doc.LoadHtml(html);
+	
+	    string? Section(string cls)
+	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
+	
+	    var payload = new DetailsPayload(
+	        TeamsInfoHtml:          Section("teamsinfo"),
+	        MatchBetweenHtml:       Section("matchbtwteams"),
+	        LastTeamsMatchesHtml:   Section("lastteamsmatches"),
+	        TeamsStatisticsHtml:    Section("teamsstatistics"),
+	        TeamsBetStatisticsHtml: Section("teamsbetstatistics")
+	    );
+	
+	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
+	}
 
-        var tasks = hrefs.Select(async href =>
-        {
-            await sem.WaitAsync(ct);
-            try
-            {
-                // re-fetch every run; change to TTL if you want to skip recent ones
-                var rec = await FetchOneAsync(href, ct);
-                _store.Set(rec);
-                Interlocked.Increment(ref refreshed);
-            }
-            catch (Exception ex)
-            {
-                lock (errors) errors.Add($"{href}: {ex.Message}");
-            }
-            finally
-            {
-                sem.Release();
-            }
-        });
-
-        await Task.WhenAll(tasks);
-        await DetailsFiles.SaveAsync(_store);
-		Debug.WriteLine($"[details] batch refreshed={refreshed} errors={errors.Count}");
-        return new RefreshSummary(refreshed, skipped, errors, DateTimeOffset.UtcNow);
-    }
-
-    public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
-    {
-        var abs = DetailsStore.Normalize(href);
-	Debug.WriteLine($"[details] fetching: {abs}");
-
-        using var req = new HttpRequestMessage(HttpMethod.Get, abs);
-        req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
-        req.Headers.Referrer = new Uri("https://www.statarea.com/");
-
-        using var res = await http.SendAsync(req, ct);
-        res.EnsureSuccessStatusCode();
-        var html = await res.Content.ReadAsStringAsync(ct);
-
-        // Parse 5 divs
-        var doc = new HtmlDocument();
-        doc.LoadHtml(html);
-
-        string? Section(string cls)
-            => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
-
-        var payload = new DetailsPayload(
-            TeamsInfoHtml:         Section("teamsinfo"),
-            MatchBetweenHtml:      Section("matchbtwteams"),
-            LastTeamsMatchesHtml:  Section("lastteamsmatches"),
-            TeamsStatisticsHtml:   Section("teamsstatistics"),
-            TeamsBetStatisticsHtml:Section("teamsbetstatistics")
-        );
-
-        return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
-    }
 }
 
 public sealed class DetailsRefreshJob : BackgroundService
