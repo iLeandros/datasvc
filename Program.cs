@@ -608,7 +608,23 @@ public sealed class DetailsStore
         _map.Clear();
         foreach (var it in items) _map[it.Href] = it;
     }
-
+	/// <summary>
+    /// Remove any cached href that is NOT present in <paramref name="keep"/>.
+    /// Returns the number of removed items.
+    /// </summary>
+    public int ShrinkTo(IReadOnlyCollection<string> keep)
+    {
+        var set = new HashSet<string>(keep, StringComparer.OrdinalIgnoreCase);
+        int removed = 0;
+        foreach (var key in _map.Keys)
+        {
+            if (!set.Contains(key))
+            {
+                if (_map.TryRemove(key, out _)) removed++;
+            }
+        }
+        return removed;
+    }
     public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
 
    public static string Normalize(string href)
