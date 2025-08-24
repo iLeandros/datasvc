@@ -171,28 +171,20 @@ app.MapGet("/data/details/allhrefs",
 				//     : LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
 				
 				// AFTER (safe for System.Text.Json)
-				int[][]? lastTeamsWinrate = null;
+				object? lastTeamsWinrate = null;
 				if (!preferLastTeamsHtml)
 				{
 				    var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
 				                i.Payload.LastTeamsMatchesHtml ?? string.Empty);
 				
-				    // m is int[3,2]; convert to jagged int[][]
-				    if (m != null)
+				    lastTeamsWinrate = new
 				    {
-				        //lastTeamsWinrate = new[]
-				        //{
-				        //    new[] { m[0,0], m[0,1] }, // Wins   [team1, team2]
-				        //    new[] { m[1,0], m[1,1] }, // Draws  [team1, team2]
-				        //    new[] { m[2,0], m[2,1] }  // Losses [team1, team2]
-				        //};
-						lastTeamsWinrate = new {
-						  wins  = new[]{ m[0,0], m[0,1] },
-						  draws = new[]{ m[1,0], m[1,1] },
-						  losses= new[]{ m[2,0], m[2,1] }
-						};
-				    }
+				        wins   = new[] { m[0,0], m[0,1] },
+				        draws  = new[] { m[1,0], m[1,1] },
+				        losses = new[] { m[2,0], m[2,1] }
+				    };
 				}
+
 
 
                 return new
