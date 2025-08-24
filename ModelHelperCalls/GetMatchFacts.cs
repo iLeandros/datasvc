@@ -1,6 +1,8 @@
-// File: ModelHelperCalls/MatchFactsParser.cs
+// File: ModelHelperCalls/MatchFactsParser.cs  (drop-in)
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using DataSvc.Models; // MatchFact
 
@@ -8,90 +10,88 @@ namespace DataSvc.ModelHelperCalls
 {
     public static class MatchFactsParser
     {
-        // GetMatchFacts.cs — replace method body with this more robust version
-        public static List<MatchFact> GetMatchFacts(string? htmlContent)
+        public static List<MatchFact> GetMatchFacts(string? factsHtml)
         {
             var facts = new List<MatchFact>();
-            if (string.IsNullOrWhiteSpace(htmlContent)) return facts;
-        
+            if (string.IsNullOrWhiteSpace(factsHtml)) return facts;
+
             try
             {
                 var doc = new HtmlDocument();
-                doc.LoadHtml(htmlContent);
-        
-                // 1) Locate the facts block (class OR id OR heading with 'facts')
-                var factsBlock =
-                    doc.DocumentNode.SelectSingleNode("//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]")
-                    ?? doc.DocumentNode.SelectSingleNode("//*[@id='facts' or contains(@id,'facts')]")
-                    ?? doc.DocumentNode.SelectNodes("//div[.//h1|.//h2|.//h3|.//div[contains(@class,'title')]]")
-                          ?.FirstOrDefault(n => HtmlEntity.DeEntitize(n.InnerText ?? "").ToLowerInvariant().Contains("facts"));
-        
-                if (factsBlock == null) return facts; // nothing to parse
-        
-                string Clean(HtmlNode? n) => HtmlEntity.DeEntitize(n?.InnerText ?? "")
-                                                        .Replace("\u00A0", " ").Replace("\r", " ")
-                                                        .Replace("\t", " ").Trim();
-        
-                bool IsValue(string s)
+                doc.LoadHtml(factsHtml);
+
+                // If the HTML is the facts block already, root will just be that <div class="facts">.
+                // If not, this still finds it safely.
+                var root = doc.DocumentNode.SelectSingleNode(
+                    "//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]"
+                ) ?? doc.DocumentNode;
+
+                string Clean(HtmlNode? n) =>
+                    HtmlEntity.DeEntitize(n?.InnerText ?? "")
+                              .Replace("\u00A0", " ")
+                              .Replace("\t", " ")
+                              .Replace("\r", " ")
+                              .Trim();
+
+                // Preferred layout: rows with .label / .value (case-insensitive).
+                const string ABC = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+                const string abc = "abcdefghijklmnopqrstuvwxyz";
+                string t(string s) => $"translate({s},'{ABC}','{abc}')";
+
+                var rows = root.SelectNodes($".//*[contains({t("@class")},'datarow')]");
+
+                if (rows != null && rows.Count > 0)
                 {
-                    // number, number%, or "NN min."
-                    return System.Text.RegularExpressions.Regex.IsMatch(
-                        s, @"^(\d+(\.\d+)?\s*(%|min\.?)?)$", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                }
-        
-                // 2) Strict layout first: .datarow > (.label, .value)
-                var rows = factsBlock.SelectNodes(".//*[contains(@class,'datarow')]") ?? new HtmlNodeCollection(null);
-                foreach (var row in rows)
-                {
-                    var label = Clean(row.SelectSingleNode(".//*[contains(@class,'label')]"));
-                    var value = Clean(row.SelectSingleNode(".//*[contains(@class,'value')]"));
-                    if (label.Length == 0 && value.Length == 0) continue;
-                    if (label.Length > 0 || value.Length > 0)
-                        facts.Add(new MatchFact { Label = label, Value = value });
-                }
-        
-                if (facts.Count > 0) return facts;
-        
-                // 3) Fallback: pair adjacent lines/items that look like "Label" then "Value"
-                var items = factsBlock.SelectNodes("./*|.//li|.//p|.//span|.//div") ?? new HtmlNodeCollection(null);
-                string? pendingLabel = null;
-        
-                foreach (var it in items)
-                {
-                    var t = Clean(it);
-                    if (string.IsNullOrWhiteSpace(t)) continue;
-        
-                    // If this element *contains* an explicit value node, use it
-                    var explicitVal = it.SelectSingleNode(".//*[contains(@class,'value')]");
-                    var explicitLbl = it.SelectSingleNode(".//*[contains(@class,'label')]");
-                    if (explicitVal != null || explicitLbl != null)
+                    foreach (var row in rows)
                     {
-                        var lbl = Clean(explicitLbl ?? it);
-                        var val = Clean(explicitVal);
-                        if (!string.IsNullOrEmpty(lbl) || !string.IsNullOrEmpty(val))
-                            facts.Add(new MatchFact { Label = lbl, Value = val });
-                        pendingLabel = null;
-                        continue;
-                    }
-        
-                    // Otherwise infer from text
-                    if (IsValue(t))
-                    {
-                        if (!string.IsNullOrEmpty(pendingLabel))
+                        var label = Clean(row.SelectSingleNode($".//*[contains({t("@class")},'label')]"));
+                        var value = Clean(row.SelectSingleNode($".//*[contains({t("@class")},'value')]"));
+
+                        // Fallbacks: if only one side exists, infer the other from the row text.
+                        if (string.IsNullOrEmpty(label) && !string.IsNullOrEmpty(value))
                         {
-                            facts.Add(new MatchFact { Label = pendingLabel, Value = t });
-                            pendingLabel = null;
+                            // Try the first non-empty text not equal to the value.
+                            var cand = row.ChildNodes
+                                          .Select(n => Clean(n))
+                                          .FirstOrDefault(s => !string.IsNullOrEmpty(s) && s != value);
+                            if (!string.IsNullOrEmpty(cand)) label = cand;
                         }
-                    }
-                    else
-                    {
-                        // New potential label (avoid headings that are just 'facts')
-                        if (!t.Equals("facts", StringComparison.OrdinalIgnoreCase) &&
-                            !t.Contains("advert", StringComparison.OrdinalIgnoreCase) &&
-                            t.Length > 2)
+                        else if (string.IsNullOrEmpty(value) && !string.IsNullOrEmpty(label))
                         {
-                            pendingLabel = t;
+                            var cand = row.ChildNodes
+                                          .Select(n => Clean(n))
+                                          .FirstOrDefault(s => !string.IsNullOrEmpty(s) && s != label);
+                            if (!string.IsNullOrEmpty(cand)) value = cand;
                         }
+
+                        if (!string.IsNullOrEmpty(label) || !string.IsNullOrEmpty(value))
+                            facts.Add(new MatchFact { Label = label, Value = value });
+                    }
+
+                    return facts;
+                }
+
+                // Fallback layout: pair adjacent texty items ("Label" line, then "Value" like "12" or "80%").
+                bool LooksLikeValue(string s) =>
+                    Regex.IsMatch(s, @"^(\d+(\.\d+)?\s*(%|min\.?)?)$", RegexOptions.IgnoreCase);
+
+                var linear = root.SelectNodes(".//li|.//p|.//div|.//span")
+                                 ?.Select(Clean)
+                                 .Where(s => !string.IsNullOrEmpty(s))
+                                 .ToList()
+                             ?? new List<string>();
+
+                string? pending = null;
+                foreach (var piece in linear)
+                {
+                    if (LooksLikeValue(piece) && !string.IsNullOrEmpty(pending))
+                    {
+                        facts.Add(new MatchFact { Label = pending, Value = piece });
+                        pending = null;
+                    }
+                    else if (!piece.Equals("facts", System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        pending = piece;
                     }
                 }
             }
@@ -99,7 +99,7 @@ namespace DataSvc.ModelHelperCalls
             {
                 Debug.WriteLine("GetMatchFacts error: " + ex.Message);
             }
-        
+
             return facts;
         }
     }
