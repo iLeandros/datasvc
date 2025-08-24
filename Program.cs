@@ -793,9 +793,7 @@ public sealed class DetailsScraperService
 	    await DetailsFiles.SaveAsync(_store);
 	    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
 	}
-
-
-    public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
+	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
 	    var abs = DetailsStore.Normalize(href);
 	    Debug.WriteLine($"[details] fetching: {abs}");
@@ -822,65 +820,67 @@ public sealed class DetailsScraperService
 	    res.EnsureSuccessStatusCode();
 	    var html = await res.Content.ReadAsStringAsync(linkedCts.Token);
 	
-	    // Parse the 5 sections
-	    var doc = new HtmlDocument();
+	    // ---- parse the 5 sections from the fetched page ----
+	    var doc = new HtmlAgilityPack.HtmlDocument();
 	    doc.LoadHtml(html);
 	
-	    string? Section(string cls)
-	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
-		string? SectionMatchesBtwTeams(string cls)
-	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
-		
-		static string? SectionMatchBetweenFilled(HtmlDocument doc, out int foundNodes, out int pickedRows)
-		{
-		    var nodes = doc.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
-		    foundNodes = nodes?.Count ?? 0;
-		    pickedRows = 0;
-		
-		    if (nodes is null || nodes.Count == 0) return null;
-		
-		    HtmlNode? best = null;
-		    int bestScore = int.MinValue;
-		
-		    foreach (var n in nodes)
-		    {
-		        var rows = n.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]");
-		        int rowCount = rows?.Count ?? 0;
-		
-		        var text = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
-		        int length = n.InnerHtml?.Length ?? 0;
-		
-		        // score: rowCount dominates; then prefer longer; penalize blank/&nbsp;
-		        int score = rowCount * 1_000_000 + length;
-		        if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000_000;
-		
-		        if (score > bestScore)
-		        {
-		            bestScore = score;
-		            best = n;
-		            pickedRows = rowCount;
-		        }
-		    }
-		    return best?.OuterHtml ?? nodes[0].OuterHtml;
-		}
-
-		int mbDivs, mbRows;
-		var matchBetweenHtml = SectionMatchBetweenFilled(doc, out var mbDivs, out var mbRows);
-		
-		// (Optional) log what we saw to help debug odd pages
-		Debug.WriteLine($"matchbtwteams: found {mbDivs} node(s); picked block with {mbRows} row(s)");
+	    // Helper: pick the first div with an exact class token match
+	    static string? SectionFirst(HtmlDocument d, string cls) =>
+	        d.DocumentNode.SelectSingleNode($"//div[contains(concat(' ', normalize-space(@class), ' '), ' {cls} ')]")?.OuterHtml;
+	
+	    // Helper: choose the *filled* matchbtwteams block (most rows / longest non-blank)
+	    static string? SectionMatchBetweenFilled(HtmlDocument d, out int foundNodes, out int pickedRows)
+	    {
+	        var nodes = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
+	        foundNodes = nodes?.Count ?? 0;
+	        pickedRows = 0;
+	        if (nodes is null || nodes.Count == 0) return null;
+	
+	        HtmlAgilityPack.HtmlNode? best = null;
+	        var bestScore = int.MinValue;
+	
+	        foreach (var n in nodes)
+	        {
+	            var rows = n.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]");
+	            var rowCount = rows?.Count ?? 0;
+	            var text  = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
+	            var len   = n.InnerHtml?.Length ?? 0;
+	
+	            // row count dominates; prefer longer; penalize blank/&nbsp;
+	            var score = rowCount * 1_000_000 + len;
+	            if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000_000;
+	
+	            if (score > bestScore)
+	            {
+	                bestScore = score;
+	                best = n;
+	                pickedRows = rowCount;
+	            }
+	        }
+	        return best?.OuterHtml ?? nodes[0].OuterHtml;
+	    }
+	
+	    // Use helpers
+	    var teamsInfoHtml        = SectionFirst(doc, "teamsinfo");
+	    var lastTeamsMatchesHtml = SectionFirst(doc, "lastteamsmatches");
+	    var teamsStatisticsHtml  = SectionFirst(doc, "teamsstatistics");
+	    var teamsBetStatsHtml    = SectionFirst(doc, "teamsbetstatistics");
+	
+	    int mbDivs, mbRows;
+	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
+	    Debug.WriteLine($"[details] matchbtwteams: found {mbDivs} block(s); picked block with {mbRows} row(s)");
 	
 	    var payload = new DetailsPayload(
-	        TeamsInfoHtml:          Section("teamsinfo"),
-	        MatchBetweenHtml:       matchBetweenHtml;
-	        LastTeamsMatchesHtml:   Section("lastteamsmatches"),
-	        TeamsStatisticsHtml:    Section("teamsstatistics"),
-	        TeamsBetStatisticsHtml: Section("teamsbetstatistics")
+	        TeamsInfoHtml:          teamsInfoHtml,
+	        MatchBetweenHtml:       matchBetweenHtml,
+	        LastTeamsMatchesHtml:   lastTeamsMatchesHtml,
+	        TeamsStatisticsHtml:    teamsStatisticsHtml,
+	        TeamsBetStatisticsHtml: teamsBetStatsHtml
 	    );
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
 	}
-}
+
 
 public sealed class DetailsRefreshJob : BackgroundService
 {
