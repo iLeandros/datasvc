@@ -2,8 +2,6 @@
 using HtmlAgilityPack;
 using DataSvc.Models; // BarChart, MatchFactData
 
-namespace DataSvc.ModelHelperCalls;
-
 namespace DataSvc.ModelHelperCalls
 {
     public static class LastTeamsMatchesHelper
