@@ -831,17 +831,11 @@ public sealed class DetailsScraperService
 		string? SectionMatchesBtwTeams(string cls)
 	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
 		
-		// Pick a section by class. When preferFilled==true, choose the node that looks "real":
-		//  - contains 'matchitem' rows (strong signal), otherwise
-		//  - has the longest inner HTML, and
-		//  - is not just &nbsp; / whitespace.
-		static string? PickMatchBetween(HtmlDocument doc, out int foundNodes, out int bestRowCount)
+		static string? SectionMatchBetweenFilled(HtmlDocument doc, out int foundNodes, out int pickedRows)
 		{
-		    var nodes = doc.DocumentNode.SelectNodes(
-		        "//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
-		
+		    var nodes = doc.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
 		    foundNodes = nodes?.Count ?? 0;
-		    bestRowCount = 0;
+		    pickedRows = 0;
 		
 		    if (nodes is null || nodes.Count == 0) return null;
 		
@@ -850,40 +844,35 @@ public sealed class DetailsScraperService
 		
 		    foreach (var n in nodes)
 		    {
-		        // How many match rows does this node have?
 		        var rows = n.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]");
 		        int rowCount = rows?.Count ?? 0;
 		
-		        // Inner text without NBSP/whitespace
 		        var text = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
+		        int length = n.InnerHtml?.Length ?? 0;
 		
-		        // Scoring:
-		        //  - rowCount dominates (prefer blocks that visibly have rows)
-		        //  - then prefer longer HTML
-		        //  - heavily penalize empty/nbsp placeholders
-		        int score = rowCount * 1_000_000 + (n.InnerHtml?.Length ?? 0);
+		        // score: rowCount dominates; then prefer longer; penalize blank/&nbsp;
+		        int score = rowCount * 1_000_000 + length;
 		        if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000_000;
 		
 		        if (score > bestScore)
 		        {
 		            bestScore = score;
 		            best = n;
-		            bestRowCount = rowCount;
+		            pickedRows = rowCount;
 		        }
 		    }
-		
 		    return best?.OuterHtml ?? nodes[0].OuterHtml;
 		}
 
 		int mbDivs, mbRows;
-		var matchBetweenHtml = PickMatchBetween(doc, out mbDivs, out mbRows);
+		var matchBetweenHtml = SectionMatchBetweenFilled(doc, out var mbDivs, out var mbRows);
 		
 		// (Optional) log what we saw to help debug odd pages
 		Debug.WriteLine($"matchbtwteams: found {mbDivs} node(s); picked block with {mbRows} row(s)");
 	
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          Section("teamsinfo"),
-	        MatchBetweenHtml:       matchBetweenHtml, // <-- now the filled block
+	        MatchBetweenHtml:       matchBetweenHtml;
 	        LastTeamsMatchesHtml:   Section("lastteamsmatches"),
 	        TeamsStatisticsHtml:    Section("teamsstatistics"),
 	        TeamsBetStatisticsHtml: Section("teamsbetstatistics")
@@ -891,8 +880,6 @@ public sealed class DetailsScraperService
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
 	}
-
-
 }
 
 public sealed class DetailsRefreshJob : BackgroundService
