@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 
 public class MatchFactData
 {
+    public string Title { get; set; }
     public string Name { get; set; }
     public int Percentage { get; set; }
     // Add a property for the normalized percentage
