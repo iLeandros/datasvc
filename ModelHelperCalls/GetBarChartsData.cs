@@ -63,7 +63,7 @@ public static class BarChartsParser
 
                             if (int.TryParse(pctText, out int pct))
                             {
-                                matchFacts.Add(new MatchFactData { Name = name, Percentage = pct });
+                                matchFacts.Add(new MatchFactData { Title = title, Name = name, Percentage = pct });
                             }
                         }
                     }
