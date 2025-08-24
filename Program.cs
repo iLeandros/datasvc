@@ -130,11 +130,13 @@ app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
      [FromQuery] string? teamsInfo,
      [FromQuery] string? matchBetween,
-     [FromQuery] string? betStats) =>
+     [FromQuery] string? betStats),
+	 [FromQuery] string? facts) =>
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
     bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+	bool preferFactsHtml        = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase); // <— NEW
 
     var (items, generatedUtc) = store.Export();
 
@@ -156,6 +158,11 @@ app.MapGet("/data/details/allhrefs",
                     ? null
                     : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
 
+				// NEW: facts (typed list or raw HTML)
+	            var matchFacts = preferFactsHtml
+	                ? null
+	                : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+
                 return new
                 {
                     href           = i.Href,
@@ -172,6 +179,10 @@ app.MapGet("/data/details/allhrefs",
                     // NEW: bar charts parsed from teamsbetstatistics
                     barCharts             = barCharts,
                     teamsBetStatisticsHtml= preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+
+					// NEW: facts
+	                matchFacts = matchFacts,
+	                factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
 
                     // unchanged for now
                     lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
@@ -608,7 +619,8 @@ public record DetailsPayload(
     string? MatchBetweenHtml,
     string? LastTeamsMatchesHtml,
     string? TeamsStatisticsHtml,
-    string? TeamsBetStatisticsHtml
+    string? TeamsBetStatisticsHtml,
+	string? FactsHtml // <— NEW (nullable for backward compat)
 );
 
 public record DetailsRecord(string Href, DateTimeOffset LastUpdatedUtc, DetailsPayload Payload);
@@ -869,6 +881,8 @@ public sealed class DetailsScraperService
 	    var lastTeamsMatchesHtml = SectionFirst(doc, "lastteamsmatches");
 	    var teamsStatisticsHtml  = SectionFirst(doc, "teamsstatistics");
 	    var teamsBetStatsHtml    = SectionFirst(doc, "teamsbetstatistics");
+		// NEW: the 6th div
+		var factsHtml            = SectionFirst(doc, "facts");
 	
 	    int mbDivs, mbRows;
 	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
@@ -879,7 +893,8 @@ public sealed class DetailsScraperService
 	        MatchBetweenHtml:       matchBetweenHtml,
 	        LastTeamsMatchesHtml:   lastTeamsMatchesHtml,
 	        TeamsStatisticsHtml:    teamsStatisticsHtml,
-	        TeamsBetStatisticsHtml: teamsBetStatsHtml
+	        TeamsBetStatisticsHtml: teamsBetStatsHtml,
+			FactsHtml:              factsHtml
 	    );
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
