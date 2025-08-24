@@ -160,7 +160,7 @@ app.MapGet("/data/details/allhrefs",
 				// NEW: parse the per-team recent matches (your new helper)
 				var recentMatchesSeparate = preferSeparateMatchesHtml
 				    ? null
-				    : GetMatchDataSeperately.GetMatchDataSeparately(
+				    : MatchSeparatelyHelper.GetMatchDataSeparately(
 				          i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
 
 
