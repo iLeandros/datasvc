@@ -792,6 +792,7 @@ public sealed class DetailsScraperService
 	    await DetailsFiles.SaveAsync(_store);
 	    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
 	}
+	
 	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
 	    var abs = DetailsStore.Normalize(href);
@@ -879,7 +880,7 @@ public sealed class DetailsScraperService
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
 	}
-
+}
 
 public sealed class DetailsRefreshJob : BackgroundService
 {
