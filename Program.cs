@@ -819,10 +819,42 @@ public sealed class DetailsScraperService
 	
 	    string? Section(string cls)
 	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
+		
+		// Pick a section by class. When preferFilled==true, choose the node that looks "real":
+		//  - contains 'matchitem' rows (strong signal), otherwise
+		//  - has the longest inner HTML, and
+		//  - is not just &nbsp; / whitespace.
+		string? Section(string cls, bool preferFilled = false)
+		{
+		    var nodes = doc.DocumentNode.SelectNodes($"//div[contains(@class,'{cls}')]");
+		    if (nodes is null || nodes.Count == 0) return null;
+		
+		    if (!preferFilled)
+		        return nodes[0].OuterHtml; // keep old behavior for the other sections
+		
+		    HtmlNode? best = null;
+		    int bestScore = int.MinValue;
+		
+		    foreach (var n in nodes)
+		    {
+		        var inner = n.InnerHtml ?? string.Empty;
+		        var text  = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
+		
+		        // score: favor nodes with actual rows, penalize empty placeholders, then by length
+		        int score = inner.Length;
+		        if (inner.IndexOf("matchitem", StringComparison.OrdinalIgnoreCase) >= 0) score += 100_000;
+		        if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000;
+		
+		        if (score > bestScore) { bestScore = score; best = n; }
+		    }
+		
+		    return best?.OuterHtml ?? nodes[0].OuterHtml;
+		}
+
 	
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          Section("teamsinfo"),
-	        MatchBetweenHtml:       Section("matchbtwteams"),
+	        MatchBetweenHtml:       Section("matchbtwteams", preferFilled: true), // ⬅️ changed
 	        LastTeamsMatchesHtml:   Section("lastteamsmatches"),
 	        TeamsStatisticsHtml:    Section("teamsstatistics"),
 	        TeamsBetStatisticsHtml: Section("teamsbetstatistics")
