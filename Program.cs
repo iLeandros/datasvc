@@ -165,9 +165,9 @@ app.MapGet("/data/details/allhrefs",
 	                ? null
 	                : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
 
-				var lastTeamsWinrate = preferLastTeamsHtml 
-					? null
-	    			: LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
+				//var lastTeamsWinrate = preferLastTeamsHtml 
+				//	? null
+	    		//	: LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
 
                 return new
                 {
