@@ -1,76 +1,78 @@
+// File: ModelHelperCalls/GetMatchDataBetween.cs
 using System.Diagnostics;
 using HtmlAgilityPack;
 using DataSvc.Models;
 
 namespace DataSvc.ModelHelperCalls;
 
-public static MatchData GetMatchDataBetween(string htmlContent)
+public static class MatchBetweenHelper
 {
-    try
+    public static MatchData? GetMatchDataBetween(string htmlContent)
     {
-        var matchData = new MatchData();
-        var document = new HtmlDocument();
-        document.LoadHtml(htmlContent);
-
-        // Find the match items
-        var matchItems = document.DocumentNode.Descendants("div")
-            .Where(o => o.GetAttributeValue("class", "") == "matchbtwteams")
-            .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
-            .ToList();
-        Debug.WriteLine("Matches: " + matchItems.Count);
-
-        if (matchItems != null)
+        try
         {
-            foreach (var item in matchItems)
+            var matchData = new MatchData();
+            var document = new HtmlDocument();
+            document.LoadHtml(htmlContent);
+
+            var matchItems = document.DocumentNode.Descendants("div")
+                .Where(o => o.GetAttributeValue("class", "") == "matchbtwteams")
+                .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
+                .ToList();
+            Debug.WriteLine("Matches: " + matchItems.Count);
+
+            if (matchItems != null)
             {
-                var hostTeamNode = item.SelectSingleNode(".//div[@class='hostteam']//div[contains(@class, 'name')]");
-                var guestTeamNode = item.SelectSingleNode(".//div[@class='guestteam']//div[contains(@class, 'name')]");
-
-                var matchItem = new MatchItem
+                foreach (var item in matchItems)
                 {
-                    Competition = item.SelectSingleNode(".//div[@class='competition']").InnerText.Trim(),
-                    Date = item.SelectSingleNode(".//div[@class='date']").InnerText.Trim(),
-                    HostTeam = hostTeamNode.InnerText.Trim(),
-                    HostGoals = int.Parse(item.SelectSingleNode(".//div[@class='hostteam']//div[@class='goals']").InnerText.Trim()),
-                    GuestTeam = guestTeamNode.InnerText.Trim(),
-                    GuestGoals = int.Parse(item.SelectSingleNode(".//div[@class='guestteam']//div[@class='goals']").InnerText.Trim())
-                };
-                //Debug.WriteLine($"Host Team: {matchItem.HostTeam}, Guest Team: {matchItem.GuestTeam}");
+                    var hostTeamNode  = item.SelectSingleNode(".//div[@class='hostteam']//div[contains(@class, 'name')]");
+                    var guestTeamNode = item.SelectSingleNode(".//div[@class='guestteam']//div[contains(@class, 'name')]");
 
-                var actions = item.SelectNodes(".//div[@class='action']");
-                if (actions != null)
-                {
-                    foreach (var action in actions)
+                    var matchItem = new MatchItem
                     {
-                        var matchAction = new MatchAction
-                        {
-                            TeamType = action.SelectSingleNode(".//div[@class='matchaction']/../..").GetAttributeValue("class", ""),
-                            ActionType = action.SelectSingleNode(".//div[@class='matchaction']").ChildNodes[0].GetAttributeValue("class", ""),
-                            Player = action.SelectSingleNode(".//div[@class='player']").InnerText.Trim()
-                        };
+                        Competition = item.SelectSingleNode(".//div[@class='competition']").InnerText.Trim(),
+                        Date        = item.SelectSingleNode(".//div[@class='date']").InnerText.Trim(),
+                        HostTeam    = hostTeamNode.InnerText.Trim(),
+                        HostGoals   = int.Parse(item.SelectSingleNode(".//div[@class='hostteam']//div[@class='goals']").InnerText.Trim()),
+                        GuestTeam   = guestTeamNode.InnerText.Trim(),
+                        GuestGoals  = int.Parse(item.SelectSingleNode(".//div[@class='guestteam']//div[@class='goals']").InnerText.Trim())
+                    };
 
-                        // Extract time from player field
-                        var playerText = matchAction.Player;
-                        var timeEndIndex = playerText.IndexOf('\'');
-                        if (timeEndIndex > 0)
+                    var actions = item.SelectNodes(".//div[@class='action']");
+                    if (actions != null)
+                    {
+                        foreach (var action in actions)
                         {
-                            matchAction.Time = playerText.Substring(0, timeEndIndex + 1);
-                            matchAction.Player = playerText.Substring(timeEndIndex + 1).Trim();
+                            var matchAction = new MatchAction
+                            {
+                                TeamType   = action.SelectSingleNode(".//div[@class='matchaction']/../..").GetAttributeValue("class", ""),
+                                ActionType = action.SelectSingleNode(".//div[@class='matchaction']").ChildNodes[0].GetAttributeValue("class", ""),
+                                Player     = action.SelectSingleNode(".//div[@class='player']").InnerText.Trim()
+                            };
+
+                            // peel out "45'+ Player Name"
+                            var playerText   = matchAction.Player;
+                            var timeEndIndex = playerText.IndexOf('\'');
+                            if (timeEndIndex > 0)
+                            {
+                                matchAction.Time   = playerText.Substring(0, timeEndIndex + 1);
+                                matchAction.Player = playerText.Substring(timeEndIndex + 1).Trim();
+                            }
+
+                            matchItem.Actions.Add(matchAction);
                         }
-
-                        matchItem.Actions.Add(matchAction);
                     }
+
+                    matchData.Matches.Add(matchItem);
                 }
-
-                matchData.Matches.Add(matchItem);
             }
-        }
 
-        return matchData;
-    }
-    catch (Exception ex)
-    {
-        Debug.WriteLine("GetMatchDataBetween error: " + ex.Message);
-        return null;
+            return matchData;
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine("GetMatchDataBetween error: " + ex.Message);
+            return null;
+        }
     }
 }
