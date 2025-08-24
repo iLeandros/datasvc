@@ -135,6 +135,7 @@ app.MapGet("/data/details/allhrefs",
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+	bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
 
     var (items, generatedUtc) = store.Export();
 
@@ -151,6 +152,11 @@ app.MapGet("/data/details/allhrefs",
                 MatchData? matchData = preferMatchBetweenHtml
                     ? null
                     : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+				
+				// NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
+                var barCharts = preferBetStatsHtml
+                    ? null
+                    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
 
                 return new
                 {
@@ -164,6 +170,10 @@ app.MapGet("/data/details/allhrefs",
                     // match between (your typed model or HTML)
                     matchDataBetween = matchData,
                     matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+					// NEW: bar charts parsed from teamsbetstatistics
+                    barCharts             = barCharts,
+                    teamsBetStatisticsHtml= preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
 
                     // unchanged sections for now
                     lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
