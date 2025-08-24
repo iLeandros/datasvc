@@ -5,74 +5,78 @@ using DataSvc.Models;
 
 namespace DataSvc.ModelHelperCalls;
 
-public static class MatchSeparatelyHelper
+public static MatchData? GetMatchDataSeparately(string htmlContent)
 {
-    public static MatchData? GetMatchDataSeparately(string htmlContent)
+    try
     {
-        try
+        var data = new MatchData();
+        var doc = new HtmlDocument();
+        doc.LoadHtml(htmlContent);
+
+        // all match cards under .lastteamsmatches
+        var items = doc.DocumentNode.SelectNodes(
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' lastteamsmatches ')]" +
+            "//*[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]"
+        );
+
+        if (items == null || items.Count == 0) return data;
+
+        string Clean(HtmlNode? n) => HtmlEntity.DeEntitize(n?.InnerText ?? "").Trim();
+        int ToInt(HtmlNode? n) => int.TryParse(Clean(n), out var v) ? v : 0;
+
+        foreach (var item in items)
         {
-            var matchData = new MatchData();
-            var document = new HtmlDocument();
-            document.LoadHtml(htmlContent);
-
-            var matchItems = document.DocumentNode.Descendants("div")
-                .Where(o => o.GetAttributeValue("class", "") == "lastteamsmatches")
-                .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
-                .ToList();
-            Debug.WriteLine("Matches: " + matchItems.Count);
-
-            if (matchItems != null)
+            var mi = new MatchItem
             {
-                foreach (var item in matchItems)
-                {
-                    var hostTeamNode  = item.SelectSingleNode(".//div[@class='hostteam']//div[contains(@class, 'name')]");
-                    var guestTeamNode = item.SelectSingleNode(".//div[@class='guestteam']//div[contains(@class, 'name')]");
+                Competition = Clean(item.SelectSingleNode(".//*[contains(@class,'competition')]")),
+                Date        = Clean(item.SelectSingleNode(".//*[contains(@class,'date')]")),
+                HostTeam    = Clean(item.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' hostteam ')]//*[contains(concat(' ',normalize-space(@class),' '),' name ')]")),
+                HostGoals   = ToInt(item.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' hostteam ')]//*[contains(concat(' ',normalize-space(@class),' '),' goals ')]")),
+                GuestTeam   = Clean(item.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' guestteam ')]//*[contains(concat(' ',normalize-space(@class),' '),' name ')]")),
+                GuestGoals  = ToInt(item.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' guestteam ')]//*[contains(concat(' ',normalize-space(@class),' '),' goals ')]"))
+            };
 
-                    var matchItem = new MatchItem
+            // actions inside this matchitem
+            var actions = item.SelectNodes(".//*[contains(concat(' ',normalize-space(@class),' '),' action ')]");
+            if (actions != null)
+            {
+                foreach (var a in actions)
+                {
+                    var side = a.Ancestors("div")
+                                .FirstOrDefault(n =>
+                                {
+                                    var c = n.GetAttributeValue("class", "");
+                                    return c.Contains("hostteam") || c.Contains("guestteam");
+                                })?.GetAttributeValue("class", "") ?? "";
+
+                    var ma = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' matchaction ')]");
+                    var firstEl = ma?.ChildNodes.FirstOrDefault(n => n.NodeType == HtmlNodeType.Element);
+                    var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
+
+                    var act = new MatchAction
                     {
-                        Competition = item.SelectSingleNode(".//div[@class='competition']").InnerText.Trim(),
-                        Date        = item.SelectSingleNode(".//div[@class='date']").InnerText.Trim(),
-                        HostTeam    = hostTeamNode.InnerText.Trim(),
-                        HostGoals   = int.Parse(item.SelectSingleNode(".//div[@class='hostteam']//div[@class='goals']").InnerText.Trim()),
-                        GuestTeam   = guestTeamNode.InnerText.Trim(),
-                        GuestGoals  = int.Parse(item.SelectSingleNode(".//div[@class='guestteam']//div[@class='goals']").InnerText.Trim())
+                        TeamType   = side.Contains("guestteam") ? "guestteam" : (side.Contains("hostteam") ? "hostteam" : ""),
+                        ActionType = firstEl?.GetAttributeValue("class", "") ?? "",
+                        Player     = Clean(playerNode ?? a)
                     };
 
-                    var actions = item.SelectNodes(".//div[@class='action']");
-                    if (actions != null)
-                    {
-                        foreach (var action in actions)
-                        {
-                            var matchAction = new MatchAction
-                            {
-                                TeamType   = action.SelectSingleNode(".//div[@class='matchaction']/../..").GetAttributeValue("class", ""),
-                                ActionType = action.SelectSingleNode(".//div[@class='matchaction']").ChildNodes[0].GetAttributeValue("class", ""),
-                                Player     = action.SelectSingleNode(".//div[@class='player']").InnerText.Trim()
-                            };
+                    // extract "45' Name"
+                    var s = act.Player;
+                    var p = s.IndexOf('\'');
+                    if (p > 0) { act.Time = s[..(p + 1)]; act.Player = s[(p + 1)..].Trim(); }
 
-                            // peel out "45'+ Player Name"
-                            var playerText   = matchAction.Player;
-                            var timeEndIndex = playerText.IndexOf('\'');
-                            if (timeEndIndex > 0)
-                            {
-                                matchAction.Time   = playerText.Substring(0, timeEndIndex + 1);
-                                matchAction.Player = playerText.Substring(timeEndIndex + 1).Trim();
-                            }
-
-                            matchItem.Actions.Add(matchAction);
-                        }
-                    }
-
-                    matchData.Matches.Add(matchItem);
+                    mi.Actions.Add(act);
                 }
             }
 
-            return matchData;
+            data.Matches.Add(mi);
         }
-        catch (Exception ex)
-        {
-            Debug.WriteLine("GetMatchDataSeparately error: " + ex.Message);
-            return null;
-        }
+
+        return data;
+    }
+    catch (Exception ex)
+    {
+        Debug.WriteLine("GetMatchDataSeparately error: " + ex.Message);
+        return null;
     }
 }
