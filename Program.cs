@@ -824,37 +824,55 @@ public sealed class DetailsScraperService
 		//  - contains 'matchitem' rows (strong signal), otherwise
 		//  - has the longest inner HTML, and
 		//  - is not just &nbsp; / whitespace.
-		string? Section(string cls, bool preferFilled = false)
+		static string? PickMatchBetween(HtmlDocument doc, out int foundNodes, out int bestRowCount)
 		{
-		    var nodes = doc.DocumentNode.SelectNodes($"//div[contains(@class,'{cls}')]");
-		    if (nodes is null || nodes.Count == 0) return null;
+		    var nodes = doc.DocumentNode.SelectNodes(
+		        "//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
 		
-		    if (!preferFilled)
-		        return nodes[0].OuterHtml; // keep old behavior for the other sections
+		    foundNodes = nodes?.Count ?? 0;
+		    bestRowCount = 0;
+		
+		    if (nodes is null || nodes.Count == 0) return null;
 		
 		    HtmlNode? best = null;
 		    int bestScore = int.MinValue;
 		
 		    foreach (var n in nodes)
 		    {
-		        var inner = n.InnerHtml ?? string.Empty;
-		        var text  = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
+		        // How many match rows does this node have?
+		        var rows = n.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]");
+		        int rowCount = rows?.Count ?? 0;
 		
-		        // score: favor nodes with actual rows, penalize empty placeholders, then by length
-		        int score = inner.Length;
-		        if (inner.IndexOf("matchitem", StringComparison.OrdinalIgnoreCase) >= 0) score += 100_000;
-		        if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000;
+		        // Inner text without NBSP/whitespace
+		        var text = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
 		
-		        if (score > bestScore) { bestScore = score; best = n; }
+		        // Scoring:
+		        //  - rowCount dominates (prefer blocks that visibly have rows)
+		        //  - then prefer longer HTML
+		        //  - heavily penalize empty/nbsp placeholders
+		        int score = rowCount * 1_000_000 + (n.InnerHtml?.Length ?? 0);
+		        if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000_000;
+		
+		        if (score > bestScore)
+		        {
+		            bestScore = score;
+		            best = n;
+		            bestRowCount = rowCount;
+		        }
 		    }
 		
 		    return best?.OuterHtml ?? nodes[0].OuterHtml;
 		}
 
+		int mbDivs, mbRows;
+		var matchBetweenHtml = PickMatchBetween(doc, out mbDivs, out mbRows);
+		
+		// (Optional) log what we saw to help debug odd pages
+		Debug.WriteLine($"matchbtwteams: found {mbDivs} node(s); picked block with {mbRows} row(s)");
 	
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          Section("teamsinfo"),
-	        MatchBetweenHtml:       Section("matchbtwteams", preferFilled: true), // ⬅️ changed
+	        MatchBetweenHtml:       matchBetweenHtml, // <-- now the filled block
 	        LastTeamsMatchesHtml:   Section("lastteamsmatches"),
 	        TeamsStatisticsHtml:    Section("teamsstatistics"),
 	        TeamsBetStatisticsHtml: Section("teamsbetstatistics")
