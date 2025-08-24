@@ -5,7 +5,7 @@ using DataSvc.Models;
 
 namespace DataSvc.ModelHelperCalls;
 
-public static class MatchBetweenHelper
+public static class MatchSeparatelyHelper
 {
     public static MatchData? GetMatchDataSeparately(string htmlContent)
     {
