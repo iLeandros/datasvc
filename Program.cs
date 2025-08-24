@@ -809,12 +809,34 @@ public sealed class DetailsScraperService
 	    });
 	
 	    await Task.WhenAll(tasks);
-	
-	    // NEW: prune anything not in today’s/current parsed set
-	    var deleted = _store.ShrinkTo(hrefs);
-	
-	    await DetailsFiles.SaveAsync(_store);
-	    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
+
+		// (A) If we parsed 0 hrefs this tick, keep the existing cache intact.
+		if (hrefs.Count == 0)
+		{
+		    errors.Add("Parsed 0 hrefs — skipped prune/save to avoid wiping cache.");
+		    return new RefreshSummary(refreshed, skipped, 0, errors, DateTimeOffset.UtcNow);
+		}
+		
+		// (B) If we had zero verified items (nothing refreshed and nothing valid by TTL),
+		//     keep the cache instead of pruning.
+		if ((refreshed + skipped) == 0 && _store.Index().Count > 0)
+		{
+		    errors.Add("No successes this tick — kept previous cache, skipping prune/save.");
+		    return new RefreshSummary(refreshed, skipped, 0, errors, DateTimeOffset.UtcNow);
+		}
+		
+		var deleted = _store.ShrinkTo(hrefs);
+		
+		// (C) If after all that we somehow have 0 items, avoid persisting an empty file.
+		if (_store.Index().Count == 0)
+		{
+		    errors.Add("Store empty after refresh — not saving empty details.json.");
+		    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
+		}
+		
+		await DetailsFiles.SaveAsync(_store);
+		return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
+
 	}
 	
 	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
