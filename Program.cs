@@ -876,33 +876,38 @@ public sealed class DetailsScraperService
 	        return best?.OuterHtml ?? nodes[0].OuterHtml;
 	    }
 		// Helper used in your scraper (Program.cs)
+		// Program.cs — replace SectionFactsWithRows with this version
 		static string? SectionFactsWithRows(HtmlDocument d)
 		{
-		    // Prefer facts under the matchbtwteams container that has the most datarows
-		    var containers = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
-		    HtmlNode? bestFacts = null;
-		    int best = -1;
+		    HtmlNode? pick = null;
+		    int bestScore = -1;
 		
-		    if (containers != null)
+		    // 1) Prefer facts under the densest "matchbtwteams" container
+		    var containers = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]") ?? new HtmlNodeCollection(null);
+		    IEnumerable<HtmlNode> underContainers = containers
+		        .SelectMany(c => c.SelectNodes(".//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ') or @id='facts' or contains(@id,'facts')]") ?? new HtmlNodeCollection(null));
+		
+		    // 2) Global fallbacks
+		    var globalFacts = d.DocumentNode.SelectNodes("//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ') or @id='facts' or contains(@id,'facts')]") 
+		                     ?? new HtmlNodeCollection(null);
+		
+		    // 3) Last-ditch: any div whose heading/title contains 'facts'
+		    var byHeading = d.DocumentNode.SelectNodes(
+		        "//div[.//h1|.//h2|.//h3|.//div[contains(@class,'title')]]")
+		        ?.Where(n => (HtmlEntity.DeEntitize(n.InnerText ?? "").ToLowerInvariant()).Contains("facts"))
+		        ?? Enumerable.Empty<HtmlNode>();
+		
+		    foreach (var n in underContainers.Concat(globalFacts).Concat(byHeading).Distinct())
 		    {
-		        foreach (var c in containers)
-		        {
-		            var fb = c.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]")
-		                      ?.OrderByDescending(b => b.SelectNodes(".//div[contains(@class,'datarow')]")?.Count ?? 0)
-		                      .FirstOrDefault();
-		
-		            var count = fb?.SelectNodes(".//div[contains(@class,'datarow')]")?.Count ?? 0;
-		            if (count > best) { best = count; bestFacts = fb; }
-		        }
+		        int rows = n.SelectNodes(".//*[contains(@class,'datarow')]")?.Count ?? 0;
+		        int len  = HtmlEntity.DeEntitize(n.InnerText ?? "").Trim().Length;
+		        int score = rows * 1000 + len; // prefer row-rich, else longer text
+		        if (score > bestScore) { bestScore = score; pick = n; }
 		    }
 		
-		    // Fallback: longest facts block anywhere
-		    bestFacts ??= d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]")
-		                                ?.OrderByDescending(b => (b.InnerHtml?.Length ?? 0))
-		                                .FirstOrDefault();
-		
-		    return bestFacts?.OuterHtml;
+		    return pick?.OuterHtml;
 		}
+
 
 	
 	    // Use helpers
