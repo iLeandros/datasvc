@@ -130,6 +130,7 @@ app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
      [FromQuery] string? teamsInfo,
      [FromQuery] string? matchBetween,
+	 [FromQuery] string? separateMatches,
      [FromQuery] string? betStats,
 	 [FromQuery] string? facts,
 	 [FromQuery] string? lastTeamsMatches) =>
@@ -139,7 +140,8 @@ app.MapGet("/data/details/allhrefs",
     bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
 	bool preferFactsHtml        = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase); // <— NEW
 	bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
-
+	bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+	
     var (items, generatedUtc) = store.Export();
 
     var byHref = items
@@ -154,6 +156,13 @@ app.MapGet("/data/details/allhrefs",
                 var matchDataBetween = preferMatchBetweenHtml
                     ? null
                     : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+
+				// NEW: parse the per-team recent matches (your new helper)
+				var recentMatchesSeparate = preferSeparateMatchesHtml
+				    ? null
+				    : GetMatchDataSeperately.GetMatchDataSeparately(
+				          i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+
 
                 // NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
                 var barCharts = preferBetStatsHtml
@@ -199,6 +208,10 @@ app.MapGet("/data/details/allhrefs",
                     // matches between
                     matchDataBetween = matchDataBetween,
                     matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+					recentMatchesSeparate      = recentMatchesSeparate, // NEW parsed object
+					recentMatchesSeparateHtml  = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+
 
                     // NEW: bar charts parsed from teamsbetstatistics
                     barCharts             = barCharts,
@@ -644,6 +657,7 @@ public static class GetStartupMainTableDataGroup2024
 public record DetailsPayload(
     string? TeamsInfoHtml,
     string? MatchBetweenHtml,
+	string? TeamMatchesSeparateHtml, // NEW
     string? LastTeamsMatchesHtml,
     string? TeamsStatisticsHtml,
     string? TeamsBetStatisticsHtml,
@@ -979,7 +993,9 @@ public sealed class DetailsScraperService
 	    var teamsBetStatsHtml    = SectionFirst(doc, "teamsbetstatistics");
 		// NEW: the 6th div
 		var factsHtml = SectionFactsWithRows(doc); // instead of SectionFirst(doc, "facts")
-	
+
+		var teamMatchesSeparateHtml = SectionFirst(doc, "lastteamsmatches"); // NEW
+		
 	    int mbDivs, mbRows;
 	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
 	    Debug.WriteLine($"[details] matchbtwteams: found {mbDivs} block(s); picked block with {mbRows} row(s)");
@@ -987,6 +1003,7 @@ public sealed class DetailsScraperService
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          teamsInfoHtml,
 	        MatchBetweenHtml:       matchBetweenHtml,
+			TeamMatchesSeparateHtml: teamMatchesSeparateHtml, // NEW
 	        LastTeamsMatchesHtml:   lastTeamsMatchesHtml,
 	        TeamsStatisticsHtml:    teamsStatisticsHtml,
 	        TeamsBetStatisticsHtml: teamsBetStatsHtml,
