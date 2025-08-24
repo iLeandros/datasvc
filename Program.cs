@@ -817,8 +817,8 @@ public sealed class DetailsScraperService
 	    var doc = new HtmlDocument();
 	    doc.LoadHtml(html);
 	
-	    string? Section(string cls)
-	        => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
+	    //string? Section(string cls)
+	    //    => doc.DocumentNode.SelectSingleNode($"//div[contains(@class,'{cls}')]")?.OuterHtml;
 		
 		// Pick a section by class. When preferFilled==true, choose the node that looks "real":
 		//  - contains 'matchitem' rows (strong signal), otherwise
