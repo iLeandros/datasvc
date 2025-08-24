@@ -1,74 +1,82 @@
-// File: ModelHelperCalls/GetTeamsStatistic.cs
+// File: ModelHelperCalls/GetTeamsStatistics.cs
+using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.Linq;
 using HtmlAgilityPack;
-using DataSvc.Models;
+using DataSvc.Models; // TeamStatistics, FactItem
 
-namespace DataSvc.ModelHelperCalls;
-
-public static class GetTeamStatisticsHelper 
+namespace DataSvc.ModelHelperCalls
 {
-    public static async Task<List<TeamStatistics>> GetTeamsStatistics(string htmlContent)
+    public static class GetTeamStatisticsHelper
     {
-        try
+        public static List<TeamStatistics> GetTeamsStatistics(string? htmlContent)
         {
-            var website = new HtmlDocument();
-            website.LoadHtml(htmlContent);
-    
-            var halfContainers = website.DocumentNode.Descendants("div")
-                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "teamsstatistics")?
-                .Descendants("div").Where(o => o.GetAttributeValue("class", "") == "halfcontainer").ToList();
-    
-            if (halfContainers == null || halfContainers.Count < 2)
-                throw new Exception("Team match containers not found or insufficient number");
-    
             var teamStatisticsList = new List<TeamStatistics>();
-    
-            foreach (var container in halfContainers)
+            if (string.IsNullOrWhiteSpace(htmlContent)) return teamStatisticsList;
+
+            try
             {
-                var teamName = container.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText.Trim();
-                var teamLogoUrl = container.Descendants("img").FirstOrDefault()?.GetAttributeValue("src", string.Empty);
-                var factItems = container.Descendants("div")
-                    .Where(o => o.GetAttributeValue("class", "") == "factitem")
-                    .Select(factItem => new FactItem
-                    {
-                        Value = CleanAndParseValue(factItem.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "value")?.InnerText.Trim()),
-                        Label = factItem.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "label")?.InnerText.Trim()
-                    })
+                var doc = new HtmlDocument();
+                doc.LoadHtml(htmlContent);
+
+                var halfContainers = doc.DocumentNode
+                    .Descendants("div")
+                    .FirstOrDefault(o => o.GetAttributeValue("class", "") == "teamsstatistics")
+                    ?.Descendants("div") // ← missing dot fixed
+                    .Where(o => o.GetAttributeValue("class", "") == "halfcontainer")
                     .ToList();
-    
-                var teamStatistics = new TeamStatistics
+
+                if (halfContainers == null || halfContainers.Count < 2)
                 {
-                    TeamName = teamName,
-                    TeamLogoUrl = teamLogoUrl,
-                    FactItems = factItems
-                };
-    
-                teamStatisticsList.Add(teamStatistics);
+                    Debug.WriteLine("GetTeamsStatistics: containers not found or insufficient number");
+                    return teamStatisticsList;
+                }
+
+                string Clean(string? s) =>
+                    HtmlEntity.DeEntitize(s ?? string.Empty).Replace("\u00A0", " ").Trim();
+
+                foreach (var container in halfContainers)
+                {
+                    var teamName   = Clean(container.Descendants("div")
+                                          .FirstOrDefault(o => o.GetAttributeValue("class","") == "name")?.InnerText);
+                    var teamLogoUrl= container.Descendants("img")
+                                          .FirstOrDefault()?.GetAttributeValue("src", string.Empty);
+
+                    var factItems = container.Descendants("div")
+                        .Where(o => o.GetAttributeValue("class", "") == "factitem")
+                        .Select(fi =>
+                        {
+                            var valText = Clean(fi.Descendants("div")
+                                            .FirstOrDefault(o => o.GetAttributeValue("class","") == "value")?.InnerText);
+                            var lblText = Clean(fi.Descendants("div")
+                                            .FirstOrDefault(o => o.GetAttributeValue("class","") == "label")?.InnerText);
+                            return new FactItem { Value = ParseDouble(valText), Label = lblText };
+                        })
+                        .ToList();
+
+                    teamStatisticsList.Add(new TeamStatistics
+                    {
+                        TeamName    = teamName,
+                        TeamLogoUrl = teamLogoUrl,
+                        FactItems   = factItems
+                    });
+                }
             }
-    
+            catch (Exception ex)
+            {
+                Debug.WriteLine("GetTeamsStatistics error: " + ex.Message);
+            }
+
             return teamStatisticsList;
         }
-        catch (Exception ex)
+
+        private static double ParseDouble(string s)
         {
-            Debug.WriteLine("GetTeamsStatistics: " + ex.Message);
-            return null;
+            // Keep digits and '.' only, then parse invariantly (e.g., "45.5%")
+            var cleaned = new string(s.Where(c => char.IsDigit(c) || c == '.').ToArray()).TrimEnd('.');
+            return double.TryParse(cleaned, NumberStyles.Any, CultureInfo.InvariantCulture, out var v) ? v : 0d;
         }
-    }
-    private static double CleanAndParseValue(string value)
-    {
-        // Remove all non-numeric characters except for periods
-        string cleanedValue = new string(value.Where(c => char.IsDigit(c) || c == '.').ToArray());
-    
-        // Remove trailing period if it exists
-        cleanedValue = cleanedValue.TrimEnd('.');
-    
-        // Attempt to parse the cleaned value to a double
-        if (double.TryParse(cleanedValue, out double numericValue))
-        {
-            return numericValue;
-        }
-    
-        // If parsing fails, return 0 as a default value
-        return 0;
     }
 }
