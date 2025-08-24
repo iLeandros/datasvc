@@ -125,6 +125,10 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
 // Optional toggles:
 //   ?teamsInfo=html        -> return original teamsinfo HTML (omit parsed object)
 //   ?matchBetween=html     -> return original matchbtwteams HTML (omit parsed object)
+// All details for all hrefs (keyed by normalized href)
+// Toggles:
+//   ?teamsInfo=html      -> return original teamsinfo HTML (omit parsed object)
+//   ?matchBetween=html   -> return original matchbtwteams HTML (omit parsed object)
 app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
      [FromQuery] string? teamsInfo,
@@ -141,24 +145,28 @@ app.MapGet("/data/details/allhrefs",
             i => i.Href,
             i =>
             {
-                // parse only when requested (and keep types opaque so we don’t couple to TeamBasicInfo)
+                // parse teams info if you've already wired your TeamsInfoParser; otherwise keep as-is
                 var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
-                var parsedBetween   = preferMatchBetweenHtml ? null : GetMatchesBetweenTeamsHelper.ParseFromHtml(i.Payload.MatchBetweenHtml);
+
+                // NEW: call your helper to parse the cached matchbtwteams HTML
+                MatchData? matchData = preferMatchBetweenHtml
+                    ? null
+                    : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
 
                 return new
                 {
                     href           = i.Href,
                     lastUpdatedUtc = i.LastUpdatedUtc,
 
-                    // Teams info: either parsed object or original HTML (never both)
-                    teamsInfo      = parsedTeamsInfo,
-                    teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+                    // teams info (object or HTML)
+                    teamsInfo     = parsedTeamsInfo,
+                    teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
 
-                    // Matches between: either parsed object or original HTML (never both)
-                    matchesBetween   = parsedBetween,
+                    // match between (your typed model or HTML)
+                    matchDataBetween = matchData,
                     matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
 
-                    // Others unchanged for now (still HTML)
+                    // unchanged sections for now
                     lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
                     teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
                     teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
@@ -175,6 +183,7 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+
 
 
 
