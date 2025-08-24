@@ -130,7 +130,7 @@ app.MapGet("/data/details/allhrefs",
     ([FromServices] DetailsStore store,
      [FromQuery] string? teamsInfo,
      [FromQuery] string? matchBetween,
-     [FromQuery] string? betStats),
+     [FromQuery] string? betStats,
 	 [FromQuery] string? facts) =>
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
