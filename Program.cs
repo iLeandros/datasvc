@@ -194,7 +194,7 @@ app.MapGet("/data/details/allhrefs",
 					//lastTeamsMatchesHtml   = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
 
                     // unchanged for now
-					lastTeamsWinrate	   = i.Payload.lastTeamsWinrate
+					lastTeamsWinrate	   = i.Payload.LastTeamsMatchesHtml
                     teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml
                 };
             },
