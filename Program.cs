@@ -134,7 +134,8 @@ app.MapGet("/data/details/allhrefs",
      [FromQuery] string? betStats,
 	 [FromQuery] string? facts,
 	 [FromQuery] string? lastTeamsMatches,
-	 [FromQuery] string? teamsStatistics) =>  // NEW
+	 [FromQuery] string? teamsStatistics,
+	 [FromQuery] string? teamStandings) => // NEW
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
@@ -143,6 +144,7 @@ app.MapGet("/data/details/allhrefs",
 	bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
 	bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
 	bool preferTeamsStatisticsHtml  = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase); // NEW
+	bool preferTeamStandingsHtml = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase); // NEW
 	
     var (items, generatedUtc) = store.Export();
 
@@ -207,8 +209,12 @@ app.MapGet("/data/details/allhrefs",
 				}
 
 				var teamsStats = preferTeamsStatisticsHtml
-			    ? null
-			    : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+				    ? null
+				    : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+
+				var teamStandingsParsed = preferTeamStandingsHtml
+	                ? null
+	                : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty); // NEW
 				
                 return new
                 {
@@ -241,6 +247,9 @@ app.MapGet("/data/details/allhrefs",
                     // NEW: team statistics (typed or raw)
 				    teamsStatistics     = teamsStats,
 				    teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null
+
+					teamStandings     = teamStandingsParsed,
+                	teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
                 };
             },
             StringComparer.OrdinalIgnoreCase
@@ -675,7 +684,8 @@ public record DetailsPayload(
     string? LastTeamsMatchesHtml,
     string? TeamsStatisticsHtml,
     string? TeamsBetStatisticsHtml,
-	string? FactsHtml // <— NEW (nullable for backward compat)
+	string? FactsHtml, // <— NEW (nullable for backward compat)
+	string? TeamStandingsHtml // NEW
 );
 
 public record DetailsRecord(string Href, DateTimeOffset LastUpdatedUtc, DetailsPayload Payload);
@@ -1013,7 +1023,9 @@ public sealed class DetailsScraperService
 	    int mbDivs, mbRows;
 	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
 	    Debug.WriteLine($"[details] matchbtwteams: found {mbDivs} block(s); picked block with {mbRows} row(s)");
-	
+
+		var teamStandingsHtml = SectionFirst(doc, "teamsstandings"); // NEW
+		
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          teamsInfoHtml,
 	        MatchBetweenHtml:       matchBetweenHtml,
@@ -1021,7 +1033,8 @@ public sealed class DetailsScraperService
 	        LastTeamsMatchesHtml:   lastTeamsMatchesHtml,
 	        TeamsStatisticsHtml:    teamsStatisticsHtml,
 	        TeamsBetStatisticsHtml: teamsBetStatsHtml,
-			FactsHtml:              factsHtml
+			FactsHtml:              factsHtml,
+			TeamStandingsHtml:    teamStandingsHtml // NEW
 	    );
 	
 	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
