@@ -167,9 +167,19 @@ app.MapGet("/data/details/allhrefs",
 
 
                 // NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
-                var barCharts = preferBetStatsHtml
-                    ? null
-                    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+                //var barCharts = preferBetStatsHtml
+                //    ? null
+                //    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+
+				var rawBarCharts = preferBetStatsHtml ? null
+				    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+				
+				var barCharts = rawBarCharts?.Select(b => new {
+				    title = b.Title,
+				    halfContainerId = b.HalfContainerId,
+				    items = b.ToList() // materialize the MatchFactData entries
+				}).ToList();
+
 
 				// NEW: facts (typed list or raw HTML)
 	            var matchFacts = preferFactsHtml
