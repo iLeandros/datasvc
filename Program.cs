@@ -131,14 +131,14 @@ app.MapGet("/data/details/allhrefs",
      [FromQuery] string? teamsInfo,
      [FromQuery] string? matchBetween,
      [FromQuery] string? betStats,
-	 [FromQuery] string? facts) =>
-	 //[FromQuery] string? lastTeamsMatches) =>
+	 [FromQuery] string? facts,
+	 [FromQuery] string? lastTeamsMatches) =>
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
     bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
 	bool preferFactsHtml        = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase); // <— NEW
-	//bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+	bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
 
     var (items, generatedUtc) = store.Export();
 
@@ -165,9 +165,9 @@ app.MapGet("/data/details/allhrefs",
 	                ? null
 	                : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
 
-				//var lastTeamsWinrate = preferLastTeamsHtml 
-				//	? null
-	    		//	: LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
+				var lastTeamsWinrate = preferLastTeamsHtml 
+					? null
+	    			: LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
 
                 return new
                 {
@@ -190,11 +190,11 @@ app.MapGet("/data/details/allhrefs",
 	                matchFacts = matchFacts,
 	                factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
 
-					//lastTeamsWinrate       = lastTeamsWinrate,                  // NEW (3x2 matrix: [W,D,L] x [team1,team2])
-					//lastTeamsMatchesHtml   = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+					lastTeamsWinrate       = lastTeamsWinrate,                  // NEW (3x2 matrix: [W,D,L] x [team1,team2])
+					lastTeamsMatchesHtml   = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
 
                     // unchanged for now
-					lastTeamsWinrate	   = i.Payload.LastTeamsMatchesHtml,
+					//lastTeamsWinrate	   = i.Payload.LastTeamsMatchesHtml,
                     teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml
                 };
             },
