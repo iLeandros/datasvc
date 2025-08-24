@@ -135,7 +135,6 @@ app.MapGet("/data/details/allhrefs",
 {
     bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
     bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-	bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
 
     var (items, generatedUtc) = store.Export();
 
@@ -145,37 +144,34 @@ app.MapGet("/data/details/allhrefs",
             i => i.Href,
             i =>
             {
-                // parse teams info if you've already wired your TeamsInfoParser; otherwise keep as-is
+                // teams info (object unless ?teamsInfo=html)
                 var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
 
-                // NEW: call your helper to parse the cached matchbtwteams HTML
+                // match between (typed unless ?matchBetween=html)
                 MatchData? matchData = preferMatchBetweenHtml
                     ? null
                     : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
-				
-				// NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
-                var barCharts = preferBetStatsHtml
-                    ? null
-                    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+
+                // NEW: bar charts (always parsed as a separate object)
+                var barCharts = BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
 
                 return new
                 {
                     href           = i.Href,
                     lastUpdatedUtc = i.LastUpdatedUtc,
 
-                    // teams info (object or HTML)
+                    // teams info
                     teamsInfo     = parsedTeamsInfo,
                     teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
 
-                    // match between (your typed model or HTML)
+                    // head-to-head
                     matchDataBetween = matchData,
                     matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
 
-					// NEW: bar charts parsed from teamsbetstatistics
-                    barCharts             = barCharts,
-                    teamsBetStatisticsHtml= preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+                    // NEW: barcharts do NOT replace the HTML
+                    barCharts = barCharts,
 
-                    // unchanged sections for now
+                    // keep the original HTML blocks as-is
                     lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
                     teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
                     teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
@@ -192,6 +188,7 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+
 
 
 
