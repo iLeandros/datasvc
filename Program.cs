@@ -875,37 +875,50 @@ public sealed class DetailsScraperService
 	        }
 	        return best?.OuterHtml ?? nodes[0].OuterHtml;
 	    }
-		// Helper used in your scraper (Program.cs)
 		// Program.cs — replace SectionFactsWithRows with this version
 		static string? SectionFactsWithRows(HtmlDocument d)
 		{
-		    HtmlNode? pick = null;
-		    int bestScore = -1;
+		    // Case-insensitive token match helper via XPath translate()
+		    const string ToLower = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+		    const string ToUpper = "abcdefghijklmnopqrstuvwxyz";
+		    string tokenFacts = " contains(concat(' ', translate(normalize-space(@class), '" + ToLower + "', '" + ToUpper + "'), ' '), ' facts ') ";
 		
-		    // 1) Prefer facts under the densest "matchbtwteams" container
-		    var containers = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]") ?? new HtmlNodeCollection(null);
-		    IEnumerable<HtmlNode> underContainers = containers
-		        .SelectMany(c => c.SelectNodes(".//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ') or @id='facts' or contains(@id,'facts')]") ?? new HtmlNodeCollection(null));
+		    // 1) Primary candidates: any DIV/SECTION with class contains 'facts' OR id contains 'facts' (case-insensitive)
+		    var candidates = d.DocumentNode.SelectNodes(
+		        "//*[self::div or self::section][" + tokenFacts + "] | " +
+		        "//*[@id and contains(translate(@id,'" + ToLower + "','" + ToUpper + "'),'facts')]"
+		    ) ?? new HtmlNodeCollection(null);
 		
-		    // 2) Global fallbacks
-		    var globalFacts = d.DocumentNode.SelectNodes("//*[contains(concat(' ', normalize-space(@class), ' '), ' facts ') or @id='facts' or contains(@id,'facts')]") 
-		                     ?? new HtmlNodeCollection(null);
-		
-		    // 3) Last-ditch: any div whose heading/title contains 'facts'
-		    var byHeading = d.DocumentNode.SelectNodes(
-		        "//div[.//h1|.//h2|.//h3|.//div[contains(@class,'title')]]")
-		        ?.Where(n => (HtmlEntity.DeEntitize(n.InnerText ?? "").ToLowerInvariant()).Contains("facts"))
-		        ?? Enumerable.Empty<HtmlNode>();
-		
-		    foreach (var n in underContainers.Concat(globalFacts).Concat(byHeading).Distinct())
+		    // 2) Anchor hint: the page uses #linkmatchfacts – grab the first facts-block that follows it
+		    var anchor = d.DocumentNode.SelectSingleNode("//*[@name='linkmatchfacts' or @id='linkmatchfacts']");
+		    if (anchor != null)
 		    {
-		        int rows = n.SelectNodes(".//*[contains(@class,'datarow')]")?.Count ?? 0;
-		        int len  = HtmlEntity.DeEntitize(n.InnerText ?? "").Trim().Length;
-		        int score = rows * 1000 + len; // prefer row-rich, else longer text
-		        if (score > bestScore) { bestScore = score; pick = n; }
+		        var near = anchor.SelectSingleNode(
+		            "following::*[self::div or self::section][" + tokenFacts + "][1]"
+		        );
+		        if (near != null) candidates.Add(near);
 		    }
 		
-		    return pick?.OuterHtml;
+		    // 3) If there are multiple blocks, prefer the one that looks "filled"
+		    HtmlNode? best = null;
+		    int bestScore = int.MinValue;
+		
+		    foreach (var n in candidates.Distinct())
+		    {
+		        // tolerate case differences for inner nodes too
+		        var rows  = n.SelectNodes(".//*[contains(translate(@class,'" + ToLower + "','" + ToUpper + "'),'datarow')]")?.Count ?? 0;
+		        var chart = n.SelectNodes(".//*[contains(translate(@class,'" + ToLower + "','" + ToUpper + "'),'stackedbarchart')]")?.Count ?? 0;
+		        var len   = n.InnerHtml?.Length ?? 0;
+		
+		        // rows dominate, then presence of chart, then length
+		        int score = rows * 1_000_000 + chart * 10_000 + len;
+		        if (score > bestScore) { bestScore = score; best = n; }
+		    }
+		
+		    // Debug aid (optional)
+		    Debug.WriteLine($"[details] facts: candidates={candidates.Count}, pickedScore={bestScore}");
+		
+		    return best?.OuterHtml;
 		}
 
 
