@@ -875,6 +875,35 @@ public sealed class DetailsScraperService
 	        }
 	        return best?.OuterHtml ?? nodes[0].OuterHtml;
 	    }
+		// Helper used in your scraper (Program.cs)
+		static string? SectionFactsWithRows(HtmlDocument d)
+		{
+		    // Prefer facts under the matchbtwteams container that has the most datarows
+		    var containers = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
+		    HtmlNode? bestFacts = null;
+		    int best = -1;
+		
+		    if (containers != null)
+		    {
+		        foreach (var c in containers)
+		        {
+		            var fb = c.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]")
+		                      ?.OrderByDescending(b => b.SelectNodes(".//div[contains(@class,'datarow')]")?.Count ?? 0)
+		                      .FirstOrDefault();
+		
+		            var count = fb?.SelectNodes(".//div[contains(@class,'datarow')]")?.Count ?? 0;
+		            if (count > best) { best = count; bestFacts = fb; }
+		        }
+		    }
+		
+		    // Fallback: longest facts block anywhere
+		    bestFacts ??= d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' facts ')]")
+		                                ?.OrderByDescending(b => (b.InnerHtml?.Length ?? 0))
+		                                .FirstOrDefault();
+		
+		    return bestFacts?.OuterHtml;
+		}
+
 	
 	    // Use helpers
 	    var teamsInfoHtml        = SectionFirst(doc, "teamsinfo");
@@ -882,7 +911,7 @@ public sealed class DetailsScraperService
 	    var teamsStatisticsHtml  = SectionFirst(doc, "teamsstatistics");
 	    var teamsBetStatsHtml    = SectionFirst(doc, "teamsbetstatistics");
 		// NEW: the 6th div
-		var factsHtml            = SectionFirst(doc, "facts");
+		var factsHtml = SectionFactsWithRows(doc); // instead of SectionFirst(doc, "facts")
 	
 	    int mbDivs, mbRows;
 	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
