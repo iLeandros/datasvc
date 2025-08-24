@@ -246,7 +246,7 @@ app.MapGet("/data/details/allhrefs",
 
                     // NEW: team statistics (typed or raw)
 				    teamsStatistics     = teamsStats,
-				    teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null
+				    teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
 
 					teamStandings     = teamStandingsParsed,
                 	teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
