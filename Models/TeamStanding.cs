@@ -1,3 +1,5 @@
+namespace DataSvc.Models;
+
 public class TeamStanding
 {
     public int Position { get; set; }
