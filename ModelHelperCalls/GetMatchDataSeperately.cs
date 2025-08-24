@@ -1,4 +1,4 @@
-// File: ModelHelperCalls/GetMatchDataBetween.cs
+// File: ModelHelperCalls/GetMatchDataSeparately.cs
 using System.Diagnostics;
 using HtmlAgilityPack;
 using DataSvc.Models;
@@ -71,7 +71,7 @@ public static class MatchBetweenHelper
         }
         catch (Exception ex)
         {
-            Debug.WriteLine("GetMatchDataBetween error: " + ex.Message);
+            Debug.WriteLine("GetMatchDataSeparately error: " + ex.Message);
             return null;
         }
     }
