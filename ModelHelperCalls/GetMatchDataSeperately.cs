@@ -16,7 +16,7 @@ public static class MatchBetweenHelper
             document.LoadHtml(htmlContent);
 
             var matchItems = document.DocumentNode.Descendants("div")
-                .Where(o => o.GetAttributeValue("class", "") == "matchbtwteams")
+                .Where(o => o.GetAttributeValue("class", "") == "lastteamsmatches")
                 .SelectMany(o => o.Descendants("div").Where(p => p.GetAttributeValue("class", "") == "matchitem"))
                 .ToList();
             Debug.WriteLine("Matches: " + matchItems.Count);
