@@ -109,6 +109,87 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 
 // ?href=...
+app.MapPost("/data/parsed/cleanup",
+    ([FromServices] ResultStore store,
+     [FromQuery] bool clear = false,
+     [FromQuery] bool deleteFile = false) =>
+{
+    int deletedFiles = 0;
+
+    if (clear)
+    {
+        // set an empty snapshot (Payload null); /data/parsed will return 404 afterwards
+        var snap = new DataSnapshot(DateTimeOffset.UtcNow, false, null, "cleared");
+        store.Set(snap);
+    }
+
+    if (deleteFile && System.IO.File.Exists(DataFiles.File))
+    {
+        System.IO.File.Delete(DataFiles.File);
+        deletedFiles = 1;
+    }
+
+    return Results.Json(new
+    {
+        ok = true,
+        cleared = clear,
+        deletedFiles
+    });
+});
+app.MapPost("/data/details/cleanup",
+    async ([FromServices] ResultStore root,
+           [FromServices] DetailsStore store,
+           [FromQuery] bool clear = false,
+           [FromQuery] bool pruneFromParsed = false,
+           [FromQuery] int? olderThanMinutes = null,
+           [FromQuery] bool dryRun = false) =>
+{
+    // snapshot current state
+    var (items, now) = store.Export();  // gives you the list + "now" timestamp
+    int before = items.Count;
+
+    if (clear)
+    {
+        if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove = before, wouldKeep = 0 });
+        store.Import(Array.Empty<DetailsRecord>()); // clears map via Import()
+        await DetailsFiles.SaveAsync(store);
+        return Results.Json(new { ok = true, removed = before, kept = 0 });
+    }
+
+    // Build "kept" set
+    IEnumerable<DetailsRecord> kept = items;
+
+    if (olderThanMinutes is int min && min >= 0)
+    {
+        var cutoff = now - TimeSpan.FromMinutes(min);
+        kept = kept.Where(i => i.LastUpdatedUtc >= cutoff);
+    }
+
+    if (pruneFromParsed)
+    {
+        var hrefs = root.Current?.Payload?.TableDataGroup?
+            .SelectMany(g => g)
+            .Select(i => i.Href)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Select(DetailsStore.Normalize)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        kept = kept.Where(i => hrefs.Contains(i.Href));
+    }
+
+    var keptList = kept.ToList();
+    int removed = before - keptList.Count;
+
+    if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove = removed, wouldKeep = keptList.Count });
+
+    // Apply & persist
+    store.Import(keptList);              // Import() clears and re-adds items
+    await DetailsFiles.SaveAsync(store); // persist to /var/lib/datasvc/details.json
+
+    return Results.Json(new { ok = true, removed, kept = keptList.Count });
+});
+
 app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] string href) =>
 {
     if (string.IsNullOrWhiteSpace(href))
