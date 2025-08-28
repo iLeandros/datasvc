@@ -5,18 +5,18 @@ namespace DataSvc.Models;
 
 public class TableDataGroup : ObservableCollection<TableDataItem>
 {
-    [JsonPropertyName("groupImage")] public string? GroupImage { get; set; }
-    [JsonPropertyName("groupName")]  public string? GroupName  { get; set; }
-    [JsonPropertyName("tipLabel")]   public string? TipLabel   { get; set; }
+    [JsonPropertyName("groupImage")] public string? ImagePath { get; set; }
+    [JsonPropertyName("groupName")]  public string? Championship  { get; set; }
+    [JsonPropertyName("tipLabel")]   public string? Tip   { get; set; }
 
     public TableDataGroup() { }
 
     public TableDataGroup(string groupImage, string groupName, string tipLabel, ObservableCollection<TableDataItem> items)
         : base(items)
     {
-        GroupImage = groupImage;
-        GroupName  = groupName;
-        TipLabel   = tipLabel;
+        ImagePath = groupImage;
+        Championship  = groupName;
+        Tip   = tipLabel;
     }
 }
 
