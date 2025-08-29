@@ -54,23 +54,13 @@ app.MapGet("/data/titles", ([FromServices] ResultStore store) =>
 app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
 {
     var s = store.Current;
-    if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
+    if (s is null || s.Payload is null)
+        return Results.NotFound(new { message = "No data yet" });
 
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-	/*
-    var dto = groups
-        .Where(g => g is not null)
-        .Select(g => new TableDataGroupDto
-        {
-            GroupImage = g!.GroupImage,
-            GroupName  = g.GroupName,
-            TipLabel   = g.TipLabel,
-            Items      = g.ToList() ?? new List<TableDataItem>()
-        })
-        .ToList();
-	*/
-    return Results.Json(groups);
+    return Results.Json(groups); // no projection needed
 });
+
 
 // Raw HTML snapshot of the main page
 app.MapGet("/data/html", ([FromServices] ResultStore store) =>
