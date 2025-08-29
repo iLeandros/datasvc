@@ -57,7 +57,7 @@ app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
     if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
 
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-
+	/*
     var dto = groups
         .Where(g => g is not null)
         .Select(g => new TableDataGroupDto
@@ -68,8 +68,8 @@ app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
             Items      = g.ToList() ?? new List<TableDataItem>()
         })
         .ToList();
-
-    return Results.Json(dto);
+	*/
+    return Results.Json(groups);
 });
 
 // Raw HTML snapshot of the main page
