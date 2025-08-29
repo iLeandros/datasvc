@@ -5,9 +5,9 @@ namespace DataSvc.Models;
 
 public class TableDataGroup : ObservableCollection<TableDataItem>
 {
-    [JsonPropertyName("groupImage")] public string? ImagePath { get; set; }
-    [JsonPropertyName("groupName")]  public string? Championship  { get; set; }
-    [JsonPropertyName("tipLabel")]   public string? Tip   { get; set; }
+    [JsonPropertyName("ImagePath")] public string? ImagePath { get; set; }
+    [JsonPropertyName("Championship")]  public string? Championship  { get; set; }
+    [JsonPropertyName("Tip")]   public string? Tip   { get; set; }
 
     public TableDataGroup() { }
 
