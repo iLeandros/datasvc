@@ -4,18 +4,20 @@ namespace DataSvc.Models;
 
 public class TableDataItem
 {
-    public string? Flag { get; set; }
-    public string? BackgroundTipColour { get; set; }
-    public string? Time { get; set; }
-    public string? HostTeam { get; set; }
-    public string? HostScore { get; set; }
-    public string? GuestScore { get; set; }
-    public string? GuestTeam { get; set; }
-    public string? Tip { get; set; }
-    public string? LikeButtonImage { get; set; }
-    public string? DislikeButtonImage { get; set; }
-    public string? LikePositive { get; set; }
-    public string? LikeNegative { get; set; }
+    [JsonPropertyName("ImagePath")] public string? Flag { get; set; }
+    [JsonPropertyName("BackgroundTipColour")] public string? BackgroundTipColour { get; set; }
+    [JsonPropertyName("Time")] public string? Time { get; set; }
+
+    [JsonPropertyName("TeamOne")] public string? HostTeam { get; set; }
+    [JsonPropertyName("ScoreTeamOne")] public string? HostScore { get; set; }
+    [JsonPropertyName("ScoreTeamTwo")] public string? GuestScore { get; set; }
+    [JsonPropertyName("TeamTwo")] public string? GuestTeam { get; set; }
+
+    [JsonPropertyName("Tip")] public string? Tip { get; set; }
+    [JsonPropertyName("Like")] public string? LikeButtonImage { get; set; }
+    [JsonPropertyName("Dislike")] public string? DislikeButtonImage { get; set; }
+    [JsonPropertyName("Likes")] public string? LikePositive { get; set; }
+    [JsonPropertyName("Dislikes")] public string? LikeNegative { get; set; }
     public string? One { get; set; }
     public string? Even { get; set; }
     public string? Two { get; set; }
