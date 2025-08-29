@@ -28,6 +28,13 @@ builder.Services.AddHostedService<RefreshJob>();
 builder.Services.AddSingleton<DetailsStore>();
 builder.Services.AddSingleton<DetailsScraperService>();
 builder.Services.AddHostedService<DetailsRefreshJob>();
+// Program.cs (server)
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.PropertyNamingPolicy = null;       // keep PascalCase
+    o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
+});
+
 
 var app = builder.Build();
 app.UseResponseCompression();
