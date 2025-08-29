@@ -158,7 +158,7 @@ app.MapPost("/data/details/cleanup",
     if (pruneFromParsed)
     {
         var hrefs = root.Current?.Payload?.TableDataGroup?
-            .SelectMany(g => g)
+            .SelectMany(g => g.Items)
             .Select(i => i.Href)
             .Where(h => !string.IsNullOrWhiteSpace(h))
             .Select(DetailsStore.Normalize)
@@ -393,7 +393,7 @@ app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService
 app.MapGet("/data/first-href", ([FromServices] ResultStore store) =>
 {
     var href = store.Current?.Payload?.TableDataGroup?
-        .SelectMany(g => g)
+        .SelectMany(g => g.Items)
         .Select(i => i.Href)
         .FirstOrDefault(h => !string.IsNullOrWhiteSpace(h));
     return Results.Json(new { href });
@@ -901,7 +901,7 @@ public sealed class DetailsScraperService
 	    if (current is null)
 	        return new RefreshSummary(0, 0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
 	
-	    var hrefs = current.SelectMany(g => g)
+	    var hrefs = current.SelectMany(g => g.Items)
 	                       .Select(i => i.Href)
 	                       .Where(h => !string.IsNullOrWhiteSpace(h))
 	                       .Select(DetailsStore.Normalize)
