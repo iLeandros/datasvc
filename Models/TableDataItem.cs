@@ -16,18 +16,18 @@ public class TableDataItem
     public string? DislikeButtonImage { get; set; }
     public string? LikePositive { get; set; }
     public string? LikeNegative { get; set; }
-    public string? Coef1 { get; set; }
-    public string? Coef2 { get; set; }
-    public string? Coef3 { get; set; }
-    public string? Coef4 { get; set; }
-    public string? Coef5 { get; set; }
-    public string? Coef6 { get; set; }
-    public string? Coef7 { get; set; }
-    public string? Coef8 { get; set; }
-    public string? Coef9 { get; set; }
-    public string? Coef10 { get; set; }
-    public string? Coef11 { get; set; }
-    public string? Version { get; set; }
+    public string? One { get; set; }
+    public string? Even { get; set; }
+    public string? Two { get; set; }
+    public string? HalfOne { get; set; }
+    public string? HalfEven { get; set; }
+    public string? HalfTwo { get; set; }
+    public string? OneAbove { get; set; }
+    public string? TwoAbove { get; set; }
+    public string? ThreeAbove { get; set; }
+    public string? BTS { get; set; }
+    public string? OTS { get; set; }
+    public string? YourPrediction { get; set; }
     public string? Href { get; set; }
     public string? RowBackground { get; set; }
 
@@ -54,9 +54,9 @@ public class TableDataItem
         DislikeButtonImage = dislikeButtonImage;
         LikePositive = likePositive;
         LikeNegative = likeNegative;
-        Coef1 = coef1; Coef2 = coef2; Coef3 = coef3; Coef4 = coef4; Coef5 = coef5;
-        Coef6 = coef6; Coef7 = coef7; Coef8 = coef8; Coef9 = coef9; Coef10 = coef10; Coef11 = coef11;
-        Version = version;
+        One = coef1; Even = coef2; Two = coef3; HalfOne = coef4; HalfEven = coef5;
+        HalfTwo = coef6; OneAbove = coef7; TwoAbove = coef8; ThreeAbove = coef9; BTS = coef10; OTS = coef11;
+        YourPrediction = version;
         Href = href;
         RowBackground = rowBackground;
     }
