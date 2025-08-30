@@ -112,14 +112,21 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 // ?href=...
 // Raw details file (with Content-Length) for progress-friendly downloads
-app.MapGet("/data/details/download", () =>
+app.MapGet("/data/details/download", (HttpContext ctx) =>
 {
-    var path = DetailsFiles.File; // "/var/lib/datasvc/details.json"
+    var path = DetailsFiles.File; // your details.json path
     if (!System.IO.File.Exists(path))
         return Results.NotFound(new { message = "No details file yet" });
 
-    // enableRangeProcessing lets clients resume; content-length is set automatically
-    return Results.File(path, "application/json", enableRangeProcessing: true);
+    var fi = new FileInfo(path);
+
+    // Send an explicit size header the client can read
+    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString();
+
+    // Use application/octet-stream to avoid JSON compression (so Content-Length stays)
+    // Range processing allows resume; Kestrel sets Content-Length automatically.
+    return Results.File(path, contentType: "application/octet-stream", enableRangeProcessing: true,
+                        fileDownloadName: "details.json");
 });
 
 app.MapPost("/data/parsed/cleanup",
