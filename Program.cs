@@ -14,6 +14,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Linq;
 
+static readonly object _sizeLock = new();
+static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Compression + CORS
@@ -116,23 +119,33 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 
 // ?href=...
-// Read current sizes (no recompute here)
-app.MapGet("/data/details/size", () =>
+app.MapGet("/data/details/size", async () =>
 {
-    var snap = DetailsSizeIndex.Snapshot();
-    if (snap is null) return Results.Json(new { status = "pending" });
+    var path = DetailsFiles.File; // your details.json path
+    if (!System.IO.File.Exists(path))
+        return Results.Json(new { gzipBytes = (long?)null, uncompressedBytes = (long?)null, generatedUtc = DateTimeOffset.UtcNow });
 
-    return Results.Json(new
+    var fi = new FileInfo(path);
+    var last = fi.LastWriteTimeUtc;
+
+    long gz, unc;
+    lock (_sizeLock)
     {
-        status = "ok",
-        generatedUtc      = snap.SourceWriteUtc,
-        computedUtc       = snap.ComputedUtc,
-        uncompressedBytes = snap.UncompressedBytes,
-        gzipBytes         = snap.GzipBytes,
-        brotliBytes       = snap.BrotliBytes
-    });
-});
+        if (_gzipCache is { } c && c.lastWriteUtc == last)
+            return Results.Json(new { gzipBytes = c.gzipBytes, uncompressedBytes = c.uncompressedBytes, generatedUtc = last });
+    }
 
+    unc = fi.Length;
+    await using var input = File.OpenRead(path);
+    await using var sink  = new CountingStream();
+    await using (var gzStream = new GZipStream(sink, CompressionLevel.Fastest, leaveOpen: true))
+        await input.CopyToAsync(gzStream);
+
+    gz = sink.BytesWritten;
+
+    lock (_sizeLock) _gzipCache = (last, gz, unc);
+    return Results.Json(new { gzipBytes = gz, uncompressedBytes = unc, generatedUtc = last });
+});
 // Manual rebuild (optional)
 app.MapPost("/data/details/size/rebuild", async () =>
 {
