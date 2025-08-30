@@ -112,6 +112,16 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 // ?href=...
 // Raw details file (with Content-Length) for progress-friendly downloads
+app.MapGet("/data/details/size", () =>
+{
+    var path = DetailsFiles.File; // your saved details.json path
+    if (!System.IO.File.Exists(path))
+        return Results.Json(new { uncompressedBytes = (long?)null, generatedUtc = DateTimeOffset.UtcNow });
+
+    var bytes = new FileInfo(path).Length;
+    return Results.Json(new { uncompressedBytes = (long?)bytes, generatedUtc = DateTimeOffset.UtcNow });
+});
+
 app.MapGet("/data/details/download", (HttpContext ctx) =>
 {
     var path = DetailsFiles.File; // your details.json path
