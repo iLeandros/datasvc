@@ -44,6 +44,7 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
 });
 
+DetailsSizeIndex.Start(DetailsFiles.File);
 
 var app = builder.Build();
 app.UseResponseCompression();
@@ -115,16 +116,30 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 
 // ?href=...
-// Raw details file (with Content-Length) for progress-friendly downloads
+// Read current sizes (no recompute here)
 app.MapGet("/data/details/size", () =>
 {
-    var path = DetailsFiles.File; // your saved details.json path
-    if (!System.IO.File.Exists(path))
-        return Results.Json(new { uncompressedBytes = (long?)null, generatedUtc = DateTimeOffset.UtcNow });
+    var snap = DetailsSizeIndex.Snapshot();
+    if (snap is null) return Results.Json(new { status = "pending" });
 
-    var bytes = new FileInfo(path).Length;
-    return Results.Json(new { uncompressedBytes = (long?)bytes, generatedUtc = DateTimeOffset.UtcNow });
+    return Results.Json(new
+    {
+        status = "ok",
+        generatedUtc      = snap.SourceWriteUtc,
+        computedUtc       = snap.ComputedUtc,
+        uncompressedBytes = snap.UncompressedBytes,
+        gzipBytes         = snap.GzipBytes,
+        brotliBytes       = snap.BrotliBytes
+    });
 });
+
+// Manual rebuild (optional)
+app.MapPost("/data/details/size/rebuild", async () =>
+{
+    await DetailsSizeIndex.EnsureUpToDateAsync(force: true);
+    return Results.Json(new { status = "recomputed" });
+});
+
 
 app.MapGet("/data/details/download", (HttpContext ctx) =>
 {
@@ -845,32 +860,29 @@ public sealed class DetailsStore
     public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
 
    public static string Normalize(string href)
-{
-    if (string.IsNullOrWhiteSpace(href)) return "";
-
-    var s = WebUtility.HtmlDecode(href).Trim();
-
-    // If it's already absolute, return the canonical AbsoluteUri.
-    // This handles inputs like ".../Slough Town (England)/..." by encoding to %20.
-    if (Uri.TryCreate(s, UriKind.Absolute, out var abs))
-        return abs.AbsoluteUri;
-
-    // Protocol-relative (//host/...)
-    if (s.StartsWith("//")) return "https:" + s;
-
-    // Host without scheme
-    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
-        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
-        return "https://" + s.TrimStart('/');
-
-    // Site-relative
-    var baseUri = new Uri("https://www.statarea.com/");
-    if (!s.StartsWith("/")) s = "/" + s;
-    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
-}
-
-
-
+	{
+	    if (string.IsNullOrWhiteSpace(href)) return "";
+	
+	    var s = WebUtility.HtmlDecode(href).Trim();
+	
+	    // If it's already absolute, return the canonical AbsoluteUri.
+	    // This handles inputs like ".../Slough Town (England)/..." by encoding to %20.
+	    if (Uri.TryCreate(s, UriKind.Absolute, out var abs))
+	        return abs.AbsoluteUri;
+	
+	    // Protocol-relative (//host/...)
+	    if (s.StartsWith("//")) return "https:" + s;
+	
+	    // Host without scheme
+	    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
+	        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
+	        return "https://" + s.TrimStart('/');
+	
+	    // Site-relative
+	    var baseUri = new Uri("https://www.statarea.com/");
+	    if (!s.StartsWith("/")) s = "/" + s;
+	    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
+	}
 }
 
 public static class DetailsFiles
@@ -901,6 +913,134 @@ public static class DetailsFiles
         catch { return Array.Empty<DetailsRecord>(); }
     }
 }
+
+sealed class CountingStream : Stream
+{
+    public long BytesWritten { get; private set; }
+    public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => true;
+    public override long Length => BytesWritten; public override long Position { get => BytesWritten; set => throw new NotSupportedException(); }
+    public override void Flush() { }
+    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+    public override void SetLength(long value) => throw new NotSupportedException();
+    public override void Write(byte[] buffer, int offset, int count) => BytesWritten += count;
+}
+
+record DetailsSizeInfo(
+    long UncompressedBytes,
+    long GzipBytes,
+    long BrotliBytes,
+    DateTimeOffset SourceWriteUtc,
+    DateTimeOffset ComputedUtc);
+
+static class DetailsSizeIndex
+{
+    static readonly object _lock = new();
+    static DetailsSizeInfo? _cache;
+    static FileSystemWatcher? _watcher;
+    static string? _jsonPath;
+    static string MetaPath => (_jsonPath ?? "/var/lib/datasvc/details.json") + ".size.json";
+
+    public static void Start(string jsonPath)
+    {
+        _jsonPath = jsonPath;
+        // Load last saved sizes (warm cache)
+        TryLoad();
+
+        var dir  = Path.GetDirectoryName(jsonPath)!;
+        var file = Path.GetFileName(jsonPath)!;
+
+        _watcher = new FileSystemWatcher(dir, file)
+        {
+            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName
+        };
+        _watcher.Changed += DebouncedRecompute;
+        _watcher.Created += DebouncedRecompute;
+        _watcher.Renamed += DebouncedRecompute;
+        _watcher.EnableRaisingEvents = true;
+
+        // Also compute once on startup if missing/stale
+        _ = Task.Run(() => EnsureUpToDateAsync());
+    }
+
+    static async void DebouncedRecompute(object? s, FileSystemEventArgs e)
+    {
+        // Simple debounce: wait 1s after last change
+        await Task.Delay(1000);
+        await EnsureUpToDateAsync(force: true);
+    }
+
+    public static async Task EnsureUpToDateAsync(bool force = false)
+    {
+        var path = _jsonPath!;
+        if (!File.Exists(path)) return;
+
+        var fi = new FileInfo(path);
+        var srcUtc = fi.LastWriteTimeUtc;
+
+        lock (_lock)
+        {
+            if (!force && _cache is not null && _cache.SourceWriteUtc == srcUtc)
+                return; // already current
+        }
+
+        var unc = fi.Length;
+        var (gz, br) = await ComputeCompressedAsync(path);
+
+        var info = new DetailsSizeInfo(
+            UncompressedBytes: unc,
+            GzipBytes: gz,
+            BrotliBytes: br,
+            SourceWriteUtc: srcUtc,
+            ComputedUtc: DateTimeOffset.UtcNow);
+
+        lock (_lock) _cache = info;
+        await SaveAsync(info);
+    }
+
+    static async Task<(long gzip, long brotli)> ComputeCompressedAsync(string path)
+    {
+        // gzip
+        await using var in1 = File.OpenRead(path);
+        await using var sink1 = new CountingStream();
+        await using (var gz = new GZipStream(sink1, CompressionLevel.Fastest, leaveOpen: true))
+            await in1.CopyToAsync(gz);
+
+        // brotli
+        await using var in2 = File.OpenRead(path);
+        await using var sink2 = new CountingStream();
+        await using (var br = new BrotliStream(sink2, CompressionLevel.Fastest, leaveOpen: true))
+            await in2.CopyToAsync(br);
+
+        return (sink1.BytesWritten, sink2.BytesWritten);
+    }
+
+    public static DetailsSizeInfo? Snapshot()
+    {
+        lock (_lock) return _cache;
+    }
+
+    static async Task SaveAsync(DetailsSizeInfo info)
+    {
+        var json = JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = false });
+        await File.WriteAllTextAsync(MetaPath, json);
+    }
+
+    static void TryLoad()
+    {
+        try
+        {
+            if (File.Exists(MetaPath))
+            {
+                var json = File.ReadAllText(MetaPath);
+                var info = JsonSerializer.Deserialize<DetailsSizeInfo>(json);
+                lock (_lock) _cache = info;
+            }
+        }
+        catch { /* ignore */ }
+    }
+}
+
 
 public sealed class DetailsScraperService
 {
