@@ -118,19 +118,24 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 // ?href=...
 app.MapGet("/data/details/download", (HttpContext ctx) =>
 {
-    var path = DetailsFiles.File; // your details.json path
-    if (!System.IO.File.Exists(path))
+    var jsonPath = DetailsFiles.File;           // e.g., /var/lib/datasvc/details.json
+    var gzPath   = jsonPath + ".gz";
+    if (!System.IO.File.Exists(jsonPath))
         return Results.NotFound(new { message = "No details file yet" });
 
-    var fi = new FileInfo(path);
+    var acceptsGzip = ctx.Request.Headers.AcceptEncoding.ToString()
+                           .Contains("gzip", StringComparison.OrdinalIgnoreCase);
 
-    // Send an explicit size header the client can read
-    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString();
+    var pathToSend = (acceptsGzip && System.IO.File.Exists(gzPath)) ? gzPath : jsonPath;
+    var fi = new FileInfo(pathToSend);
 
-    // Use application/octet-stream to avoid JSON compression (so Content-Length stays)
-    // Range processing allows resume; Kestrel sets Content-Length automatically.
-    return Results.File(path, contentType: "application/octet-stream", enableRangeProcessing: true,
-                        fileDownloadName: "details.json");
+    ctx.Response.Headers["Vary"] = "Accept-Encoding";
+    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString(); // compressed or raw length, whichever we send
+
+    if (pathToSend.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+        ctx.Response.Headers["Content-Encoding"] = "gzip";
+
+    return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "details.json");
 });
 
 app.MapPost("/data/parsed/cleanup",
@@ -457,6 +462,14 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 
 app.Run();
 
+static void SaveGzipCopy(string jsonPath)
+{
+    var gzPath = jsonPath + ".gz";
+    using var input = File.OpenRead(jsonPath);
+    using var output = File.Create(gzPath);
+    using var gz = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: false);
+    input.CopyTo(gz);
+}
 // ---------- Models & storage ----------
 public sealed class ResultStore
 {
