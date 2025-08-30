@@ -49,6 +49,10 @@ DetailsSizeIndex.Start(DetailsFiles.File);
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors();
+
+static readonly object _sizeLock = new();
+static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
+
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
 
@@ -935,9 +939,6 @@ sealed class CountingStream : Stream
     public override void SetLength(long value) => throw new NotSupportedException();
     public override void Write(byte[] buffer, int offset, int count) => BytesWritten += count;
 }
-
-static readonly object _sizeLock = new();
-static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
 
 record DetailsSizeInfo(
     long UncompressedBytes,
