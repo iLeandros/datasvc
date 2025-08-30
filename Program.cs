@@ -17,7 +17,12 @@ using System.Linq;
 var builder = WebApplication.CreateBuilder(args);
 
 // Compression + CORS
-builder.Services.AddResponseCompression();
+//builder.Services.AddResponseCompression();
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
+});
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 // App services
