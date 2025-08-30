@@ -18,6 +18,10 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Compression + CORS
 //builder.Services.AddResponseCompression();
+builder.Services.Configure<GzipCompressionProviderOptions>(p =>
+{
+    p.Level = System.IO.Compression.CompressionLevel.Fastest;
+});
 builder.Services.AddResponseCompression(o =>
 {
     o.EnableForHttps = true;
