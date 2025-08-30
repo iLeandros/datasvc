@@ -111,6 +111,17 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 
 // ?href=...
+// Raw details file (with Content-Length) for progress-friendly downloads
+app.MapGet("/data/details/download", () =>
+{
+    var path = DetailsFiles.File; // "/var/lib/datasvc/details.json"
+    if (!System.IO.File.Exists(path))
+        return Results.NotFound(new { message = "No details file yet" });
+
+    // enableRangeProcessing lets clients resume; content-length is set automatically
+    return Results.File(path, "application/json", enableRangeProcessing: true);
+});
+
 app.MapPost("/data/parsed/cleanup",
     ([FromServices] ResultStore store,
      [FromQuery] bool clear = false,
