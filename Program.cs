@@ -16,8 +16,6 @@ using System.Linq;
 using System.IO.Compression;
 
 var builder = WebApplication.CreateBuilder(args);
-static readonly object _sizeLock = new();
-static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
 
 // Compression + CORS
 //builder.Services.AddResponseCompression();
@@ -46,8 +44,6 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = null;       // keep PascalCase
     o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
 });
-
-DetailsSizeIndex.Start(DetailsFiles.File);
 
 var app = builder.Build();
 app.UseResponseCompression();
@@ -120,41 +116,6 @@ app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
 
 
 // ?href=...
-app.MapGet("/data/details/size", async () =>
-{
-    var path = DetailsFiles.File; // your details.json path
-    if (!System.IO.File.Exists(path))
-        return Results.Json(new { gzipBytes = (long?)null, uncompressedBytes = (long?)null, generatedUtc = DateTimeOffset.UtcNow });
-
-    var fi = new FileInfo(path);
-    var last = fi.LastWriteTimeUtc;
-
-    long gz, unc;
-    lock (_sizeLock)
-    {
-        if (_gzipCache is { } c && c.lastWriteUtc == last)
-            return Results.Json(new { gzipBytes = c.gzipBytes, uncompressedBytes = c.uncompressedBytes, generatedUtc = last });
-    }
-
-    unc = fi.Length;
-    await using var input = File.OpenRead(path);
-    await using var sink  = new CountingStream();
-    await using (var gzStream = new GZipStream(sink, CompressionLevel.Fastest, leaveOpen: true))
-        await input.CopyToAsync(gzStream);
-
-    gz = sink.BytesWritten;
-
-    lock (_sizeLock) _gzipCache = (last, gz, unc);
-    return Results.Json(new { gzipBytes = gz, uncompressedBytes = unc, generatedUtc = last });
-});
-// Manual rebuild (optional)
-app.MapPost("/data/details/size/rebuild", async () =>
-{
-    await DetailsSizeIndex.EnsureUpToDateAsync(force: true);
-    return Results.Json(new { status = "recomputed" });
-});
-
-
 app.MapGet("/data/details/download", (HttpContext ctx) =>
 {
     var path = DetailsFiles.File; // your details.json path
@@ -927,134 +888,6 @@ public static class DetailsFiles
         catch { return Array.Empty<DetailsRecord>(); }
     }
 }
-
-sealed class CountingStream : Stream
-{
-    public long BytesWritten { get; private set; }
-    public override bool CanRead => false; public override bool CanSeek => false; public override bool CanWrite => true;
-    public override long Length => BytesWritten; public override long Position { get => BytesWritten; set => throw new NotSupportedException(); }
-    public override void Flush() { }
-    public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
-    public override void SetLength(long value) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => BytesWritten += count;
-}
-
-record DetailsSizeInfo(
-    long UncompressedBytes,
-    long GzipBytes,
-    long BrotliBytes,
-    DateTimeOffset SourceWriteUtc,
-    DateTimeOffset ComputedUtc);
-
-static class DetailsSizeIndex
-{
-    static readonly object _lock = new();
-    static DetailsSizeInfo? _cache;
-    static FileSystemWatcher? _watcher;
-    static string? _jsonPath;
-    static string MetaPath => (_jsonPath ?? "/var/lib/datasvc/details.json") + ".size.json";
-
-    public static void Start(string jsonPath)
-    {
-        _jsonPath = jsonPath;
-        // Load last saved sizes (warm cache)
-        TryLoad();
-
-        var dir  = Path.GetDirectoryName(jsonPath)!;
-        var file = Path.GetFileName(jsonPath)!;
-
-        _watcher = new FileSystemWatcher(dir, file)
-        {
-            NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName
-        };
-        _watcher.Changed += DebouncedRecompute;
-        _watcher.Created += DebouncedRecompute;
-        _watcher.Renamed += DebouncedRecompute;
-        _watcher.EnableRaisingEvents = true;
-
-        // Also compute once on startup if missing/stale
-        _ = Task.Run(() => EnsureUpToDateAsync());
-    }
-
-    static async void DebouncedRecompute(object? s, FileSystemEventArgs e)
-    {
-        // Simple debounce: wait 1s after last change
-        await Task.Delay(1000);
-        await EnsureUpToDateAsync(force: true);
-    }
-
-    public static async Task EnsureUpToDateAsync(bool force = false)
-    {
-        var path = _jsonPath!;
-        if (!File.Exists(path)) return;
-
-        var fi = new FileInfo(path);
-        var srcUtc = fi.LastWriteTimeUtc;
-
-        lock (_lock)
-        {
-            if (!force && _cache is not null && _cache.SourceWriteUtc == srcUtc)
-                return; // already current
-        }
-
-        var unc = fi.Length;
-        var (gz, br) = await ComputeCompressedAsync(path);
-
-        var info = new DetailsSizeInfo(
-            UncompressedBytes: unc,
-            GzipBytes: gz,
-            BrotliBytes: br,
-            SourceWriteUtc: srcUtc,
-            ComputedUtc: DateTimeOffset.UtcNow);
-
-        lock (_lock) _cache = info;
-        await SaveAsync(info);
-    }
-
-    static async Task<(long gzip, long brotli)> ComputeCompressedAsync(string path)
-    {
-        // gzip
-        await using var in1 = File.OpenRead(path);
-        await using var sink1 = new CountingStream();
-        await using (var gz = new GZipStream(sink1, CompressionLevel.Fastest, leaveOpen: true))
-            await in1.CopyToAsync(gz);
-
-        // brotli
-        await using var in2 = File.OpenRead(path);
-        await using var sink2 = new CountingStream();
-        await using (var br = new BrotliStream(sink2, CompressionLevel.Fastest, leaveOpen: true))
-            await in2.CopyToAsync(br);
-
-        return (sink1.BytesWritten, sink2.BytesWritten);
-    }
-
-    public static DetailsSizeInfo? Snapshot()
-    {
-        lock (_lock) return _cache;
-    }
-
-    static async Task SaveAsync(DetailsSizeInfo info)
-    {
-        var json = JsonSerializer.Serialize(info, new JsonSerializerOptions { WriteIndented = false });
-        await File.WriteAllTextAsync(MetaPath, json);
-    }
-
-    static void TryLoad()
-    {
-        try
-        {
-            if (File.Exists(MetaPath))
-            {
-                var json = File.ReadAllText(MetaPath);
-                var info = JsonSerializer.Deserialize<DetailsSizeInfo>(json);
-                lock (_lock) _cache = info;
-            }
-        }
-        catch { /* ignore */ }
-    }
-}
-
 
 public sealed class DetailsScraperService
 {
