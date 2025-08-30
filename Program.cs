@@ -13,8 +13,11 @@ using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Linq;
+using System.IO.Compression;
 
 var builder = WebApplication.CreateBuilder(args);
+static readonly object _sizeLock = new();
+static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
 
 // Compression + CORS
 //builder.Services.AddResponseCompression();
@@ -49,9 +52,6 @@ DetailsSizeIndex.Start(DetailsFiles.File);
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors();
-
-static readonly object _sizeLock = new();
-static (DateTime lastWriteUtc, long gzipBytes, long uncompressedBytes)? _gzipCache;
 
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
