@@ -38,6 +38,10 @@ builder.Services.AddHostedService<RefreshJob>();
 builder.Services.AddSingleton<DetailsStore>();
 builder.Services.AddSingleton<DetailsScraperService>();
 builder.Services.AddHostedService<DetailsRefreshJob>();
+
+builder.Services.AddSingleton<TipsStore>();
+builder.Services.AddSingleton<TipsScraperService>();
+builder.Services.AddHostedService<TipsRefreshJob>();
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -76,7 +80,20 @@ app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
 
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups); // no projection needed
+})
+
+
+// /data/tips -> groups with metadata + items (store-backed, same as /data/parsed)
+app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
+{
+    var s = store.Current;
+    if (s is null || s.Payload is null)
+        return Results.NotFound(new { message = "No data yet" });
+
+    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
+    return Results.Json(groups);
 });
+;
 
 
 // Raw HTML snapshot of the main page
@@ -513,6 +530,157 @@ public static class DataFiles
         catch { return null; }
     }
 }
+
+// ---------- Tips storage / service / job ----------
+public static class TipsFiles
+{
+    public const string Dir  = "/var/lib/datasvc";
+    public const string File = "/var/lib/datasvc/tips.json";
+
+    public static async Task SaveAsync(DataSnapshot snap)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
+        var tmp = File + ".tmp";
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, File, overwrite: true);
+    }
+
+    public static async Task<DataSnapshot?> LoadAsync()
+    {
+        if (!System.IO.File.Exists(File)) return null;
+        try
+        {
+            var json = await System.IO.File.ReadAllTextAsync(File);
+            return JsonSerializer.Deserialize<DataSnapshot>(json);
+        }
+        catch { return null; }
+    }
+}
+
+public sealed class TipsStore
+{
+    private readonly object _gate = new();
+    private DataSnapshot? _current;
+    public DataSnapshot? Current { get { lock (_gate) return _current; } }
+    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
+}
+
+public sealed class TipsScraperService
+{
+    private readonly TipsStore _store;
+    public TipsScraperService([FromServices] TipsStore store) => _store = store;
+
+    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            // Explicitly fetch the tips page
+            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/tips");
+            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+
+            var payload = new DataPayload(html, titles, table);
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+            _store.Set(snap);
+            await TipsFiles.SaveAsync(snap);
+            return snap;
+        }
+        catch (Exception ex)
+        {
+            var last = _store.Current;
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
+            _store.Set(snap);
+            await TipsFiles.SaveAsync(snap);
+            return snap;
+        }
+    }
+}
+
+public sealed class TipsRefreshJob : BackgroundService
+{
+    private readonly TipsScraperService _svc;
+    private readonly TipsStore _store;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeZoneInfo _tz;
+
+    public TipsRefreshJob(TipsScraperService svc, TipsStore store)
+    {
+        _svc = svc;
+        _store = store;
+        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+        _tz = !string.IsNullOrWhiteSpace(tzId)
+            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+            : TimeZoneInfo.Local;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Warm from disk
+        var prev = await TipsFiles.LoadAsync();
+        if (prev is not null) _store.Set(prev);
+
+        // Initial run
+        await RunSafelyOnce(stoppingToken);
+
+        // Also tick at the top of each hour
+        _ = HourlyLoop(stoppingToken);
+
+        // Keep the 5-minute cadence
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                await RunSafelyOnce(stoppingToken);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task HourlyLoop(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
+                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
+                if (nextHour == 24) nextHour = 0;
+                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
+                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
+
+                var delay = nextTopLocal - nowLocal;
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, ct);
+
+                await RunSafelyOnce(ct);
+
+                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
+                while (await hourly.WaitForNextTickAsync(ct))
+                    await RunSafelyOnce(ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RunSafelyOnce(CancellationToken ct)
+    {
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try
+        {
+            await _svc.FetchAndStoreAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[tips] run failed: {ex}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+}
+
+
 
 // ---------- Background job ----------
 public sealed class ScraperService
