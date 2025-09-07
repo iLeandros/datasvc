@@ -549,17 +549,89 @@ public sealed class RefreshJob : BackgroundService
 {
     private readonly ScraperService _svc;
     private readonly ResultStore _store;
-    public RefreshJob(ScraperService svc, ResultStore store) { _svc = svc; _store = store; }
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeZoneInfo _tz;
+
+    public RefreshJob(ScraperService svc, ResultStore store)
+    {
+        _svc = svc; 
+        _store = store;
+        // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
+        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+        _tz = !string.IsNullOrWhiteSpace(tzId)
+            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+            : TimeZoneInfo.Local;
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var prev = await DataFiles.LoadAsync();
         if (prev is not null) _store.Set(prev);
 
-        await _svc.FetchAndStoreAsync(stoppingToken);
-        var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try { while (await timer.WaitForNextTickAsync(stoppingToken)) await _svc.FetchAndStoreAsync(stoppingToken); }
+        // Initial run
+        await RunSafelyOnce(stoppingToken);
+
+        // Kick off the hour-aligned loop in parallel
+        _ = HourlyLoop(stoppingToken);
+
+        // Keep the existing 5-minute cadence
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                await RunSafelyOnce(stoppingToken);
+            }
+        }
         catch (OperationCanceledException) { }
+    }
+
+    private async Task HourlyLoop(CancellationToken ct)
+    {
+        try
+        {
+            // Wait until the next top of the hour in the configured timezone
+            while (!ct.IsCancellationRequested)
+            {
+                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
+                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
+                if (nextHour == 24) nextHour = 0;
+                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
+                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
+
+                var delay = nextTopLocal - nowLocal;
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, ct);
+
+                await RunSafelyOnce(ct);
+
+                // After the first aligned tick, continue hourly
+                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
+                while (await hourly.WaitForNextTickAsync(ct))
+                {
+                    await RunSafelyOnce(ct);
+                }
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RunSafelyOnce(CancellationToken ct)
+    {
+        // If another run is in progress (e.g., 5-min tick collides with hourly), skip this one
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try
+        {
+            await _svc.FetchAndStoreAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[refresh] run failed: {ex}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 }
 
@@ -1160,10 +1232,18 @@ public sealed class DetailsRefreshJob : BackgroundService
 {
     private readonly DetailsScraperService _svc;
     private readonly DetailsStore _store;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeZoneInfo _tz;
 
     public DetailsRefreshJob(DetailsScraperService svc, DetailsStore store)
     {
-        _svc = svc; _store = store;
+        _svc = svc; 
+        _store = store;
+        // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
+        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+        _tz = !string.IsNullOrWhiteSpace(tzId)
+            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+            : TimeZoneInfo.Local;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -1175,35 +1255,69 @@ public sealed class DetailsRefreshJob : BackgroundService
         // Let the main page warm up first
         try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); } catch { }
 
-        // Initial run (guarded)
-        try
-        {
-            var r = await _svc.RefreshAllFromCurrentAsync(stoppingToken);
-            Debug.WriteLine($"[details] initial refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[details] initial run failed: {ex}");
-        }
+        // Initial run
+        await RunSafelyOnce("initial", stoppingToken);
 
-        // Every 5 minutes — never die on exceptions
+        // Start hourly aligned loop in parallel
+        _ = HourlyLoop(stoppingToken);
+
+        // Every 5 minutes — keep existing cadence
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         try
         {
             while (await timer.WaitForNextTickAsync(stoppingToken))
             {
-                try
+                await RunSafelyOnce("tick", stoppingToken);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task HourlyLoop(CancellationToken ct)
+    {
+        try
+        {
+            // Wait until the next top of the hour in the configured timezone
+            while (!ct.IsCancellationRequested)
+            {
+                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
+                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
+                if (nextHour == 24) nextHour = 0;
+                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
+                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
+
+                var delay = nextTopLocal - nowLocal;
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, ct);
+
+                await RunSafelyOnce("hourly", ct);
+
+                // After the first aligned tick, continue hourly
+                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
+                while (await hourly.WaitForNextTickAsync(ct))
                 {
-                    var r = await _svc.RefreshAllFromCurrentAsync(stoppingToken);
-                    Debug.WriteLine($"[details] tick refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
-                }
-                catch (Exception ex)
-                {
-                    Debug.WriteLine($"[details] tick failed: {ex}");
-                    // keep looping
+                    await RunSafelyOnce("hourly", ct);
                 }
             }
         }
         catch (OperationCanceledException) { }
+    }
+
+    private async Task RunSafelyOnce(string reason, CancellationToken ct)
+    {
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try
+        {
+            var r = await _svc.RefreshAllFromCurrentAsync(ct);
+            Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[details] {reason} failed: {ex}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
     }
 }
