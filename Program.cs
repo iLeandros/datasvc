@@ -816,7 +816,7 @@ public class GetStartupMainPageFullInfo2024
     public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
     {
         url ??= Environment.GetEnvironmentVariable("DATA_SOURCE_URL")
-                ?? "https://www.statarea.com/predictions/date/2025-09-07/competition";
+                ?? "https://www.statarea.com/predictions";
 
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
