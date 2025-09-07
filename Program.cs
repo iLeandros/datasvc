@@ -80,7 +80,7 @@ app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
 
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups); // no projection needed
-})
+});
 
 
 // /data/tips -> groups with metadata + items (store-backed, same as /data/parsed)
@@ -93,7 +93,7 @@ app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups);
 });
-;
+
 
 
 // Raw HTML snapshot of the main page
