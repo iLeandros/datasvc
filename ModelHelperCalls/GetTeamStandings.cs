@@ -26,9 +26,13 @@ namespace DataSvc.ModelHelperCalls
                     "   contains(concat(' ', normalize-space(@class), ' '), ' teamstatistics ')]")
                     ?.FirstOrDefault();
 
+                //var halfContainers = container?.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' halfcontainer ')]");
+                //if (halfContainers == null || halfContainers.Count == 0)
+                //    return standingsTable;
                 var halfContainers = container?.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' halfcontainer ')]");
-                if (halfContainers == null || halfContainers.Count == 0)
-                    return standingsTable;
+                var scopes = (halfContainers != null && halfContainers.Count > 0)
+                    ? halfContainers.Cast<HtmlNode>()
+                    : new[] { container! }; // fallback: parse the container itself
 
                 string Clean(string? s) => HtmlEntity.DeEntitize(s ?? string.Empty).Replace("\u00A0", " ").Trim();
                 int ToInt(HtmlNode? n)
@@ -37,7 +41,8 @@ namespace DataSvc.ModelHelperCalls
                     return int.TryParse(txt, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : 0;
                 }
 
-                foreach (var half in halfContainers)
+                //foreach (var half in halfContainers)
+                foreach (var half in scopes)
                 {
                     // Optional competition header per half
                     var competitionText = Clean(half.SelectSingleNode(".//*[contains(concat(' ', @class, ' '), ' competition ')]")?.InnerText);
