@@ -1379,7 +1379,7 @@ public sealed class DetailsScraperService
 	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
 	    Debug.WriteLine($"[details] matchbtwteams: found {mbDivs} block(s); picked block with {mbRows} row(s)");
 
-		var teamStandingsHtml = SectionFirst(doc, "teamsstandings"); // NEW
+		var teamStandingsHtml = SectionFirst(doc, "teamstandings"); // NEW
 		
 	    var payload = new DetailsPayload(
 	        TeamsInfoHtml:          teamsInfoHtml,
