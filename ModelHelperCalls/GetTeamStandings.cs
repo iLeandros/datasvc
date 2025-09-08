@@ -22,7 +22,7 @@ namespace DataSvc.ModelHelperCalls
 
                 // token-aware, case-insensitive container match
                 var container = doc.DocumentNode.SelectNodes(
-                    "//*[contains(concat(' ', normalize-space(@class), ' '), ' teamsstandings ') or " +
+                    "//*[contains(concat(' ', normalize-space(@class), ' '), ' teamstandings ') or " +
                     "   contains(concat(' ', normalize-space(@class), ' '), ' teamstatistics ')]")
                     ?.FirstOrDefault();
 
