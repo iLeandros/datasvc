@@ -1035,6 +1035,139 @@ public static class GetStartupMainTableDataGroup2024
     }
 }
 // ---------- NEW: Details models, store, files, scraper, job ----------
+// ---------- LiveScores: models, storage, files ----------
+public record LiveScoreItem(
+    string Time,
+    string Status,
+    string HomeTeam,
+    string HomeGoals,
+    string AwayGoals,
+    string AwayTeam
+);
+
+public record LiveScoreGroup(
+    string Competition,
+    List<LiveScoreItem> Matches
+);
+
+public record LiveScoreDay(
+    string Date,                 // "yyyy-MM-dd" in Europe/Brussels (server-local is ok if TZ is set)
+    List<LiveScoreGroup> Groups
+);
+
+public sealed class LiveScoresStore
+{
+    private readonly ConcurrentDictionary<string, LiveScoreDay> _days = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _saveGate = new();
+    public DateTimeOffset? LastSavedUtc { get; private set; }
+
+    public void Set(LiveScoreDay day) => _days[day.Date] = day;
+    public LiveScoreDay? Get(string date) => _days.TryGetValue(date, out var d) ? d : null;
+
+    public (IReadOnlyList<LiveScoreDay> items, DateTimeOffset now) Export()
+        => (_days.Values.OrderByDescending(x => x.Date).ToList(), DateTimeOffset.UtcNow);
+
+    public void Import(IEnumerable<LiveScoreDay> items)
+    {
+        _days.Clear();
+        foreach (var d in items) _days[d.Date] = d;
+    }
+
+    public IReadOnlyCollection<string> Dates() => _days.Keys.OrderByDescending(x => x).ToList();
+    public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
+
+    /// Keep only the requested dates (by exact string key)
+    public int ShrinkTo(IReadOnlyCollection<string> keep)
+    {
+        var set = new HashSet<string>(keep, StringComparer.OrdinalIgnoreCase);
+        int removed = 0;
+        foreach (var key in _days.Keys)
+        {
+            if (!set.Contains(key))
+            {
+                if (_days.TryRemove(key, out _)) removed++;
+            }
+        }
+        return removed;
+    }
+}
+
+public static class LiveScoresFiles
+{
+    public const string File = "/var/lib/datasvc/livescores.json";
+
+    public static async Task SaveAsync(LiveScoresStore store)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(File)!);
+        var (items, now) = store.Export();
+        var envelope = new
+        {
+            lastSavedUtc = now,
+            days = items
+        };
+
+        var json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions { WriteIndented = false });
+        var tmp = File + ".tmp";
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, File, overwrite: true);
+
+        SaveGzipCopy(File); // matches your pattern for .gz snapshots. :contentReference[oaicite:3]{index=3}
+        store.MarkSaved(now);
+    }
+
+    public static async Task<(List<LiveScoreDay> days, DateTimeOffset? lastSavedUtc)?> LoadAsync()
+    {
+        if (!System.IO.File.Exists(File)) return null;
+        try
+        {
+            var json = await System.IO.File.ReadAllTextAsync(File);
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+
+            var last = root.TryGetProperty("lastSavedUtc", out var tsEl) && tsEl.ValueKind is not JsonValueKind.Null
+                ? tsEl.GetDateTimeOffset()
+                : (DateTimeOffset?)null;
+
+            var days = new List<LiveScoreDay>();
+            if (root.TryGetProperty("days", out var daysEl) && daysEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var d in daysEl.EnumerateArray())
+                {
+                    var date = d.GetProperty("Date").GetString() ?? "";
+                    var groups = new List<LiveScoreGroup>();
+                    if (d.TryGetProperty("Groups", out var groupsEl) && groupsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var g in groupsEl.EnumerateArray())
+                        {
+                            var comp = g.GetProperty("Competition").GetString() ?? "";
+                            var matches = new List<LiveScoreItem>();
+                            if (g.TryGetProperty("Matches", out var msEl) && msEl.ValueKind == JsonValueKind.Array)
+                            {
+                                foreach (var m in msEl.EnumerateArray())
+                                {
+                                    matches.Add(new LiveScoreItem(
+                                        m.GetProperty("Time").GetString() ?? "",
+                                        m.GetProperty("Status").GetString() ?? "",
+                                        m.GetProperty("HomeTeam").GetString() ?? "",
+                                        m.GetProperty("HomeGoals").GetString() ?? "",
+                                        m.GetProperty("AwayGoals").GetString() ?? "",
+                                        m.GetProperty("AwayTeam").GetString() ?? ""
+                                    ));
+                                }
+                            }
+                            groups.Add(new LiveScoreGroup(comp, matches));
+                        }
+                    }
+                    days.Add(new LiveScoreDay(date, groups));
+                }
+            }
+
+            return (days, last);
+        }
+        catch { return null; }
+    }
+}
+
 public record DetailsPayload(
     string? TeamsInfoHtml,
     string? MatchBetweenHtml,
