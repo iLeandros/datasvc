@@ -1300,7 +1300,23 @@ public static class LiveScoresFiles
         await System.IO.File.WriteAllTextAsync(tmp, json);
         System.IO.File.Move(tmp, File, overwrite: true);
 
-        SaveGzipCopy(File); // matches your pattern for .gz snapshots. :contentReference[oaicite:3]{index=3}
+        try
+		{
+		    var gzPath = File + ".gz";
+		    await using var input = System.IO.File.OpenRead(File);
+		    await using var output = System.IO.File.Create(gzPath);
+		    using var gz = new System.IO.Compression.GZipStream(
+		        output,
+		        System.IO.Compression.CompressionLevel.Fastest,
+		        leaveOpen: false
+		    );
+		    await input.CopyToAsync(gz);
+		}
+		catch
+		{
+		    // Non-fatal: if gzip fails, the plain JSON is still available.
+		}
+
         store.MarkSaved(now);
     }
 
