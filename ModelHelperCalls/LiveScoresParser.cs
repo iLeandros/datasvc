@@ -7,89 +7,139 @@ using DataSvc.Models; // BarChart, MatchFactData
 namespace DataSvc.ModelHelperCalls;
 
 // ---------- LiveScores: HTML parser ----------
-public static class LiveScoreHtmlParser
+public static class LiveScoresParser
 {
-    // Optional: wire your existing shortening/label-fit function here
-    private static string FitLabel(string s) => renameTeamNameToFitDisplayLabel?.Invoke(s) ?? s;
-
-    // If you don’t have a delegate handy, replace the call to FitLabel(...) with identity.
-    public static Func<string, string>? renameTeamNameToFitDisplayLabel;
-
-    private static string T(HtmlNode? n) => HtmlEntity.DeEntitize(n?.InnerText ?? string.Empty).Trim();
-
-    // Token-safe class test in XPath via normalize-space
-    private const string CLASS_TOKEN = "contains(concat(' ', normalize-space(@class), ' '), ' {0} ')";
-
-    public static ObservableCollection<LiveTableDataGroup> Parse(string html)
+    /// <summary>
+    /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
+    /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
+    /// </summary>
+    public static LiveScoreDay ParseDay(string html, string dateIso)
     {
-        var groups = new ObservableCollection<LiveTableDataGroup>();
-        if (string.IsNullOrWhiteSpace(html)) return groups;
-
         var doc = new HtmlDocument();
         doc.LoadHtml(html);
 
-        // 1) Find the allmatches container (the one that actually holds competitions)
-        var allMatches = doc.DocumentNode.SelectSingleNode(
-            $"//div[{string.Format(CLASS_TOKEN, "allmatches")}]"
-        );
+        var groups = new List<LiveScoreGroup>();
 
-        if (allMatches == null)
+        // 1) Find all livescore blocks; choose the one that actually contains the most matches.
+        var liveBlocks = doc.DocumentNode
+            .SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' livescore ')]")
+            ?? new HtmlNodeCollection(null);
+
+        HtmlNode? chosen = null;
+        int bestCount = -1;
+
+        foreach (var b in liveBlocks)
         {
-            // Page sometimes shows a version picker on top; content still exists below.
-            // If nothing found, bail gracefully with empty groups.
-            return groups;
+            // Count matches under: .allmatches > div[id] > .match
+            var count = b.SelectNodes(".//div[contains(@class,'allmatches')]//div[@id]//div[contains(@class,'match')]")?.Count ?? 0;
+            if (count > bestCount)
+            {
+                bestCount = count;
+                chosen = b;
+            }
         }
 
-        // 2) Enumerate competitions that have an id (skips "competition ad")
-        var competitions = allMatches.SelectNodes("./div[@id and " + string.Format(CLASS_TOKEN, "competition") + "]")
-                           ?? new HtmlNodeCollection(null);
+        // Fallbacks if the structure differs:
+        chosen ??= doc.DocumentNode.SelectSingleNode("//*[contains(@class,'allmatches')]")
+                    ?.AncestorsAndSelf().FirstOrDefault(n =>
+                        n.GetClasses().Contains("livescore"));
 
-        foreach (var comp in competitions)
+        // If still nothing, try to parse directly from the whole document (very defensive).
+        var allMatchesContainer = chosen?
+            .SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' allmatches ')]")
+            ?? doc.DocumentNode.SelectSingleNode("//*[contains(@class,'allmatches')]");
+
+        // 2) Find competition containers (divs with id). If none, we’ll parse matches directly.
+        var compNodes = allMatchesContainer?
+            .SelectNodes("./div[@id]")?.ToList()
+            ?? allMatchesContainer?.SelectNodes(".//div[@id]")?.ToList()
+            ?? new List<HtmlNode>();
+
+        if (compNodes.Count == 0)
         {
-            var title = T(comp.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "header") + "]/div[" + string.Format(CLASS_TOKEN, "name") + "]"));
+            // No competition wrappers — parse any matches directly under the chosen block.
+            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode);
+            if (matches.Count > 0)
+                groups.Add(new LiveScoreGroup("All matches", matches));
 
-            var items = new ObservableCollection<LiveTableDataItem>();
+            return new LiveScoreDay(dateIso, groups);
+        }
 
-            // 3) Matches under the competition's body
-            var matches = comp.SelectNodes(".//div[" + string.Format(CLASS_TOKEN, "body") + "]/div[" + string.Format(CLASS_TOKEN, "match") + "]")
+        // 3) Parse each competition group.
+        foreach (var comp in compNodes)
+        {
+            // Competition name is usually in header .name
+            var compName = Clean(
+                comp.SelectSingleNode(".//*[contains(@class,'header')]//*[contains(@class,'name')]")
+                 ?? comp.SelectSingleNode(".//*[contains(@class,'name')]")
+            );
+
+            // Matches are usually inside a .body container, but sometimes directly under comp.
+            var body = comp.SelectSingleNode(".//div[contains(@class,'body')]") ?? comp;
+            var matches = ParseMatchesFromScope(body);
+
+            // Only add groups that have a name or at least 1 match (to avoid empty noise)
+            if (matches.Count > 0 || !string.IsNullOrWhiteSpace(compName))
+                groups.Add(new LiveScoreGroup(string.IsNullOrWhiteSpace(compName) ? "Unnamed competition" : compName, matches));
+        }
+
+        return new LiveScoreDay(dateIso, groups);
+    }
+
+    // ----------------- helpers -----------------
+
+    private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope)
+    {
+        var list = new List<LiveScoreItem>();
+
+        var matchNodes = scope.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' match ')]")
                          ?? new HtmlNodeCollection(null);
 
-            foreach (var m in matches)
-            {
-                var time   = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "startblock") + "]/div[" + string.Format(CLASS_TOKEN, "time") + "]"));
-                var status = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "startblock") + "]/div[" + string.Format(CLASS_TOKEN, "status") + "]"));
+        foreach (var m in matchNodes)
+        {
+            // time & status live in .startblock
+            var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
+            var status = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'status')]"));
 
-                // Host
-                var hostName  = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "teams") + "]/div[" + string.Format(CLASS_TOKEN, "hostteam") + "]/div[" + string.Format(CLASS_TOKEN, "name") + "]"));
-                var hostGoals = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "teams") + "]/div[" + string.Format(CLASS_TOKEN, "hostteam") + "]/div[" + string.Format(CLASS_TOKEN, "goals") + "]"));
+            // home
+            var homeNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'name')]");
+            var homeGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'goals')]");
+            var homeName  = NormalizeTeam(Clean(homeNameNode));
+            var homeGoals = Clean(homeGoalsNode);
 
-                // Guest
-                var guestName  = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "teams") + "]/div[" + string.Format(CLASS_TOKEN, "guestteam") + "]/div[" + string.Format(CLASS_TOKEN, "name") + "]"));
-                var guestGoals = T(m.SelectSingleNode(".//div[" + string.Format(CLASS_TOKEN, "teams") + "]/div[" + string.Format(CLASS_TOKEN, "guestteam") + "]/div[" + string.Format(CLASS_TOKEN, "goals") + "]"));
+            // away
+            var awayNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'name')]");
+            var awayGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'goals')]");
+            var awayName  = NormalizeTeam(Clean(awayNameNode));
+            var awayGoals = Clean(awayGoalsNode);
 
-                // You had a livetimebgcolor concept; defaulting to Black (adjust if you need special colors for "pen", etc.)
-                items.Add(new LiveTableDataItem(
-                    time,
-                    status,
-                    Color.Black,
-                    FitLabel(hostName),
-                    hostGoals,
-                    guestGoals,
-                    FitLabel(guestName)
-                ));
-            }
-
-            // Only add competitions that actually have matches
-            if (items.Count > 0)
-            {
-                groups.Add(new LiveTableDataGroup(
-                    Color.DarkSlateGray,
-                    title,
-                    items
-                ));
-            }
+            list.Add(new LiveScoreItem(
+                time,
+                status,
+                homeName,
+                homeGoals,
+                awayGoals,
+                awayName
+            ));
         }
 
-        return groups;
+        return list;
+    }
+
+    private static string Clean(HtmlNode? node)
+        => HtmlEntity.DeEntitize(node?.InnerText ?? string.Empty).Trim();
+
+    private static string NormalizeTeam(string? name)
+    {
+        var n = (name ?? string.Empty).Trim();
+        try
+        {
+            // Use your existing helper for display normalization.
+            return DataSvc.ModelHelperCalls.renameTeam.renameTeamNameToFitDisplayLabel(n);
+        }
+        catch
+        {
+            return n;
+        }
     }
 }
