@@ -30,6 +30,12 @@ builder.Services.AddResponseCompression(o =>
 });
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+// Livescores DI
+builder.Services.AddSingleton<LiveScoresStore>();
+builder.Services.AddSingleton<LiveScoresScraperService>();
+builder.Services.AddHostedService<LiveScoresRefreshJob>();
+
+
 // App services
 builder.Services.AddSingleton<ResultStore>();
 builder.Services.AddSingleton<ScraperService>();
@@ -247,6 +253,83 @@ app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] stri
 
     return Results.Json(rec.Payload);
 });
+
+// -------- LiveScores API --------
+app.MapGet("/data/livescores/status", ([FromServices] LiveScoresStore store) =>
+{
+    var dates = store.Dates();
+    return Results.Json(new { totalDates = dates.Count, dates, lastSavedUtc = store.LastSavedUtc });
+});
+
+app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
+{
+    return Results.Json(store.Dates());
+});
+
+app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
+{
+    // default: today in server's configured TZ (job/store use same TZ basis)
+    var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+    var tz = !string.IsNullOrWhiteSpace(tzId)
+        ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+        : TimeZoneInfo.Local;
+
+    var localTodayIso = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz).Date.ToString("yyyy-MM-dd");
+    var key = string.IsNullOrWhiteSpace(date) ? localTodayIso : date;
+
+    var d = store.Get(key);
+    return d is null ? Results.NotFound(new { message = "No livescores for date", date = key }) : Results.Json(d);
+});
+
+app.MapPost("/data/livescores/refresh",
+    async ([FromServices] LiveScoresScraperService svc) =>
+{
+    var (refreshed, lastUpdatedUtc) = await svc.FetchAndStoreAsync();
+    return Results.Json(new { ok = true, refreshed, lastUpdatedUtc });
+});
+
+app.MapGet("/data/livescores/download", (HttpContext ctx) =>
+{
+    var jsonPath = LiveScoresFiles.File;
+    var gzPath   = jsonPath + ".gz";
+    if (!System.IO.File.Exists(jsonPath))
+        return Results.NotFound(new { message = "No livescores file yet" });
+
+    var acceptsGzip = ctx.Request.Headers.AcceptEncoding.ToString()
+                         .Contains("gzip", StringComparison.OrdinalIgnoreCase);
+
+    var pathToSend = (acceptsGzip && System.IO.File.Exists(gzPath)) ? gzPath : jsonPath;
+    var fi = new FileInfo(pathToSend);
+
+    ctx.Response.Headers["Vary"] = "Accept-Encoding";
+    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString();
+    if (pathToSend.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
+        ctx.Response.Headers["Content-Encoding"] = "gzip";
+
+    return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "livescores.json");
+});
+
+// Keep only the last N days (default 4). Also supports dryRun and explicit "keep" list for debugging.
+app.MapPost("/data/livescores/cleanup",
+    async ([FromServices] LiveScoresStore store,
+           [FromQuery] int keepDays = 4,
+           [FromQuery] bool dryRun = false) =>
+{
+    var dates = store.Dates().ToList();
+    var keep = dates
+        .OrderByDescending(d => d)
+        .Take(Math.Max(1, keepDays))
+        .ToList();
+
+    var wouldRemove = dates.Count - keep.Count;
+    if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove, wouldKeep = keep.Count, keep });
+
+    var removed = store.ShrinkTo(keep);
+    await LiveScoresFiles.SaveAsync(store);
+    return Results.Json(new { ok = true, removed, kept = keep.Count, keep });
+});
+
+
 // All details for all hrefs (keyed by normalized href)
 // Toggles you already have:
 //   ?teamsInfo=html        -> return original teamsinfo HTML
@@ -680,6 +763,112 @@ public sealed class TipsRefreshJob : BackgroundService
     }
 }
 
+// --------- LiveScore Scrapping Service-----
+// ---------- LiveScores: scraper service ----------
+public sealed class LiveScoresScraperService
+{
+    private readonly LiveScoresStore _store;
+    private readonly TimeZoneInfo _tz;
+
+    public LiveScoresScraperService([FromServices] LiveScoresStore store)
+    {
+        _store = store;
+        // follow same TZ strategy as your Tips job (env TOP_OF_HOUR_TZ or local) :contentReference[oaicite:6]{index=6}
+        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+        _tz = !string.IsNullOrWhiteSpace(tzId)
+            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+            : TimeZoneInfo.Local;
+    }
+
+    static string BuildUrl(DateTime localDay)
+    {
+        // Statarea typically supports date query; we try param first, fallback to plain page.
+        var iso = localDay.ToString("yyyy-MM-dd");
+        return $"https://www.statarea.com/livescore?date={iso}";
+    }
+
+    public async Task<(int Refreshed, DateTimeOffset LastUpdatedUtc)> FetchAndStoreAsync(CancellationToken ct = default)
+    {
+        int refreshed = 0;
+
+        var now = DateTimeOffset.UtcNow;
+        var localToday = TimeZoneInfo.ConvertTime(now, _tz).Date;
+        var days = Enumerable.Range(0, 4).Select(off => localToday.AddDays(-off)).ToList();
+
+        foreach (var d in days)
+        {
+            ct.ThrowIfCancellationRequested();
+            var url = BuildUrl(d);
+
+            // Reuse your hardened HTTP fetcher (adds UA, gzip/brotli, cookies, referer, etc.) :contentReference[oaicite:7]{index=7}
+            string html;
+            try
+            {
+                html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
+            }
+            catch
+            {
+                // Fallback: today without query (some sites treat "today" differently)
+                if (d == localToday)
+                    html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/livescore");
+                else
+                    throw;
+            }
+
+            var dateIso = d.ToString("yyyy-MM-dd");
+            var day = LiveScoresParser.ParseDay(html, dateIso);
+            _store.Set(day);
+            refreshed++;
+        }
+
+        // Enforce rolling window (keep exactly 4 dates)
+        var keep = days.Select(d => d.ToString("yyyy-MM-dd")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _store.ShrinkTo(keep);
+
+        await LiveScoresFiles.SaveAsync(_store);
+        return (refreshed, DateTimeOffset.UtcNow);
+    }
+}
+
+// ---------- LiveScores: background job ----------
+public sealed class LiveScoresRefreshJob : BackgroundService
+{
+    private readonly LiveScoresScraperService _svc;
+    private readonly LiveScoresStore _store;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public LiveScoresRefreshJob(LiveScoresScraperService svc, LiveScoresStore store)
+    {
+        _svc = svc; _store = store;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Warm from disk
+        var prev = await LiveScoresFiles.LoadAsync();
+        if (prev is not null) _store.Import(prev.Value.days);
+
+        // Initial run
+        await RunSafelyOnce(stoppingToken);
+
+        // Keep the 5-minute cadence (same pattern you use elsewhere) :contentReference[oaicite:8]{index=8}
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                await RunSafelyOnce(stoppingToken);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RunSafelyOnce(CancellationToken ct)
+    {
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try { await _svc.FetchAndStoreAsync(ct); }
+        catch { /* swallow; file state remains last good */ }
+        finally { _gate.Release(); }
+    }
+}
 
 
 // ---------- Background job ----------
