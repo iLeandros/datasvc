@@ -14,16 +14,18 @@ public class AuthController : ControllerBase
 {
     private readonly string _connString;
     public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default")!;
-    private sealed class UserAuthRow
-    {
-        public ulong UserId { get; set; }
-        public string Email { get; set; } = "";
-        public string PasswordHash { get; set; } = ""; // <-- string, not byte[]
-    }
-
-    // POST /v1/auth/login
-    [HttpPost("login")]
-    public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
+    // Row model
+private sealed class UserAuthRow
+{
+    public ulong UserId { get; set; }
+    public string Email { get; set; } = "";
+    public string PasswordHash { get; set; } = ""; // read as TEXT
+}
+// POST /v1/auth/login
+[HttpPost("login")]
+public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
+{
+    try
     {
         if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
             return Unauthorized(new { error = "Invalid email or password." });
@@ -31,66 +33,69 @@ public class AuthController : ControllerBase
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
 
-        /*
-        // 1) Load auth row (join to users just to get id & sanity)
-        var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
-            SELECT ua.user_id AS UserId, ua.email AS Email, ua.password_hash AS PasswordHash
-            FROM user_auth ua
-            JOIN users u ON u.id = ua.user_id
-            WHERE ua.email_norm = LOWER(TRIM(@email))
-            LIMIT 1;", new { email = req.Email });
-            // Query (force string)
-        */
         var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
             SELECT
-            ua.user_id  AS UserId,
-            ua.email    AS Email,
-            CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
+                ua.user_id AS UserId,
+                ua.email   AS Email,
+                CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
             FROM user_auth ua
             JOIN users u ON u.id = ua.user_id
             WHERE ua.email_norm = LOWER(TRIM(@email))
-            LIMIT 1;", new { email = req.Email });
+            LIMIT 1;",
+            new { email = req.Email });
 
-        if (auth is null) return Unauthorized(new { error = "Invalid email or password." });
+        if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
+            return Unauthorized(new { error = "Invalid email or password." });
 
-        // 2) Verify password (BCrypt example; replace with Argon2 if you prefer)
-        // If you stored raw hash bytes, they may be base64/hex encoded; adjust accordingly.
-        //var ok = BCrypt.Net.BCrypt.Verify(req.Password, Encoding.UTF8.GetString(auth.PasswordHash));
-        // Verify
-        var ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash);
+        bool ok;
+        try
+        {
+            ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash);
+        }
+        catch
+        {
+            // malformed hash in DB
+            return Unauthorized(new { error = "Invalid email or password." });
+        }
+
         if (!ok) return Unauthorized(new { error = "Invalid email or password." });
 
-        // (Optional) handle MFA here; if enabled, return mfaRequired + ticket
-        // For now we return straight session:
+        // create session
         var (token, tokenHash) = MakeToken();
+        var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
 
-        var expiresAt = DateTimeOffset.UtcNow.AddDays(30); // adjust to your policy
-
-        // 3) Persist session (SHA-256(token) -> BINARY(32))
-        var rows = await conn.ExecuteAsync(@"
+        await conn.ExecuteAsync(@"
             INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
             VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
             new
             {
-                id = tokenHash, // byte[32]
+                id = tokenHash,
                 uid = auth.UserId,
                 exp = expiresAt.UtcDateTime,
                 ip = GetClientIpBinary(HttpContext),
-                ua = Request.Headers.UserAgent.ToString().Truncate(255)
+                ua = Request.Headers.UserAgent.ToString().Length > 255
+                        ? Request.Headers.UserAgent.ToString()[..255]
+                        : Request.Headers.UserAgent.ToString()
             });
-
-        if (rows != 1) return StatusCode(500, new { error = "Failed to create session." });
 
         var user = await LoadUserDto(conn, auth.UserId, ct);
 
         return Ok(new LoginResponse
         {
-            Token = token,                 // raw token to client
+            Token = token,
             ExpiresAt = expiresAt,
             User = user,
             MfaRequired = false
         });
     }
+    catch (Exception ex)
+    {
+        // log and return problem; with DeveloperExceptionPage you’ll see full stack
+        Console.Error.WriteLine(ex);
+        return Problem("Login failed.");
+    }
+}
+
 
     // GET /v1/auth/me
     [HttpGet("me")]
