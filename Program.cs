@@ -80,6 +80,15 @@ app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+if (app.Environment.IsDevelopment())
+{
+    app.UseDeveloperExceptionPage();
+}
+else
+{
+    app.UseExceptionHandler("/error");
+    app.MapGet("/error", () => Results.Problem("An error occurred."));
+}
 
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
