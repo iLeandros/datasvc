@@ -93,54 +93,22 @@ else
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
 
-// quick health check
+// health + debug
 app.MapGet("/ping", () => Results.Ok("pong"));
-
-// connection string visibility (no secrets in logs)
 app.MapGet("/debug/cs", (IConfiguration cfg) =>
 {
     var cs = cfg.GetConnectionString("Default");
     return string.IsNullOrWhiteSpace(cs) ? Results.Problem("Missing ConnectionStrings:Default")
                                          : Results.Ok("cs-present");
 });
-
-// DB connectivity check
 app.MapGet("/debug/db", async (IConfiguration cfg) =>
 {
     var cs = cfg.GetConnectionString("Default");
-    if (string.IsNullOrWhiteSpace(cs))
-        return Results.Problem("Missing ConnectionStrings:Default");
-
-    try
-    {
-        await using var c = new MySqlConnection(cs);
-        await c.OpenAsync();
-        return Results.Ok("db-ok");
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem("DB connect failed: " + ex.Message);
-    }
+    if (string.IsNullOrWhiteSpace(cs)) return Results.Problem("Missing ConnectionStrings:Default");
+    try { await using var c = new MySqlConnector.MySqlConnection(cs); await c.OpenAsync(); return Results.Ok("db-ok"); }
+    catch (Exception ex) { return Results.Problem("DB connect failed: " + ex.Message); }
 });
 
-
-app.MapGet("/debug/db", async (IConfiguration cfg) =>
-{
-    var cs = cfg.GetConnectionString("Default");
-    if (string.IsNullOrWhiteSpace(cs))
-        return Results.Problem("Missing ConnectionStrings:Default");
-
-    try
-    {
-        await using var c = new MySqlConnection(cs);
-        await c.OpenAsync();
-        return Results.Ok("db-ok");
-    }
-    catch (Exception ex)
-    {
-        return Results.Problem("DB connect failed: " + ex.Message);
-    }
-});
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
 
