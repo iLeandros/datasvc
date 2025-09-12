@@ -13,88 +13,81 @@ namespace DataSvc.Auth;
 public class AuthController : ControllerBase
 {
     private readonly string _connString;
-    public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default")!;
-    // Row model
-private sealed class UserAuthRow
-{
-    public ulong UserId { get; set; }
-    public string Email { get; set; } = "";
-    public string PasswordHash { get; set; } = ""; // read as TEXT
-}
-// POST /v1/auth/login
-[HttpPost("login")]
-public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
-{
-    try
+    public AuthController(IConfiguration cfg)
     {
-        if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
-            return Unauthorized(new { error = "Invalid email or password." });
-
-        await using var conn = new MySqlConnection(_connString);
-        await conn.OpenAsync(ct);
-
-        var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
-            SELECT
-                ua.user_id AS UserId,
-                ua.email   AS Email,
-                CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
-            FROM user_auth ua
-            JOIN users u ON u.id = ua.user_id
-            WHERE ua.email_norm = LOWER(TRIM(@email))
-            LIMIT 1;",
-            new { email = req.Email });
-
-        if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
-            return Unauthorized(new { error = "Invalid email or password." });
-
-        bool ok;
+        _connString = cfg.GetConnectionString("Default")
+            ?? throw new InvalidOperationException("Missing ConnectionStrings:Default.");
+    }
+    // Row model
+    private sealed class UserAuthRow
+    {
+        public ulong UserId { get; set; }
+        public string Email { get; set; } = "";
+        public string PasswordHash { get; set; } = ""; // read as TEXT
+    }
+    // POST /v1/auth/login
+    [HttpPost("login")]
+    public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
+    {
         try
         {
-            ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash);
-        }
-        catch
-        {
-            // malformed hash in DB
-            return Unauthorized(new { error = "Invalid email or password." });
-        }
-
-        if (!ok) return Unauthorized(new { error = "Invalid email or password." });
-
-        // create session
-        var (token, tokenHash) = MakeToken();
-        var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
-            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
-            new
+            if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
+                return Unauthorized(new { error = "Invalid email or password." });
+    
+            await using var conn = new MySqlConnection(_connString);
+            await conn.OpenAsync(ct);
+    
+            var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
+                SELECT
+                    ua.user_id AS UserId,
+                    ua.email   AS Email,
+                    CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
+                FROM user_auth ua
+                JOIN users u ON u.id = ua.user_id
+                WHERE ua.email_norm = LOWER(TRIM(@email))
+                LIMIT 1;",
+                new { email = req.Email });
+    
+            if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
+                return Unauthorized(new { error = "Invalid email or password." });
+    
+            bool ok;
+            try { ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash); }
+            catch { return Unauthorized(new { error = "Invalid email or password." }); }
+    
+            if (!ok) return Unauthorized(new { error = "Invalid email or password." });
+    
+            var (token, tokenHash) = MakeToken();
+            var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
+    
+            await conn.ExecuteAsync(@"
+                INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
+                VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+                new
+                {
+                    id = tokenHash,
+                    uid = auth.UserId,
+                    exp = expiresAt.UtcDateTime,
+                    ip = GetClientIpBinary(HttpContext),
+                    ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+                });
+    
+            var user = await LoadUserDto(conn, auth.UserId, ct);
+    
+            return Ok(new LoginResponse
             {
-                id = tokenHash,
-                uid = auth.UserId,
-                exp = expiresAt.UtcDateTime,
-                ip = GetClientIpBinary(HttpContext),
-                ua = Request.Headers.UserAgent.ToString().Length > 255
-                        ? Request.Headers.UserAgent.ToString()[..255]
-                        : Request.Headers.UserAgent.ToString()
+                Token = token,
+                ExpiresAt = expiresAt,
+                User = user,
+                MfaRequired = false
             });
-
-        var user = await LoadUserDto(conn, auth.UserId, ct);
-
-        return Ok(new LoginResponse
+        }
+        catch (Exception ex)
         {
-            Token = token,
-            ExpiresAt = expiresAt,
-            User = user,
-            MfaRequired = false
-        });
+            Console.Error.WriteLine(ex);
+            return Problem("Login failed: " + ex.Message);
+        }
     }
-    catch (Exception ex)
-    {
-        // log and return problem; with DeveloperExceptionPage you’ll see full stack
-        Console.Error.WriteLine(ex);
-        return Problem("Login failed.");
-    }
-}
 
 
     // GET /v1/auth/me
