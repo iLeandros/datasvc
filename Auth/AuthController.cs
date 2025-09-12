@@ -14,6 +14,12 @@ public class AuthController : ControllerBase
 {
     private readonly string _connString;
     public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default")!;
+    private sealed class UserAuthRow
+    {
+        public ulong UserId { get; set; }
+        public string Email { get; set; } = "";
+        public string PasswordHash { get; set; } = ""; // <-- string, not byte[]
+    }
 
     // POST /v1/auth/login
     [HttpPost("login")]
@@ -25,9 +31,21 @@ public class AuthController : ControllerBase
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
 
+        /*
         // 1) Load auth row (join to users just to get id & sanity)
         var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
             SELECT ua.user_id AS UserId, ua.email AS Email, ua.password_hash AS PasswordHash
+            FROM user_auth ua
+            JOIN users u ON u.id = ua.user_id
+            WHERE ua.email_norm = LOWER(TRIM(@email))
+            LIMIT 1;", new { email = req.Email });
+            // Query (force string)
+        */
+        var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
+            SELECT
+            ua.user_id  AS UserId,
+            ua.email    AS Email,
+            CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
             FROM user_auth ua
             JOIN users u ON u.id = ua.user_id
             WHERE ua.email_norm = LOWER(TRIM(@email))
@@ -37,7 +55,9 @@ public class AuthController : ControllerBase
 
         // 2) Verify password (BCrypt example; replace with Argon2 if you prefer)
         // If you stored raw hash bytes, they may be base64/hex encoded; adjust accordingly.
-        var ok = BCrypt.Net.BCrypt.Verify(req.Password, Encoding.UTF8.GetString(auth.PasswordHash));
+        //var ok = BCrypt.Net.BCrypt.Verify(req.Password, Encoding.UTF8.GetString(auth.PasswordHash));
+        // Verify
+        var ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash);
         if (!ok) return Unauthorized(new { error = "Invalid email or password." });
 
         // (Optional) handle MFA here; if enabled, return mfaRequired + ticket
