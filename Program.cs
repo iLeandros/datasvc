@@ -90,6 +90,23 @@ else
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
 
+app.MapGet("/debug/db", async (IConfiguration cfg) =>
+{
+    var cs = cfg.GetConnectionString("Default");
+    if (string.IsNullOrWhiteSpace(cs))
+        return Results.Problem("Missing ConnectionStrings:Default");
+
+    try
+    {
+        await using var c = new MySqlConnection(cs);
+        await c.OpenAsync();
+        return Results.Ok("db-ok");
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem("DB connect failed: " + ex.Message);
+    }
+});
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
 
