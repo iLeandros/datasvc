@@ -14,8 +14,27 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using System.Linq;
 using System.IO.Compression;
+using Microsoft.AspNetCore.Authentication;
+using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+
 
 var builder = WebApplication.CreateBuilder(args);
+
+// --- Auth & Controllers ---
+builder.Services.AddAuthentication(options =>
+{
+    options.DefaultAuthenticateScheme = SessionAuthHandler.Scheme;
+    options.DefaultChallengeScheme = SessionAuthHandler.Scheme;
+})
+.AddScheme<AuthenticationSchemeOptions, SessionAuthHandler>(SessionAuthHandler.Scheme, _ => { });
+
+builder.Services.AddAuthorization();
+
+// Controllers (for AuthController). We return camelCase to match the MAUI client.
+builder.Services.AddControllers().AddJsonOptions(o =>
+{
+    o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
+});
 
 // Compression + CORS
 //builder.Services.AddResponseCompression();
@@ -58,6 +77,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 var app = builder.Build();
 app.UseResponseCompression();
 app.UseCors();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
@@ -560,6 +582,8 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
     return Results.Json(new { ok = true, href = rec.Href });
 });
 
+// Map MVC controllers (AuthController)
+app.MapControllers();
 app.Run();
 
 static void SaveGzipCopy(string jsonPath)
