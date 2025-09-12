@@ -2,7 +2,6 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using Dapper;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
@@ -12,31 +11,23 @@ namespace DataSvc.Auth;
 [Route("v1/auth")]
 public class AuthController : ControllerBase
 {
-    private readonly string _connString;
-    public AuthController(IConfiguration cfg)
-    {
-        _connString = cfg.GetConnectionString("Default")
-            ?? throw new InvalidOperationException("Missing ConnectionStrings:Default.");
-    }
-    // Row model
-    private sealed class UserAuthRow
-    {
-        public ulong UserId { get; set; }
-        public string Email { get; set; } = "";
-        public string PasswordHash { get; set; } = ""; // read as TEXT
-    }
-    // POST /v1/auth/login
+    private readonly string? _connString;
+    public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default");
+
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(_connString))
+                return Problem("Missing ConnectionStrings:Default.");
+
             if (string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.Password))
                 return Unauthorized(new { error = "Invalid email or password." });
-    
+
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
-    
+
             var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
                 SELECT
                     ua.user_id AS UserId,
@@ -45,35 +36,35 @@ public class AuthController : ControllerBase
                 FROM user_auth ua
                 JOIN users u ON u.id = ua.user_id
                 WHERE ua.email_norm = LOWER(TRIM(@email))
-                LIMIT 1;",
-                new { email = req.Email });
-    
+                LIMIT 1;", new { email = req.Email });
+
             if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
                 return Unauthorized(new { error = "Invalid email or password." });
-    
+
             bool ok;
             try { ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash); }
             catch { return Unauthorized(new { error = "Invalid email or password." }); }
-    
+
             if (!ok) return Unauthorized(new { error = "Invalid email or password." });
-    
+
+            // Make a session
             var (token, tokenHash) = MakeToken();
             var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
-    
+
             await conn.ExecuteAsync(@"
                 INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
                 VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
                 new
                 {
-                    id = tokenHash,
+                    id = tokenHash, // SHA-256(token)
                     uid = auth.UserId,
                     exp = expiresAt.UtcDateTime,
                     ip = GetClientIpBinary(HttpContext),
                     ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
                 });
-    
+
             var user = await LoadUserDto(conn, auth.UserId, ct);
-    
+
             return Ok(new LoginResponse
             {
                 Token = token,
@@ -89,55 +80,16 @@ public class AuthController : ControllerBase
         }
     }
 
-
-    // GET /v1/auth/me
-    [HttpGet("me")]
-    [Authorize] // We’ll add a custom auth handler below; you can also do manual checks
-    public async Task<IActionResult> Me(CancellationToken ct)
+    // ----- helpers -----
+    private static (string token, byte[] hash) MakeToken()
     {
-        var userId = HttpContext.Items["userId"] as ulong?;
-        if (userId is null) return Unauthorized();
-
-        await using var conn = new MySqlConnection(_connString);
-        var user = await LoadUserDto(conn, userId.Value, ct);
-        return Ok(user);
-    }
-
-    // POST /v1/auth/logout
-    [HttpPost("logout")]
-    [Authorize]
-    public async Task<IActionResult> Logout(CancellationToken ct)
-    {
-        var token = GetBearerToken(Request);
-        if (string.IsNullOrEmpty(token)) return NoContent();
-
-        var (_, hash) = MakeToken(token); // hash existing token
-        await using var conn = new MySqlConnection(_connString);
-        await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = hash });
-
-        return NoContent();
-    }
-
-    // ------------- helpers -------------
-
-    private static (string token, byte[] hash) MakeToken(string? existing = null)
-    {
-        string token = existing ?? Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        using var sha = SHA256.Create();
-        byte[] hash = sha.ComputeHash(Convert.FromHexString(token));
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        var hash = SHA256.HashData(Convert.FromHexString(token));
         return (token, hash);
     }
 
-    private static string? GetBearerToken(HttpRequest req)
-        => req.Headers.Authorization.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)
-           ? req.Headers.Authorization.ToString().Substring("Bearer ".Length).Trim()
-           : null;
-
     private static byte[]? GetClientIpBinary(HttpContext ctx)
-    {
-        var ip = ctx.Connection.RemoteIpAddress;
-        return ip is null ? null : ip.MapToIPv6().GetAddressBytes();
-    }
+        => ctx.Connection.RemoteIpAddress?.MapToIPv6().GetAddressBytes();
 
     private static async Task<UserDto> LoadUserDto(IDbConnection conn, ulong userId, CancellationToken ct)
     {
@@ -158,14 +110,9 @@ public class AuthController : ControllerBase
         return user;
     }
 
-    // DTOs (match the MAUI client)
+    // DTOs
     public sealed class LoginRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
     public sealed class LoginResponse { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
     public sealed class UserDto { public ulong Id { get; set; } public string Email { get; set; } = ""; public string? DisplayName { get; set; } public string[]? Roles { get; set; } }
-    private sealed class UserAuthRow { public ulong UserId { get; set; } public string Email { get; set; } = ""; public byte[] PasswordHash { get; set; } = Array.Empty<byte>(); }
-}
-
-static class StringExt
-{
-    public static string Truncate(this string s, int max) => s.Length <= max ? s : s[..max];
+    private sealed class UserAuthRow { public ulong UserId { get; set; } public string Email { get; set; } = ""; public string PasswordHash { get; set; } = ""; }
 }
