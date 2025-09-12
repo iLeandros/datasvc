@@ -75,11 +75,6 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
-app.UseResponseCompression();
-app.UseCors();
-
-app.UseAuthentication();
-app.UseAuthorization();
 if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
@@ -89,6 +84,12 @@ else
     app.UseExceptionHandler("/error");
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
+app.UseResponseCompression();
+app.UseCors();
+
+app.UseAuthentication();
+app.UseAuthorization();
+
 
 app.MapGet("/debug/db", async (IConfiguration cfg) =>
 {
