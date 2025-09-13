@@ -37,8 +37,8 @@ public class AuthController : ControllerBase
         public string? Timezone { get; set; }
         public string? AvatarUrl { get; set; }
     }
-
-    [HttpGet]
+    
+    [HttpGet("get")]
     [Authorize]
     public async Task<IActionResult> Get()
     {
@@ -57,8 +57,7 @@ public class AuthController : ControllerBase
 
         return Ok(p);
     }
-
-    [HttpPut]
+    [HttpPut("put")]
     [Authorize]
     public async Task<IActionResult> Put([FromBody] UpdateProfileRequest req)
     {
