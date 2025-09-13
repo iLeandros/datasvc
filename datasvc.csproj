@@ -10,13 +10,13 @@
     <PackageReference Include="HtmlAgilityPack" Version="1.12.2" />
   </ItemGroup>
 <ItemGroup>
-  <!-- publish the legal HTML files -->
-  <Content Include="Legal\**\*.html">
+  <!-- Copy Legal HTML files to bin and publish -->
+  <None Update="Legal/**/*.html">
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     <CopyToPublishDirectory>Always</CopyToPublishDirectory>
-  </Content>
+  </None>
 </ItemGroup>
 
-
 </Project>
+
 
