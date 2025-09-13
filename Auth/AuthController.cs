@@ -21,7 +21,76 @@ public class AuthController : ControllerBase
     public sealed class LoginResponse   { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
     public sealed class UserDto         { public ulong Id { get; set; } public string Email { get; set; } = ""; public string? DisplayName { get; set; } public string[]? Roles { get; set; } }
     private sealed class UserAuthRow    { public ulong UserId { get; set; } public string Email { get; set; } = ""; public string PasswordHash { get; set; } = ""; }
+    public sealed class ProfileDto
+    {
+        public ulong UserId { get; set; }
+        public string? DisplayName { get; set; }
+        public string? Locale { get; set; }
+        public string? Timezone { get; set; }
+        public string? AvatarUrl { get; set; }
+    }
 
+    public sealed class UpdateProfileRequest
+    {
+        public string? DisplayName { get; set; }
+        public string? Locale { get; set; }
+        public string? Timezone { get; set; }
+        public string? AvatarUrl { get; set; }
+    }
+
+    [HttpGet]
+    [Authorize]
+    public async Task<IActionResult> Get()
+    {
+        if (string.IsNullOrWhiteSpace(_conn)) return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var uid)) return Unauthorized();
+
+        await using var c = new MySqlConnection(_conn);
+
+        // Ensure row exists (defense in depth)
+        await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
+
+        var p = await c.QuerySingleAsync<ProfileDto>(@"
+            SELECT user_id AS UserId, display_name AS DisplayName, locale, timezone, avatar_url AS AvatarUrl
+            FROM user_profile WHERE user_id = @uid
+            LIMIT 1;", new { uid });
+
+        return Ok(p);
+    }
+
+    [HttpPut]
+    [Authorize]
+    public async Task<IActionResult> Put([FromBody] UpdateProfileRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(_conn)) return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var uid)) return Unauthorized();
+
+        // Basic length guards to match your schema
+        string? dn  = Trunc(req.DisplayName, 100);
+        string? loc = Trunc(req.Locale, 10);
+        string? tz  = Trunc(req.Timezone, 50);
+        string? av  = Trunc(req.AvatarUrl, 500);
+
+        await using var c = new MySqlConnection(_conn);
+
+        // Ensure a row exists, then update
+        await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
+
+        await c.ExecuteAsync(@"
+            UPDATE user_profile
+            SET display_name = @dn,
+                locale       = NULLIF(@loc,''),
+                timezone     = NULLIF(@tz,''),
+                avatar_url   = NULLIF(@av,'')
+            WHERE user_id = @uid;", new { uid, dn, loc, tz, av });
+
+        var p = await c.QuerySingleAsync<ProfileDto>(@"
+            SELECT user_id AS UserId, display_name AS DisplayName, locale, timezone, avatar_url AS AvatarUrl
+            FROM user_profile WHERE user_id = @uid
+            LIMIT 1;", new { uid });
+
+        return Ok(p);
+    }
     // ====== REGISTER ======
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest req, CancellationToken ct)
