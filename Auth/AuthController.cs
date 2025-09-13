@@ -42,10 +42,10 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Get()
     {
-        if (string.IsNullOrWhiteSpace(_conn)) return Problem("Missing ConnectionStrings:Default.");
+        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var uid)) return Unauthorized();
 
-        await using var c = new MySqlConnection(_conn);
+        await using var c = new MySqlConnection(_connString);
 
         // Ensure row exists (defense in depth)
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
@@ -62,7 +62,7 @@ public class AuthController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Put([FromBody] UpdateProfileRequest req)
     {
-        if (string.IsNullOrWhiteSpace(_conn)) return Problem("Missing ConnectionStrings:Default.");
+        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var uid)) return Unauthorized();
 
         // Basic length guards to match your schema
@@ -71,7 +71,7 @@ public class AuthController : ControllerBase
         string? tz  = Trunc(req.Timezone, 50);
         string? av  = Trunc(req.AvatarUrl, 500);
 
-        await using var c = new MySqlConnection(_conn);
+        await using var c = new MySqlConnection(_connString);
 
         // Ensure a row exists, then update
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
