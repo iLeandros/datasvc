@@ -216,6 +216,33 @@ public class AuthController : ControllerBase
             return Problem("Login failed: " + ex.Message);
         }
     }
+    // GET /v1/auth/me
+    [HttpGet("me")]
+    [Authorize] // We’ll add a custom auth handler below; you can also do manual checks
+    public async Task<IActionResult> Me(CancellationToken ct)
+    {
+        var userId = HttpContext.Items["userId"] as ulong?;
+        if (userId is null) return Unauthorized();
+
+        await using var conn = new MySqlConnection(_connString);
+        var user = await LoadUserDto(conn, userId.Value, ct);
+        return Ok(user);
+    }
+
+    // POST /v1/auth/logout
+    [HttpPost("logout")]
+    [Authorize]
+    public async Task<IActionResult> Logout(CancellationToken ct)
+    {
+        var token = GetBearerToken(Request);
+        if (string.IsNullOrEmpty(token)) return NoContent();
+
+        var (_, hash) = MakeToken(token); // hash existing token
+        await using var conn = new MySqlConnection(_connString);
+        await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = hash });
+
+        return NoContent();
+    }
 
     // ----- helpers -----
     private static (string token, byte[] hash) MakeToken()
