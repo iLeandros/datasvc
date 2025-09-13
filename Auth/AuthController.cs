@@ -1,7 +1,8 @@
 using System.Data;
+using System.Security.Claims;
 using System.Security.Cryptography;
 using Dapper;
-using Microsoft.AspNetCore.Authorization;        // <-- required
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 
@@ -42,7 +43,6 @@ public class AuthController : ControllerBase
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
 
-            // Duplicate check (email or email_norm if it exists)
             var exists = await conn.ExecuteScalarAsync<int>(@"
                 SELECT 1
                 FROM user_auth
@@ -52,30 +52,23 @@ public class AuthController : ControllerBase
             if (exists == 1)
                 return Conflict(new { error = "Email already registered." });
 
-            // Create user (uuid stored as binary via UUID_TO_BIN to avoid collation issues)
             await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx);
             var userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx);
 
-            // Hash password (BCrypt string stored as VARBINARY)
             var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
             var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
 
             await conn.ExecuteAsync(@"
-                INSERT INTO user_auth
-                  (user_id, email, password_hash, email_verified_at, last_login_at)
-                VALUES
-                  (@uid, @email, @hash, NULL, NULL);",
+                INSERT INTO user_auth (user_id, email, password_hash, email_verified_at, last_login_at)
+                VALUES (@uid, @email, @hash, NULL, NULL);",
                 new { uid = userId, email, hash = hashBytes }, tx);
 
-            // Optional profile row
             await conn.ExecuteAsync("INSERT INTO user_profile (user_id) VALUES (@uid);", new { uid = userId }, tx);
 
-            // Ensure 'user' role & assign
             var roleId = await EnsureRole(conn, tx, "user");
             await conn.ExecuteAsync("INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
                 new { uid = userId, rid = roleId }, tx);
 
-            // Create session
             var (token, tokenHash) = MakeToken();
             var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
             await conn.ExecuteAsync(@"
@@ -139,7 +132,6 @@ public class AuthController : ControllerBase
             catch { return Unauthorized(new { error = "Invalid email or password." }); }
             if (!ok) return Unauthorized(new { error = "Invalid email or password." });
 
-            // New session
             var (token, tokenHash) = MakeToken();
             var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
 
@@ -168,7 +160,7 @@ public class AuthController : ControllerBase
 
     // ====== ME ======
     [HttpGet("me")]
-    [Authorize] // validated by SessionAuthHandler
+    [Authorize]
     public async Task<IActionResult> Me(CancellationToken ct)
     {
         if (!TryGetUserId(out var userId)) return Unauthorized();
@@ -187,7 +179,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrEmpty(token))
             return NoContent();
 
-        var (_, hash) = MakeToken(token); // hash the existing token
+        var (_, hash) = MakeToken(token); // hash existing token
         await using var conn = new MySqlConnection(_connString);
         await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = hash });
 
@@ -199,25 +191,18 @@ public class AuthController : ControllerBase
     {
         var id = await conn.ExecuteScalarAsync<uint>("SELECT id FROM roles WHERE name = @n LIMIT 1;", new { n = name }, tx);
         if (id != 0) return id;
-
         await conn.ExecuteAsync("INSERT INTO roles (name) VALUES (@n);", new { n = name }, tx);
         return await conn.ExecuteScalarAsync<uint>("SELECT LAST_INSERT_ID();", transaction: tx);
     }
 
     private static (string token, byte[] hash) MakeToken()
     {
-        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));  // 64 hex chars
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         var hash = SHA256.HashData(Convert.FromHexString(token));
         return (token, hash);
     }
-
-    // overload used in Logout to hash an existing token
     private static (string token, byte[] hash) MakeToken(string existingToken)
-    {
-        var token = existingToken;
-        var hash = SHA256.HashData(Convert.FromHexString(token));
-        return (token, hash);
-    }
+        => (existingToken, SHA256.HashData(Convert.FromHexString(existingToken)));
 
     private static string? GetBearerToken(HttpRequest req)
     {
@@ -231,17 +216,25 @@ public class AuthController : ControllerBase
     private static byte[]? GetClientIpBinary(HttpContext ctx)
         => ctx.Connection.RemoteIpAddress?.MapToIPv6().GetAddressBytes();
 
-    private static bool TryGetUserId(out ulong userId)
+    // FIXED: instance-based; claims first, then Items["user_id"]
+    private bool TryGetUserId(out ulong userId)
     {
         userId = 0;
-        // SessionAuthHandler puts it here
-        if (HttpContextAccessor is not null) { }
-        // from ControllerBase: HttpContext is available
-        if (HttpContext.Items.TryGetValue("userId", out var o) && o is ulong uid)
-        {
-            userId = uid;
+
+        var claim =
+            User?.FindFirst("uid")?.Value ??
+            User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
+            User?.FindFirst("sub")?.Value;
+
+        if (!string.IsNullOrEmpty(claim) && ulong.TryParse(claim, out userId))
             return true;
+
+        if (HttpContext?.Items.TryGetValue("user_id", out var v) == true)
+        {
+            if (v is ulong ul) { userId = ul; return true; }
+            if (ulong.TryParse(v?.ToString(), out userId)) return true;
         }
+
         return false;
     }
 
