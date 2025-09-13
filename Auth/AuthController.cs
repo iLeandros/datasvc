@@ -7,121 +7,6 @@ using MySqlConnector;
 
 namespace DataSvc.Auth;
 
-// ====== DTO ======
-public sealed class RegisterRequest
-{
-    public string Email { get; set; } = "";
-    public string Password { get; set; } = "";
-}
-
-// ====== Endpoint ======
-[HttpPost("register")]
-public async Task<IActionResult> Register([FromBody] RegisterRequest req, CancellationToken ct)
-{
-    if (string.IsNullOrWhiteSpace(_connString))
-        return Problem("Missing ConnectionStrings:Default.");
-
-    var email = (req.Email ?? "").Trim();
-    var emailNorm = email.ToLowerInvariant();
-    var password = req.Password ?? "";
-
-    // basic validation
-    if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
-        return BadRequest(new { error = "Invalid email." });
-    if (password.Length < 8)
-        return BadRequest(new { error = "Password must be at least 8 characters." });
-
-    try
-    {
-        await using var conn = new MySqlConnection(_connString);
-        await conn.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-
-        // duplicate check
-        var exists = await conn.ExecuteScalarAsync<int>(
-            "SELECT 1 FROM user_auth WHERE email_norm = @e LIMIT 1;",
-            new { e = emailNorm }, tx);
-        if (exists == 1)
-            return Conflict(new { error = "Email already registered." });
-
-        // create user
-        var uuid = Guid.NewGuid().ToString();
-        await conn.ExecuteAsync(
-            "INSERT INTO users (uuid) VALUES (@uuid);",
-            new { uuid }, tx);
-        var userId = await conn.ExecuteScalarAsync<ulong>(
-            "SELECT LAST_INSERT_ID();", transaction: tx);
-
-        // hash password (store as bytes into VARBINARY)
-        var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
-        var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
-
-        await conn.ExecuteAsync(@"
-            INSERT INTO user_auth
-              (user_id, email, email_norm, password_hash, email_verified_at, last_login_at)
-            VALUES
-              (@uid, @email, @email_norm, @hash, NULL, NULL);",
-            new { uid = userId, email, email_norm = emailNorm, hash = hashBytes }, tx);
-
-        // optional profile row
-        await conn.ExecuteAsync(
-            "INSERT INTO user_profile (user_id) VALUES (@uid);",
-            new { uid = userId }, tx);
-
-        // ensure 'user' role & assign
-        var roleId = await EnsureRole(conn, tx, "user");
-        await conn.ExecuteAsync(@"
-            INSERT IGNORE INTO user_roles (user_id, role_id)
-            VALUES (@uid, @rid);",
-            new { uid = userId, rid = roleId }, tx);
-
-        // create session
-        var (token, tokenHash) = MakeToken();
-        var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
-        await conn.ExecuteAsync(@"
-            INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
-            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
-            new
-            {
-                id = tokenHash,
-                uid = userId,
-                exp = expiresAt.UtcDateTime,
-                ip = GetClientIpBinary(HttpContext),
-                ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
-            }, tx);
-
-        await tx.CommitAsync(ct);
-
-        var user = await LoadUserDto(conn, userId, ct);
-        return Ok(new LoginResponse { Token = token, ExpiresAt = expiresAt, User = user, MfaRequired = false });
-    }
-    catch (MySqlException ex) when (ex.Number == 1062) // duplicate key
-    {
-        return Conflict(new { error = "Email already registered." });
-    }
-    catch (Exception ex)
-    {
-        Console.Error.WriteLine(ex);
-        return Problem("Registration failed.");
-    }
-}
-
-// ====== helper ======
-private static async Task<uint> EnsureRole(MySqlConnection conn, MySqlTransaction tx, string name)
-{
-    var id = await conn.ExecuteScalarAsync<uint>(
-        "SELECT id FROM roles WHERE name = @n LIMIT 1;",
-        new { n = name }, tx);
-    if (id != 0) return id;
-
-    await conn.ExecuteAsync(
-        "INSERT INTO roles (name) VALUES (@n);",
-        new { n = name }, tx);
-    return await conn.ExecuteScalarAsync<uint>(
-        "SELECT LAST_INSERT_ID();", transaction: tx);
-}
-
-
 [ApiController]
 [Route("v1/auth")]
 public class AuthController : ControllerBase
@@ -129,6 +14,121 @@ public class AuthController : ControllerBase
     private readonly string? _connString;
     public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default");
 
+    // ====== DTO ======
+    public sealed class RegisterRequest
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+    
+    // ====== Endpoint ======
+    [HttpPost("register")]
+    public async Task<IActionResult> Register([FromBody] RegisterRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+    
+        var email = (req.Email ?? "").Trim();
+        var emailNorm = email.ToLowerInvariant();
+        var password = req.Password ?? "";
+    
+        // basic validation
+        if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
+            return BadRequest(new { error = "Invalid email." });
+        if (password.Length < 8)
+            return BadRequest(new { error = "Password must be at least 8 characters." });
+    
+        try
+        {
+            await using var conn = new MySqlConnection(_connString);
+            await conn.OpenAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+    
+            // duplicate check
+            var exists = await conn.ExecuteScalarAsync<int>(
+                "SELECT 1 FROM user_auth WHERE email_norm = @e LIMIT 1;",
+                new { e = emailNorm }, tx);
+            if (exists == 1)
+                return Conflict(new { error = "Email already registered." });
+    
+            // create user
+            var uuid = Guid.NewGuid().ToString();
+            await conn.ExecuteAsync(
+                "INSERT INTO users (uuid) VALUES (@uuid);",
+                new { uuid }, tx);
+            var userId = await conn.ExecuteScalarAsync<ulong>(
+                "SELECT LAST_INSERT_ID();", transaction: tx);
+    
+            // hash password (store as bytes into VARBINARY)
+            var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
+            var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
+    
+            await conn.ExecuteAsync(@"
+                INSERT INTO user_auth
+                  (user_id, email, email_norm, password_hash, email_verified_at, last_login_at)
+                VALUES
+                  (@uid, @email, @email_norm, @hash, NULL, NULL);",
+                new { uid = userId, email, email_norm = emailNorm, hash = hashBytes }, tx);
+    
+            // optional profile row
+            await conn.ExecuteAsync(
+                "INSERT INTO user_profile (user_id) VALUES (@uid);",
+                new { uid = userId }, tx);
+    
+            // ensure 'user' role & assign
+            var roleId = await EnsureRole(conn, tx, "user");
+            await conn.ExecuteAsync(@"
+                INSERT IGNORE INTO user_roles (user_id, role_id)
+                VALUES (@uid, @rid);",
+                new { uid = userId, rid = roleId }, tx);
+    
+            // create session
+            var (token, tokenHash) = MakeToken();
+            var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
+            await conn.ExecuteAsync(@"
+                INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
+                VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+                new
+                {
+                    id = tokenHash,
+                    uid = userId,
+                    exp = expiresAt.UtcDateTime,
+                    ip = GetClientIpBinary(HttpContext),
+                    ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+                }, tx);
+    
+            await tx.CommitAsync(ct);
+    
+            var user = await LoadUserDto(conn, userId, ct);
+            return Ok(new LoginResponse { Token = token, ExpiresAt = expiresAt, User = user, MfaRequired = false });
+        }
+        catch (MySqlException ex) when (ex.Number == 1062) // duplicate key
+        {
+            return Conflict(new { error = "Email already registered." });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex);
+            return Problem("Registration failed.");
+        }
+    }
+    
+    // ====== helper ======
+    private static async Task<uint> EnsureRole(MySqlConnection conn, MySqlTransaction tx, string name)
+    {
+        var id = await conn.ExecuteScalarAsync<uint>(
+            "SELECT id FROM roles WHERE name = @n LIMIT 1;",
+            new { n = name }, tx);
+        if (id != 0) return id;
+    
+        await conn.ExecuteAsync(
+            "INSERT INTO roles (name) VALUES (@n);",
+            new { n = name }, tx);
+        return await conn.ExecuteScalarAsync<uint>(
+            "SELECT LAST_INSERT_ID();", transaction: tx);
+    }
+
+    
     [HttpPost("login")]
     public async Task<IActionResult> Login([FromBody] LoginRequest req, CancellationToken ct)
     {
