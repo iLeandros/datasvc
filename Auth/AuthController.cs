@@ -43,11 +43,20 @@ public class AuthController : ControllerBase
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-    
+
+            /*
             // duplicate check
             var exists = await conn.ExecuteScalarAsync<int>(
                 "SELECT 1 FROM user_auth WHERE email_norm = @e LIMIT 1;",
                 new { e = emailNorm }, tx);
+            */
+            var exists = await conn.ExecuteScalarAsync<int>(@"
+                SELECT 1
+                FROM user_auth
+                WHERE email = @em OR email_norm = LOWER(TRIM(@em))
+                LIMIT 1;",
+                new { em = email }, tx);
+
             if (exists == 1)
                 return Conflict(new { error = "Email already registered." });
     
@@ -61,20 +70,28 @@ public class AuthController : ControllerBase
             await conn.ExecuteAsync(
                 "INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));",
                 transaction: tx);
+                
             var userId = await conn.ExecuteScalarAsync<ulong>(
                 "SELECT LAST_INSERT_ID();", transaction: tx);
     
             // hash password (store as bytes into VARBINARY)
             var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
             var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
-    
+            /*
             await conn.ExecuteAsync(@"
                 INSERT INTO user_auth
                   (user_id, email, email_norm, password_hash, email_verified_at, last_login_at)
                 VALUES
                   (@uid, @email, @email_norm, @hash, NULL, NULL);",
                 new { uid = userId, email, email_norm = emailNorm, hash = hashBytes }, tx);
-    
+            */
+            await conn.ExecuteAsync(@"
+                INSERT INTO user_auth
+                  (user_id, email, password_hash, email_verified_at, last_login_at)
+                VALUES
+                  (@uid, @email, @hash, NULL, NULL);",
+                new { uid = userId, email, hash = hashBytes }, tx);
+
             // optional profile row
             await conn.ExecuteAsync(
                 "INSERT INTO user_profile (user_id) VALUES (@uid);",
