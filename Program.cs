@@ -92,6 +92,13 @@ else
     app.UseExceptionHandler("/error");
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
+app.MapGet("/debug/auth", (HttpContext ctx) =>
+{
+    var uidClaim = ctx.User?.FindFirst("uid")?.Value;
+    var uidItem  = ctx.Items.TryGetValue("user_id", out var v) ? v?.ToString() : null;
+    var auth = ctx.User?.Identity?.IsAuthenticated == true;
+    return Results.Json(new { authenticated = auth, uidClaim, uidItem });
+}).RequireAuthorization();
 
 // health + debug
 app.MapGet("/ping", () => Results.Ok("pong"));
