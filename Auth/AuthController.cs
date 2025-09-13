@@ -256,6 +256,9 @@ public class AuthController : ControllerBase
     }
 
     // ====== helpers ======
+    // ---------- helpers ----------
+    private static string? Trunc(string? s, int max)
+        => string.IsNullOrEmpty(s) ? s : (s.Length <= max ? s : s[..max]);
     private static async Task<uint> EnsureRole(MySqlConnection conn, MySqlTransaction tx, string name)
     {
         var id = await conn.ExecuteScalarAsync<uint>("SELECT id FROM roles WHERE name = @n LIMIT 1;", new { n = name }, tx);
