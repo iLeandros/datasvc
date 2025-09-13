@@ -9,5 +9,14 @@
   <ItemGroup>
     <PackageReference Include="HtmlAgilityPack" Version="1.12.2" />
   </ItemGroup>
+<ItemGroup>
+  <!-- publish the legal HTML files -->
+  <Content Include="Legal\**\*.html">
+    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+  </Content>
+</ItemGroup>
+
 
 </Project>
+
