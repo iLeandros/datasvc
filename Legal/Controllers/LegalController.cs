@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Claims; // <-- added
 using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,7 +24,7 @@ public class LegalController : ControllerBase
     }
 
     // ------------------------
-    // New: GET /v1/legal/latest
+    // GET /v1/legal/latest (anonymous)
     // ------------------------
     public sealed class LatestDoc
     {
@@ -55,7 +56,7 @@ public class LegalController : ControllerBase
     }
 
     // ------------------------
-    // New: GET /v1/legal/status (auth)
+    // GET /v1/legal/status (auth)
     // ------------------------
     public sealed class StatusDoc
     {
@@ -68,9 +69,8 @@ public class LegalController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Status()
     {
-        // Resolve your user id (matches what your auth handler sets)
-        var userId = HttpContext.Items.TryGetValue("user_id", out var v) ? (ulong)v! : 0UL;
-        if (userId == 0) return Unauthorized();
+        if (!TryResolveUserId(out var userId))
+            return Unauthorized();
 
         var required = new[]
         {
@@ -98,7 +98,7 @@ public class LegalController : ControllerBase
     }
 
     // ------------------------
-    // Existing: GET /v1/legal/terms  (?lang=en)
+    // GET /v1/legal/terms  (?lang=en)
     // ------------------------
     [HttpGet("terms")]
     [AllowAnonymous]
@@ -106,7 +106,7 @@ public class LegalController : ControllerBase
         => Ok(ReadDoc("terms", lang));
 
     // ------------------------
-    // Existing: GET /v1/legal/privacy (?lang=en)
+    // GET /v1/legal/privacy (?lang=en)
     // ------------------------
     [HttpGet("privacy")]
     [AllowAnonymous]
@@ -114,7 +114,7 @@ public class LegalController : ControllerBase
         => Ok(ReadDoc("privacy", lang));
 
     // ------------------------
-    // Existing: POST /v1/legal/accept { docKey, version }
+    // POST /v1/legal/accept { docKey, version } (auth)
     // ------------------------
     [HttpPost("accept")]
     [Authorize]
@@ -123,8 +123,8 @@ public class LegalController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.DocKey))
             return BadRequest(new { error = "docKey required" });
 
-        var userId = HttpContext.Items.TryGetValue("user_id", out var v) ? (ulong)v! : 0UL;
-        if (userId == 0) return Unauthorized();
+        if (!TryResolveUserId(out var userId))
+            return Unauthorized();
 
         await using var c = new MySqlConnection(_conn);
         await c.ExecuteAsync(@"
@@ -145,9 +145,32 @@ public class LegalController : ControllerBase
     }
 
     // ---- helpers ----
+
+    // Resolve user id from claims first, then Items as fallback
+    private bool TryResolveUserId(out ulong userId)
+    {
+        userId = 0;
+
+        // common places auth handlers put the id
+        string? uidStr =
+            User?.FindFirst("uid")?.Value ??
+            User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
+            User?.FindFirst("sub")?.Value;
+
+        if (!string.IsNullOrEmpty(uidStr) && ulong.TryParse(uidStr, out userId))
+            return true;
+
+        if (HttpContext.Items.TryGetValue("user_id", out var v) && v is not null)
+        {
+            if (v is ulong ul) { userId = ul; return true; }
+            if (ulong.TryParse(v.ToString(), out userId)) return true;
+        }
+
+        return false;
+    }
+
     private LegalDocResponse ReadDoc(string docKey, string lang)
     {
-        // paths & versions configurable, with sensible defaults
         var section = _cfg.GetSection($"Legal:{docKey}");
         var version = section.GetValue<int>("Version", 1);
         var fileRel = section.GetValue<string>("Path", $"Legal/{docKey}_{lang}.html");
