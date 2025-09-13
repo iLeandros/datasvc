@@ -11,13 +11,14 @@
   </ItemGroup>
 <ItemGroup>
   <!-- Copy Legal HTML files to bin/publish -->
-  <Content Include="Legal/**/*.html">
+  <Content Include="Legal/*.html">
     <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     <CopyToPublishDirectory>Always</CopyToPublishDirectory>
   </Content>
 </ItemGroup>
 
 </Project>
+
 
 
 
