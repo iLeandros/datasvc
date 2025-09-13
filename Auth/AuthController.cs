@@ -53,9 +53,14 @@ public class AuthController : ControllerBase
     
             // create user
             var uuid = Guid.NewGuid().ToString();
+            /*
             await conn.ExecuteAsync(
                 "INSERT INTO users (uuid) VALUES (@uuid);",
                 new { uuid }, tx);
+            */
+            await conn.ExecuteAsync(
+                "INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));",
+                transaction: tx);
             var userId = await conn.ExecuteScalarAsync<ulong>(
                 "SELECT LAST_INSERT_ID();", transaction: tx);
     
