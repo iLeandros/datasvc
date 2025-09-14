@@ -641,10 +641,6 @@ public sealed class ResultStore
     public DataSnapshot? Current { get { lock (_gate) return _current; } }
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
 }
-public sealed class AuthOptions
-{
-    public string GoogleWebClientId { get; set; } = "";
-}
 
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
 
