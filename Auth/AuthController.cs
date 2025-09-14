@@ -28,6 +28,7 @@ public class AuthController : ControllerBase
         public string? Locale { get; set; }
         public string? Timezone { get; set; }
         public string? AvatarUrl { get; set; }
+        public DateTime? Birthdate { get; set; }   // <--- NEW
     }
 
     public sealed class UpdateProfileRequest
@@ -36,58 +37,73 @@ public class AuthController : ControllerBase
         public string? Locale { get; set; }
         public string? Timezone { get; set; }
         public string? AvatarUrl { get; set; }
+        public string? Birthdate { get; set; }     // ISO "yyyy-MM-dd" (optional)
     }
     
     [HttpGet("get")]
     [Authorize]
     public async Task<IActionResult> Get()
     {
-        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var uid)) return Unauthorized();
-
-        await using var c = new MySqlConnection(_connString);
-
-        // Ensure row exists (defense in depth)
+        await using var c = new MySqlConnector.MySqlConnection(_conn);
+    
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
-
+    
         var p = await c.QuerySingleAsync<ProfileDto>(@"
-            SELECT user_id AS UserId, display_name AS DisplayName, locale, timezone, avatar_url AS AvatarUrl
-            FROM user_profile WHERE user_id = @uid
+            SELECT user_id AS UserId,
+            display_name AS DisplayName,
+            locale, timezone,
+            avatar_url AS AvatarUrl,
+            birthdate
+            FROM user_profile
+            WHERE user_id = @uid
             LIMIT 1;", new { uid });
-
+    
         return Ok(p);
     }
     [HttpPut("put")]
     [Authorize]
     public async Task<IActionResult> Put([FromBody] UpdateProfileRequest req)
     {
-        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var uid)) return Unauthorized();
-
-        // Basic length guards to match your schema
+    
         string? dn  = Trunc(req.DisplayName, 100);
         string? loc = Trunc(req.Locale, 10);
         string? tz  = Trunc(req.Timezone, 50);
         string? av  = Trunc(req.AvatarUrl, 500);
-
-        await using var c = new MySqlConnection(_connString);
-
-        // Ensure a row exists, then update
+    
+        DateTime? bd = null;
+        if (!string.IsNullOrWhiteSpace(req.Birthdate))
+        {
+            // accept yyyy-MM-dd
+            if (!DateTime.TryParse(req.Birthdate, out var tmp))
+                return BadRequest("birthdate must be yyyy-MM-dd");
+            bd = tmp.Date;
+        }
+    
+        await using var c = new MySqlConnector.MySqlConnection(_conn);
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
-
+    
         await c.ExecuteAsync(@"
             UPDATE user_profile
             SET display_name = @dn,
-                locale       = NULLIF(@loc,''),
-                timezone     = NULLIF(@tz,''),
-                avatar_url   = NULLIF(@av,'')
-            WHERE user_id = @uid;", new { uid, dn, loc, tz, av });
-
+            locale       = NULLIF(@loc,''),
+            timezone     = NULLIF(@tz,''),
+            avatar_url   = NULLIF(@av,''),
+            birthdate    = @bd
+            WHERE user_id = @uid;",
+            new { uid, dn, loc, tz, av, bd });
+    
         var p = await c.QuerySingleAsync<ProfileDto>(@"
-            SELECT user_id AS UserId, display_name AS DisplayName, locale, timezone, avatar_url AS AvatarUrl
-            FROM user_profile WHERE user_id = @uid
+            SELECT user_id AS UserId,
+            display_name AS DisplayName,
+            locale, timezone,
+            avatar_url AS AvatarUrl,
+            birthdate
+            FROM user_profile
+            WHERE user_id = @uid
             LIMIT 1;", new { uid });
-
+    
         return Ok(p);
     }
     // ====== REGISTER ======
