@@ -17,6 +17,7 @@ using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using MySqlConnector;
+using Google.Apis.Auth;
 
 
 var builder = WebApplication.CreateBuilder(args);
@@ -623,10 +624,7 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 app.MapControllers();
 app.Run();
 
-public sealed class AuthOptions
-{
-    public string GoogleWebClientId { get; set; } = "";
-}
+
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -642,6 +640,10 @@ public sealed class ResultStore
     private DataSnapshot? _current;
     public DataSnapshot? Current { get { lock (_gate) return _current; } }
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
+}
+public sealed class AuthOptions
+{
+    public string GoogleWebClientId { get; set; } = "";
 }
 
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
