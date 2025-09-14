@@ -541,6 +541,151 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+// GET /data/details/item?href=...
+app.MapGet("/data/details/item",
+(
+    [FromServices] DetailsStore store,
+    [FromQuery] string href,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    if (string.IsNullOrWhiteSpace(href))
+        return Results.BadRequest(new { message = "href is required" });
+
+    var rec = store.Get(href);
+    if (rec is null)
+        return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var item = MapDetailsRecordToAllhrefsItem(
+        rec,
+        preferTeamsInfoHtml,
+        preferMatchBetweenHtml,
+        preferSeparateMatchesHtml,
+        preferBetStatsHtml,
+        preferFactsHtml,
+        preferLastTeamsHtml,
+        preferTeamsStatisticsHtml,
+        preferTeamStandingsHtml
+    );
+
+    return Results.Json(item);
+});
+
+// GET /data/details/item-by-index?index=0
+// index is based on the SAME ordering used in /data/details/allhrefs (LastUpdatedUtc desc)
+app.MapGet("/data/details/item-by-index",
+(
+    [FromServices] DetailsStore store,
+    [FromQuery] int index,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    var list = store.Export().items
+        .OrderByDescending(i => i.LastUpdatedUtc)
+        .ToList();
+
+    if (index < 0 || index >= list.Count)
+        return Results.NotFound(new { message = "index out of range", index, total = list.Count });
+
+    var rec = list[index];
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var item = MapDetailsRecordToAllhrefsItem(
+        rec,
+        preferTeamsInfoHtml,
+        preferMatchBetweenHtml,
+        preferSeparateMatchesHtml,
+        preferBetStatsHtml,
+        preferFactsHtml,
+        preferLastTeamsHtml,
+        preferTeamsStatisticsHtml,
+        preferTeamStandingsHtml
+    );
+
+    return Results.Json(item);
+});
+
+// POST /data/details/items   (optional small-batch to reduce round-trips)
+// Body: ["href1","href2",...]
+app.MapPost("/data/details/items",
+async (
+    [FromServices] DetailsStore store,
+    [FromBody] string[] hrefs,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    var list = (hrefs ?? Array.Empty<string>())
+        .Select(DetailsStore.Normalize)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Select(h => store.Get(h))
+        .Where(r => r is not null)
+        .Cast<DetailsRecord>()
+        .ToList();
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var dict = list.ToDictionary(
+        r => r.Href,
+        r => MapDetailsRecordToAllhrefsItem(
+                r,
+                preferTeamsInfoHtml,
+                preferMatchBetweenHtml,
+                preferSeparateMatchesHtml,
+                preferBetStatsHtml,
+                preferFactsHtml,
+                preferLastTeamsHtml,
+                preferTeamsStatisticsHtml,
+                preferTeamStandingsHtml),
+        StringComparer.OrdinalIgnoreCase
+    );
+
+    return Results.Json(new { total = dict.Count, items = dict });
+});
 
 // Optional: refresh then return the aggregated payload in one call
 app.MapPost("/data/details/refresh-and-get",
@@ -834,7 +979,6 @@ public sealed class TipsRefreshJob : BackgroundService
     }
 }
 
-// --------- LiveScore Scrapping Service-----
 // ---------- LiveScores: scraper service ----------
 public sealed class LiveScoresScraperService
 {
@@ -1061,6 +1205,98 @@ public sealed class RefreshJob : BackgroundService
             _gate.Release();
         }
     }
+}
+// Helper to produce the SAME shape as /data/details/allhrefs items[]
+static object MapDetailsRecordToAllhrefsItem(
+    DetailsRecord i,
+    bool preferTeamsInfoHtml,
+    bool preferMatchBetweenHtml,
+    bool preferSeparateMatchesHtml,
+    bool preferBetStatsHtml,
+    bool preferFactsHtml,
+    bool preferLastTeamsHtml,
+    bool preferTeamsStatisticsHtml,
+    bool preferTeamStandingsHtml)
+{
+    // Mirrors the mapping used in /data/details/allhrefs
+    // (keep these helpers consistent with your existing code)
+    var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+
+    var matchDataBetween = preferMatchBetweenHtml
+        ? null
+        : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+
+    var recentMatchesSeparate = preferSeparateMatchesHtml
+        ? null
+        : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+
+    var rawBarCharts = preferBetStatsHtml
+        ? null
+        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+
+    var barCharts = rawBarCharts?.Select(b => new {
+        title = b.Title,
+        halfContainerId = b.HalfContainerId,
+        items = b.ToList()
+    }).ToList();
+
+    var matchFacts = preferFactsHtml
+        ? null
+        : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+
+    object? lastTeamsWinrate = null;
+    if (!preferLastTeamsHtml)
+    {
+        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
+        lastTeamsWinrate = new {
+            wins   = new[] { m[0,0], m[0,1] },
+            draws  = new[] { m[1,0], m[1,1] },
+            losses = new[] { m[2,0], m[2,1] }
+        };
+    }
+
+    var teamsStats = preferTeamsStatisticsHtml
+        ? null
+        : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+
+    var teamStandingsParsed = preferTeamStandingsHtml
+        ? null
+        : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
+
+    return new {
+        href           = i.Href,
+        lastUpdatedUtc = i.LastUpdatedUtc,
+
+        // teams info
+        teamsInfo     = parsedTeamsInfo,
+        teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+
+        // matches between
+        matchDataBetween = matchDataBetween,
+        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+        // recent matches (separate)
+        recentMatchesSeparate     = recentMatchesSeparate,
+        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+
+        // charts & facts
+        barCharts              = barCharts,
+        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+
+        matchFacts = matchFacts,
+        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+
+        // last teams winrate block
+        lastTeamsWinrate     = lastTeamsWinrate,
+        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+
+        // team statistics + standings
+        teamsStatistics     = teamsStats,
+        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+
+        teamStandings     = teamStandingsParsed,
+        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+    };
 }
 
 public class GetStartupMainPageFullInfo2024
