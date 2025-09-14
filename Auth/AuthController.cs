@@ -55,7 +55,11 @@ public class AuthController : ControllerBase
         public string? Birthdate { get; set; }     // ISO "yyyy-MM-dd" (optional)
     }
     
-    public sealed class GoogleLoginRequest { public string IdToken { get; set; } = ""; }
+    public sealed class GoogleLoginRequest
+    {
+        public string IdToken { get; set; } = "";
+        public bool AllowCreate { get; set; } = true; // default keeps current behavior
+    }
 
     [HttpPost("google")]
     [AllowAnonymous]
@@ -101,6 +105,10 @@ public class AuthController : ControllerBase
     
             if (userId is null)
             {
+                if (!req.AllowCreate)
+                {
+                    return NotFound("Account not found for this Google identity.");
+                }
                 // Create user + auth/profile (use UUID_TO_BIN to match your schema)
                 await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));");
                 userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();");
