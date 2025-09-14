@@ -21,6 +21,8 @@ using MySqlConnector;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
+
 // --- Auth & Controllers ---
 builder.Services.AddAuthentication(options =>
 {
@@ -621,6 +623,10 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 app.MapControllers();
 app.Run();
 
+public sealed class AuthOptions
+{
+    public string GoogleWebClientId { get; set; } = "";
+}
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
