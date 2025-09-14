@@ -43,7 +43,7 @@ public class AuthController : ControllerBase
 
     // using Google.Apis.Auth;
     // using Dapper;
-    // inject: IOptions<AuthOptions> _opts, IDbConnection _db, ILogger<AuthController> _log
+    IOptions<AuthOptions> _opts, IDbConnection _db, ILogger<AuthController> _log
     public sealed class GoogleLoginRequest { public string IdToken { get; set; } = ""; }
     
     [HttpPost("google")]
