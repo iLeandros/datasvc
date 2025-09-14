@@ -45,7 +45,7 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Get()
     {
         if (!TryGetUserId(out var uid)) return Unauthorized();
-        await using var c = new MySqlConnector.MySqlConnection(_conn);
+        await using var c = new MySqlConnector.MySqlConnection(_connString);
     
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
     
@@ -81,7 +81,7 @@ public class AuthController : ControllerBase
             bd = tmp.Date;
         }
     
-        await using var c = new MySqlConnector.MySqlConnection(_conn);
+        await using var c = new MySqlConnector.MySqlConnection(_connString);
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
     
         await c.ExecuteAsync(@"
