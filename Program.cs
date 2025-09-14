@@ -777,7 +777,98 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 app.MapControllers();
 app.Run();
 
+// Helper to produce the SAME shape as /data/details/allhrefs items[]
+static object MapDetailsRecordToAllhrefsItem(
+    DetailsRecord i,
+    bool preferTeamsInfoHtml,
+    bool preferMatchBetweenHtml,
+    bool preferSeparateMatchesHtml,
+    bool preferBetStatsHtml,
+    bool preferFactsHtml,
+    bool preferLastTeamsHtml,
+    bool preferTeamsStatisticsHtml,
+    bool preferTeamStandingsHtml)
+{
+    // Mirrors the mapping used in /data/details/allhrefs
+    // (keep these helpers consistent with your existing code)
+    var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
 
+    var matchDataBetween = preferMatchBetweenHtml
+        ? null
+        : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+
+    var recentMatchesSeparate = preferSeparateMatchesHtml
+        ? null
+        : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+
+    var rawBarCharts = preferBetStatsHtml
+        ? null
+        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+
+    var barCharts = rawBarCharts?.Select(b => new {
+        title = b.Title,
+        halfContainerId = b.HalfContainerId,
+        items = b.ToList()
+    }).ToList();
+
+    var matchFacts = preferFactsHtml
+        ? null
+        : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+
+    object? lastTeamsWinrate = null;
+    if (!preferLastTeamsHtml)
+    {
+        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
+        lastTeamsWinrate = new {
+            wins   = new[] { m[0,0], m[0,1] },
+            draws  = new[] { m[1,0], m[1,1] },
+            losses = new[] { m[2,0], m[2,1] }
+        };
+    }
+
+    var teamsStats = preferTeamsStatisticsHtml
+        ? null
+        : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+
+    var teamStandingsParsed = preferTeamStandingsHtml
+        ? null
+        : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
+
+    return new {
+        href           = i.Href,
+        lastUpdatedUtc = i.LastUpdatedUtc,
+
+        // teams info
+        teamsInfo     = parsedTeamsInfo,
+        teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+
+        // matches between
+        matchDataBetween = matchDataBetween,
+        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+        // recent matches (separate)
+        recentMatchesSeparate     = recentMatchesSeparate,
+        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+
+        // charts & facts
+        barCharts              = barCharts,
+        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+
+        matchFacts = matchFacts,
+        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+
+        // last teams winrate block
+        lastTeamsWinrate     = lastTeamsWinrate,
+        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+
+        // team statistics + standings
+        teamsStatistics     = teamsStats,
+        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+
+        teamStandings     = teamStandingsParsed,
+        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+    };
+}
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -1205,98 +1296,6 @@ public sealed class RefreshJob : BackgroundService
             _gate.Release();
         }
     }
-}
-// Helper to produce the SAME shape as /data/details/allhrefs items[]
-static object MapDetailsRecordToAllhrefsItem(
-    DetailsRecord i,
-    bool preferTeamsInfoHtml,
-    bool preferMatchBetweenHtml,
-    bool preferSeparateMatchesHtml,
-    bool preferBetStatsHtml,
-    bool preferFactsHtml,
-    bool preferLastTeamsHtml,
-    bool preferTeamsStatisticsHtml,
-    bool preferTeamStandingsHtml)
-{
-    // Mirrors the mapping used in /data/details/allhrefs
-    // (keep these helpers consistent with your existing code)
-    var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
-
-    var matchDataBetween = preferMatchBetweenHtml
-        ? null
-        : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
-
-    var recentMatchesSeparate = preferSeparateMatchesHtml
-        ? null
-        : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
-
-    var rawBarCharts = preferBetStatsHtml
-        ? null
-        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
-
-    var barCharts = rawBarCharts?.Select(b => new {
-        title = b.Title,
-        halfContainerId = b.HalfContainerId,
-        items = b.ToList()
-    }).ToList();
-
-    var matchFacts = preferFactsHtml
-        ? null
-        : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
-
-    object? lastTeamsWinrate = null;
-    if (!preferLastTeamsHtml)
-    {
-        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
-        lastTeamsWinrate = new {
-            wins   = new[] { m[0,0], m[0,1] },
-            draws  = new[] { m[1,0], m[1,1] },
-            losses = new[] { m[2,0], m[2,1] }
-        };
-    }
-
-    var teamsStats = preferTeamsStatisticsHtml
-        ? null
-        : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
-
-    var teamStandingsParsed = preferTeamStandingsHtml
-        ? null
-        : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
-
-    return new {
-        href           = i.Href,
-        lastUpdatedUtc = i.LastUpdatedUtc,
-
-        // teams info
-        teamsInfo     = parsedTeamsInfo,
-        teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
-
-        // matches between
-        matchDataBetween = matchDataBetween,
-        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-        // recent matches (separate)
-        recentMatchesSeparate     = recentMatchesSeparate,
-        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
-
-        // charts & facts
-        barCharts              = barCharts,
-        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
-
-        matchFacts = matchFacts,
-        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
-
-        // last teams winrate block
-        lastTeamsWinrate     = lastTeamsWinrate,
-        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
-
-        // team statistics + standings
-        teamsStatistics     = teamsStats,
-        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
-
-        teamStandings     = teamStandingsParsed,
-        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-    };
 }
 
 public class GetStartupMainPageFullInfo2024
