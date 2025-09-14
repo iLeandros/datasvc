@@ -6,15 +6,29 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using Google.Apis.Auth;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace DataSvc.Auth;
+
+public sealed class AuthOptions
+{
+    public string GoogleWebClientId { get; set; } = "";
+}
 
 [ApiController]
 [Route("v1/auth")]
 public class AuthController : ControllerBase
 {
     private readonly string? _connString;
-    public AuthController(IConfiguration cfg) => _connString = cfg.GetConnectionString("Default");
+    private readonly IOptions<AuthOptions> _opts;
+    private readonly ILogger<AuthController> _log;
+    public AuthController(IConfiguration cfg, IOptions<AuthOptions> opts, ILogger<AuthController> log)
+    {
+        _connString = cfg.GetConnectionString("Default");
+        _opts = opts;
+        _log = log;
+    }
 
     // ====== DTOs ======
     public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
@@ -40,12 +54,9 @@ public class AuthController : ControllerBase
         public string? AvatarUrl { get; set; }
         public string? Birthdate { get; set; }     // ISO "yyyy-MM-dd" (optional)
     }
-
-    // using Google.Apis.Auth;
-    // using Dapper;
-    IOptions<AuthOptions> _opts, IDbConnection _db, ILogger<AuthController> _log
-    public sealed class GoogleLoginRequest { public string IdToken { get; set; } = ""; }
     
+    public sealed class GoogleLoginRequest { public string IdToken { get; set; } = ""; }
+
     [HttpPost("google")]
     [AllowAnonymous]
     public async Task<IActionResult> Google([FromBody] GoogleLoginRequest req, CancellationToken ct)
@@ -68,46 +79,52 @@ public class AuthController : ControllerBase
             return Unauthorized("Invalid Google token");
         }
     
-        // payload.Sub (subject), payload.Email, payload.Name, payload.Picture
         var provider = "google";
         var subject  = payload.Subject;
         var email    = payload.Email ?? "";
     
-        // 1) Identity -> user
-        var userId = await _db.QueryFirstOrDefaultAsync<ulong?>(
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+    
+        // 1) Find identity → user
+        var userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
             "SELECT user_id FROM user_identities WHERE provider=@provider AND subject=@subject",
             new { provider, subject });
     
         if (userId is null)
         {
             // Try match by email
-            userId = await _db.QueryFirstOrDefaultAsync<ulong?>(
-                @"SELECT ua.user_id FROM user_auth ua 
-                  WHERE ua.email_norm = LOWER(@email) LIMIT 1", new { email });
+            userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
+                @"SELECT ua.user_id FROM user_auth ua
+                  WHERE ua.email_norm = LOWER(@email) LIMIT 1",
+                new { email });
     
             if (userId is null)
             {
-                // Create user + auth/profile
-                userId = await _db.ExecuteScalarAsync<ulong>("INSERT INTO users (uuid) VALUES (UUID()); SELECT LAST_INSERT_ID();");
-                await _db.ExecuteAsync(
+                // Create user + auth/profile (use UUID_TO_BIN to match your schema)
+                await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));");
+                userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();");
+    
+                await conn.ExecuteAsync(
                     @"INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
                       VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
                     new { uid = userId, em = email });
-                await _db.ExecuteAsync(
+    
+                await conn.ExecuteAsync(
                     @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
                       VALUES (@uid, @name, @pic, @loc)",
                     new { uid = userId, name = payload.Name, pic = payload.Picture, loc = "en" });
             }
     
-            await _db.ExecuteAsync(
+            await conn.ExecuteAsync(
                 @"INSERT INTO user_identities (user_id, provider, subject, email)
                   VALUES (@uid, @provider, @subject, @em)
                   ON DUPLICATE KEY UPDATE email=VALUES(email)",
                 new { uid = userId, provider, subject, em = email });
         }
     
-        // 2) Create your normal session (reuse what /login uses)
-        var sess = await CreateSessionAsync(userId.Value, ct); // your existing helper
+        // 2) Create a normal session and return it
+        var sess = await CreateSessionAsync(userId.Value, ct);
         return Ok(new
         {
             token = sess.Token,
@@ -121,6 +138,7 @@ public class AuthController : ControllerBase
             }
         });
     }
+
 
     
     // GET profile
@@ -366,6 +384,27 @@ public class AuthController : ControllerBase
 
     // ====== helpers ======
     // ---------- helpers ----------
+    private async Task<(string Token, DateTimeOffset ExpiresAt)> CreateSessionAsync(ulong userId, CancellationToken ct)
+    {
+        var (token, tokenHash) = MakeToken();
+        var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.ExecuteAsync(@"
+            INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
+            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+            new
+            {
+                id = tokenHash,
+                uid = userId,
+                exp = expiresAt.UtcDateTime,
+                ip = GetClientIpBinary(HttpContext),
+                ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+            });
+    
+        return (token, expiresAt);
+    }
+
     private static string? Trunc(string? s, int max)
         => string.IsNullOrEmpty(s) ? s : (s.Length <= max ? s : s[..max]);
     private static async Task<uint> EnsureRole(MySqlConnection conn, MySqlTransaction tx, string name)
