@@ -53,6 +53,14 @@ builder.Services.AddResponseCompression(o =>
 });
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+// add next to your existing ResponseCompression config
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes
+        .Concat(new[] { "application/json", "application/x-ndjson", "text/event-stream" });
+});
+
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
@@ -532,6 +540,99 @@ app.MapGet("/data/details/allhrefs",
         generatedUtc,
         items        = byHref
     });
+});
+app.MapGet("/data/details/stream", async (
+    HttpContext ctx,
+    [FromServices] DetailsStore store,
+    [FromQuery] string? hrefs,                // optional: comma-separated filter
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    ctx.Response.Headers.CacheControl = "no-store";
+    ctx.Response.Headers["X-Accel-Buffering"] = "no"; // nginx: disable buffering
+    ctx.Response.ContentType = "application/x-ndjson; charset=utf-8";
+
+    bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml        = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml  = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml    = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var filter = (hrefs ?? "")
+        .Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(DetailsStore.Normalize)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var (items, generatedUtc) = store.Export();
+    var list = items
+        .OrderByDescending(i => i.LastUpdatedUtc)
+        .Where(i => filter.Count == 0 || filter.Contains(i.Href))
+        .ToList();
+
+    // meta line first (lets the client size a progress bar)
+    var meta = JsonSerializer.Serialize(new { type = "meta", total = list.Count, generatedUtc, lastSavedUtc = store.LastSavedUtc });
+    await ctx.Response.WriteAsync(meta + "\n");
+    await ctx.Response.Body.FlushAsync();
+
+    foreach (var i in list)
+    {
+        ctx.RequestAborted.ThrowIfCancellationRequested();
+
+        // --- SAME mapping you do in /data/details/allhrefs (trimmed for brevity) ---
+        var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+        var matchDataBetween = preferMatchBetweenHtml ? null : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? "");
+        var recentMatchesSeparate = preferSeparateMatchesHtml ? null : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? "");
+        var rawBarCharts = preferBetStatsHtml ? null : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? "");
+        var barCharts = rawBarCharts?.Select(b => new { title = b.Title, halfContainerId = b.HalfContainerId, items = b.ToList() }).ToList();
+        var matchFacts = preferFactsHtml ? null : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+        object? lastTeamsWinrate = null;
+        if (!preferLastTeamsHtml)
+        {
+            var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
+            lastTeamsWinrate = new { wins = new[] { m[0,0], m[0,1] }, draws = new[] { m[1,0], m[1,1] }, losses = new[] { m[2,0], m[2,1] } };
+        }
+        var teamsStats = preferTeamsStatisticsHtml ? null : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? "");
+        var teamStandingsParsed = preferTeamStandingsHtml ? null : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? "");
+
+        var payload = new
+        {
+            href = i.Href,
+            lastUpdatedUtc = i.LastUpdatedUtc,
+            teamsInfo = parsedTeamsInfo,
+            teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+            matchDataBetween,
+            matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+            recentMatchesSeparate,
+            recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+            barCharts,
+            teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+            matchFacts,
+            factsHtml = preferFactsHtml ? i.Payload.FactsHtml : null,
+            lastTeamsWinrate,
+            lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+            teamsStatistics = teamsStats,
+            teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+            teamStandings = teamStandingsParsed,
+            teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+        };
+
+        var line = JsonSerializer.Serialize(new { type = "item", payload });
+        await ctx.Response.WriteAsync(line + "\n");
+        await ctx.Response.Body.FlushAsync(); // push each item promptly
+    }
+
+    var done = JsonSerializer.Serialize(new { type = "done" });
+    await ctx.Response.WriteAsync(done + "\n");
 });
 
 // Optional: refresh then return the aggregated payload in one call
