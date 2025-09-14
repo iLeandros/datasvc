@@ -40,31 +40,42 @@ public class AuthController : ControllerBase
         public string? Birthdate { get; set; }     // ISO "yyyy-MM-dd" (optional)
     }
     
+    // GET profile
     [HttpGet("get")]
+    [HttpGet("~/v1/user/profile")] // <--- NEW alias
     [Authorize]
     public async Task<IActionResult> Get()
     {
+        if (string.IsNullOrWhiteSpace(_connString)) // <--- NEW guard
+            return Problem("Missing ConnectionStrings:Default.");
+    
         if (!TryGetUserId(out var uid)) return Unauthorized();
-        await using var c = new MySqlConnector.MySqlConnection(_connString);
+        await using var c = new MySqlConnection(_connString);
     
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
     
         var p = await c.QuerySingleAsync<ProfileDto>(@"
             SELECT user_id AS UserId,
-            display_name AS DisplayName,
-            locale, timezone,
-            avatar_url AS AvatarUrl,
-            birthdate
+                   display_name AS DisplayName,
+                   locale, timezone,
+                   avatar_url AS AvatarUrl,
+                   birthdate
             FROM user_profile
             WHERE user_id = @uid
             LIMIT 1;", new { uid });
     
         return Ok(p);
     }
+    
+    // PUT profile
     [HttpPut("put")]
+    [HttpPut("~/v1/user/profile")]  // <--- NEW alias
     [Authorize]
     public async Task<IActionResult> Put([FromBody] UpdateProfileRequest req)
     {
+        if (string.IsNullOrWhiteSpace(_connString)) // <--- NEW guard
+            return Problem("Missing ConnectionStrings:Default.");
+    
         if (!TryGetUserId(out var uid)) return Unauthorized();
     
         string? dn  = Trunc(req.DisplayName, 100);
@@ -75,37 +86,37 @@ public class AuthController : ControllerBase
         DateTime? bd = null;
         if (!string.IsNullOrWhiteSpace(req.Birthdate))
         {
-            // accept yyyy-MM-dd
             if (!DateTime.TryParse(req.Birthdate, out var tmp))
                 return BadRequest("birthdate must be yyyy-MM-dd");
             bd = tmp.Date;
         }
     
-        await using var c = new MySqlConnector.MySqlConnection(_connString);
+        await using var c = new MySqlConnection(_connString);
         await c.ExecuteAsync("INSERT IGNORE INTO user_profile(user_id) VALUES(@uid);", new { uid });
     
         await c.ExecuteAsync(@"
             UPDATE user_profile
             SET display_name = @dn,
-            locale       = NULLIF(@loc,''),
-            timezone     = NULLIF(@tz,''),
-            avatar_url   = NULLIF(@av,''),
-            birthdate    = @bd
+                locale       = NULLIF(@loc,''),
+                timezone     = NULLIF(@tz,''),
+                avatar_url   = NULLIF(@av,''),
+                birthdate    = @bd
             WHERE user_id = @uid;",
             new { uid, dn, loc, tz, av, bd });
     
         var p = await c.QuerySingleAsync<ProfileDto>(@"
             SELECT user_id AS UserId,
-            display_name AS DisplayName,
-            locale, timezone,
-            avatar_url AS AvatarUrl,
-            birthdate
+                   display_name AS DisplayName,
+                   locale, timezone,
+                   avatar_url AS AvatarUrl,
+                   birthdate
             FROM user_profile
             WHERE user_id = @uid
             LIMIT 1;", new { uid });
     
         return Ok(p);
     }
+
     // ====== REGISTER ======
     [HttpPost("register")]
     public async Task<IActionResult> Register([FromBody] RegisterRequest req, CancellationToken ct)
@@ -328,19 +339,23 @@ public class AuthController : ControllerBase
     private static async Task<UserDto> LoadUserDto(IDbConnection conn, ulong userId, CancellationToken ct)
     {
         var user = await conn.QuerySingleAsync<UserDto>(@"
-            SELECT u.id AS Id, ua.email AS Email, up.display_name AS DisplayName
+            SELECT u.id AS Id,
+                   ua.email AS Email,
+                   up.display_name AS DisplayName,
+                   up.avatar_url  AS AvatarUrl   -- <--- add this if you want it in 'me'
             FROM users u
-            LEFT JOIN user_auth ua ON ua.user_id = u.id
+            LEFT JOIN user_auth    ua ON ua.user_id = u.id
             LEFT JOIN user_profile up ON up.user_id = u.id
             WHERE u.id = @uid
             LIMIT 1;", new { uid = userId });
-
+    
         var roles = (await conn.QueryAsync<string>(@"
             SELECT r.name FROM user_roles ur
             JOIN roles r ON r.id = ur.role_id
             WHERE ur.user_id = @uid;", new { uid = userId })).ToArray();
-
+    
         user.Roles = roles;
         return user;
     }
+
 }
