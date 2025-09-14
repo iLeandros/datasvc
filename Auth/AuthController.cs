@@ -39,6 +39,88 @@ public class AuthController : ControllerBase
         public string? AvatarUrl { get; set; }
         public string? Birthdate { get; set; }     // ISO "yyyy-MM-dd" (optional)
     }
+
+    // using Google.Apis.Auth;
+    // using Dapper;
+    // inject: IOptions<AuthOptions> _opts, IDbConnection _db, ILogger<AuthController> _log
+    public sealed class GoogleLoginRequest { public string IdToken { get; set; } = ""; }
+    
+    [HttpPost("google")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Google([FromBody] GoogleLoginRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(req.IdToken))
+            return BadRequest("Missing idToken");
+    
+        GoogleJsonWebSignature.Payload payload;
+        try
+        {
+            var settings = new GoogleJsonWebSignature.ValidationSettings
+            {
+                Audience = new[] { _opts.Value.GoogleWebClientId }
+            };
+            payload = await GoogleJsonWebSignature.ValidateAsync(req.IdToken, settings);
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning(ex, "Invalid Google ID token");
+            return Unauthorized("Invalid Google token");
+        }
+    
+        // payload.Sub (subject), payload.Email, payload.Name, payload.Picture
+        var provider = "google";
+        var subject  = payload.Subject;
+        var email    = payload.Email ?? "";
+    
+        // 1) Identity -> user
+        var userId = await _db.QueryFirstOrDefaultAsync<ulong?>(
+            "SELECT user_id FROM user_identities WHERE provider=@provider AND subject=@subject",
+            new { provider, subject });
+    
+        if (userId is null)
+        {
+            // Try match by email
+            userId = await _db.QueryFirstOrDefaultAsync<ulong?>(
+                @"SELECT ua.user_id FROM user_auth ua 
+                  WHERE ua.email_norm = LOWER(@email) LIMIT 1", new { email });
+    
+            if (userId is null)
+            {
+                // Create user + auth/profile
+                userId = await _db.ExecuteScalarAsync<ulong>("INSERT INTO users (uuid) VALUES (UUID()); SELECT LAST_INSERT_ID();");
+                await _db.ExecuteAsync(
+                    @"INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
+                      VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
+                    new { uid = userId, em = email });
+                await _db.ExecuteAsync(
+                    @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
+                      VALUES (@uid, @name, @pic, @loc)",
+                    new { uid = userId, name = payload.Name, pic = payload.Picture, loc = "en" });
+            }
+    
+            await _db.ExecuteAsync(
+                @"INSERT INTO user_identities (user_id, provider, subject, email)
+                  VALUES (@uid, @provider, @subject, @em)
+                  ON DUPLICATE KEY UPDATE email=VALUES(email)",
+                new { uid = userId, provider, subject, em = email });
+        }
+    
+        // 2) Create your normal session (reuse what /login uses)
+        var sess = await CreateSessionAsync(userId.Value, ct); // your existing helper
+        return Ok(new
+        {
+            token = sess.Token,
+            expiresAt = sess.ExpiresAt,
+            user = new
+            {
+                id = userId.Value,
+                email = email,
+                displayName = payload.Name,
+                roles = new[] { "user" }
+            }
+        });
+    }
+
     
     // GET profile
     [HttpGet("get")]
