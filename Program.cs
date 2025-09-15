@@ -1445,13 +1445,13 @@ public static class GetStartupMainTableDataGroup2024
                                 .Descendants("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("value"));
 
-                            var backgroundtipcolor = Colors.DarkSlateGray;
+                            var backgroundtipcolor = Colors.Black;
                             if (tip != null)
                             {
                                 var tipClass = tip.Attributes["class"].Value;
                                 if (tipClass == "value success") backgroundtipcolor = Colors.Green;
                                 else if (tipClass == "value failed") backgroundtipcolor = Colors.Red;
-                                else backgroundtipcolor = Colors.DarkSlateGray;
+                                else backgroundtipcolor = Colors.Black;
                             }
 
                             var likebutton = matchItem.Descendants("div")
