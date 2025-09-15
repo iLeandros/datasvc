@@ -1451,7 +1451,7 @@ public static class GetStartupMainTableDataGroup2024
                                 var tipClass = tip.Attributes["class"].Value;
                                 if (tipClass == "value success") backgroundtipcolor = Colors.Green;
                                 else if (tipClass == "value failed") backgroundtipcolor = Colors.Red;
-                                else backgroundtipcolor = Colors.Black;
+                                else backgroundtipcolor = Colors.Pink;
                             }
 
                             var likebutton = matchItem.Descendants("div")
