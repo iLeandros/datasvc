@@ -2257,3 +2257,4 @@ public static class TradeSignalUtils
     }
 
     public static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
+}
