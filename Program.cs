@@ -2187,7 +2187,8 @@ public sealed class DetailsRefreshJob : BackgroundService
             _gate.Release();
         }
     }
-	// ---- Trade Signal types & utils ----
+}
+// ---- Trade Signal types & utils ----
 public sealed class TradeSignal
 {
     [JsonPropertyName("symbol")]
@@ -2256,4 +2257,3 @@ public static class TradeSignalUtils
     }
 
     public static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
-}
