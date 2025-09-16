@@ -22,8 +22,6 @@ using Google.Apis.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.WebHost.ConfigureKestrel(o => o.ListenAnyIP(80));
-
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 
 // --- Auth & Controllers ---
