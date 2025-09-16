@@ -22,6 +22,8 @@ using Google.Apis.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddSingleton<TradeSignalStore>();
+
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 
 // --- Auth & Controllers ---
@@ -103,6 +105,48 @@ else
     app.UseExceptionHandler("/error");
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
+
+// -------- Trade Signal Webhook --------
+// Receives alerts like:
+// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","qty":"{{strategy.order.contracts}}",
+//  "price":"{{close}}","trigger_time":"{{timenow}}","max_lag":"20","strategy_id":"..."}
+
+app.MapPost("/webhooks/trade",
+    ([FromBody] TradeSignal payload, [FromServices] TradeSignalStore store) =>
+{
+    var receivedAt = DateTimeOffset.UtcNow;
+
+    // Parse trigger_time and max_lag if present
+    var (triggerTs, lagSeconds) = TryParseTriggerTime(payload.TriggerTime);
+    var maxLag = TryParseInt(payload.MaxLag);
+
+    bool accepted = true;
+    string? reason = null;
+
+    if (maxLag.HasValue && lagSeconds.HasValue && lagSeconds.Value > maxLag.Value)
+    {
+        accepted = false;
+        reason = $"Lag {lagSeconds.Value:F1}s exceeds max_lag {maxLag.Value}.";
+    }
+
+    var record = new TradeSignalReceived(payload, receivedAt, lagSeconds, accepted, reason);
+    store.Add(record);
+
+    if (!accepted)
+        return Results.BadRequest(new { ok = false, error = reason, lagSeconds, receivedAtUtc = receivedAt });
+
+    return Results.Ok(new { ok = true, lagSeconds, receivedAtUtc = receivedAt });
+});
+
+// Quick inspector to see the last N webhook posts (default 50, max 200).
+app.MapGet("/webhooks/trade/recent",
+    ([FromServices] TradeSignalStore store, [FromQuery] int take = 50) =>
+{
+    take = Math.Clamp(take, 1, 200);
+    return Results.Json(store.Last(take));
+});
+
+
 app.MapGet("/debug/auth", (HttpContext ctx) =>
 {
     var uidClaim = ctx.User?.FindFirst("uid")?.Value;
@@ -776,6 +820,78 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 // Map MVC controllers (AuthController)
 app.MapControllers();
 app.Run();
+
+public sealed class TradeSignal
+{
+    [JsonPropertyName("symbol")]
+    public string? Symbol { get; set; }
+
+    [JsonPropertyName("side")]
+    public string? Side { get; set; }
+
+    [JsonPropertyName("qty")]
+    public string? Qty { get; set; }
+
+    [JsonPropertyName("price")]
+    public string? Price { get; set; }
+
+    // Accepts ISO-8601, Unix seconds, or Unix milliseconds (e.g., TradingView {{timenow}})
+    [JsonPropertyName("trigger_time")]
+    public string? TriggerTime { get; set; }
+
+    [JsonPropertyName("max_lag")]
+    public string? MaxLag { get; set; }
+
+    [JsonPropertyName("strategy_id")]
+    public string? StrategyId { get; set; }
+}
+
+public record TradeSignalReceived(
+    TradeSignal Payload,
+    DateTimeOffset ReceivedUtc,
+    double? LagSeconds,
+    bool Accepted,
+    string? Reason
+);
+
+public sealed class TradeSignalStore
+{
+    private readonly ConcurrentQueue<TradeSignalReceived> _q = new();
+
+    public void Add(TradeSignalReceived r)
+    {
+        _q.Enqueue(r);
+        while (_q.Count > 200 && _q.TryDequeue(out _)) { } // cap memory
+    }
+
+    public IReadOnlyList<TradeSignalReceived> Last(int n)
+        => _q.Reverse().Take(n).ToList();
+}
+
+// ---- Helpers for parsing trigger_time / max_lag ----
+static (DateTimeOffset? ts, double? lagSeconds) TryParseTriggerTime(string? trigger)
+{
+    if (string.IsNullOrWhiteSpace(trigger))
+        return (null, null);
+
+    // ISO-8601?
+    if (DateTimeOffset.TryParse(trigger, out var iso))
+        return (iso, (DateTimeOffset.UtcNow - iso.ToUniversalTime()).TotalSeconds);
+
+    // Unix seconds?
+    if (long.TryParse(trigger, out var unix))
+    {
+        // Heuristic: treat >= 10^12 as milliseconds, otherwise seconds
+        var isMillis = unix >= 1_000_000_000_000;
+        var ts = DateTimeOffset.FromUnixTimeMilliseconds(isMillis ? unix : unix * 1000L);
+        return (ts, (DateTimeOffset.UtcNow - ts).TotalSeconds);
+    }
+
+    return (null, null);
+}
+
+static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
+
 
 // Helper to produce the SAME shape as /data/details/allhrefs items[]
 static object MapDetailsRecordToAllhrefsItem(
