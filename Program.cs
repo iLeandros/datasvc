@@ -66,6 +66,8 @@ builder.Services.AddSingleton<LiveScoresStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
 builder.Services.AddHostedService<LiveScoresRefreshJob>();
 
+// Trade Signal Webhook DI
+builder.Services.AddSingleton<TradeSignalStore>();
 
 // App services
 builder.Services.AddSingleton<ResultStore>();
