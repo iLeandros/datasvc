@@ -53,13 +53,18 @@ builder.Services.AddResponseCompression(o =>
 });
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
+// add next to your existing ResponseCompression config
+builder.Services.AddResponseCompression(o =>
+{
+    o.EnableForHttps = true;
+    o.MimeTypes = ResponseCompressionDefaults.MimeTypes
+        .Concat(new[] { "application/json", "application/x-ndjson", "text/event-stream" });
+});
+
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
 builder.Services.AddHostedService<LiveScoresRefreshJob>();
-// Trade Signal Webhook DI
-builder.Services.AddSingleton<TradeSignalStore>();
-
 
 
 // App services
@@ -98,47 +103,20 @@ else
     app.UseExceptionHandler("/error");
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
-app.MapGet("/debug/auth", (HttpContext ctx) =>
-{
-    var uidClaim = ctx.User?.FindFirst("uid")?.Value;
-    var uidItem  = ctx.Items.TryGetValue("user_id", out var v) ? v?.ToString() : null;
-    var auth = ctx.User?.Identity?.IsAuthenticated == true;
-    return Results.Json(new { authenticated = auth, uidClaim, uidItem });
-}).RequireAuthorization();
-
-// health + debug
-app.MapGet("/ping", () => Results.Ok("pong"));
-app.MapGet("/debug/cs", (IConfiguration cfg) =>
-{
-    var cs = cfg.GetConnectionString("Default");
-    return string.IsNullOrWhiteSpace(cs) ? Results.Problem("Missing ConnectionStrings:Default")
-                                         : Results.Ok("cs-present");
-});
-app.MapGet("/debug/db", async (IConfiguration cfg) =>
-{
-    var cs = cfg.GetConnectionString("Default");
-    if (string.IsNullOrWhiteSpace(cs)) return Results.Problem("Missing ConnectionStrings:Default");
-    try { await using var c = new MySqlConnector.MySqlConnection(cs); await c.OpenAsync(); return Results.Ok("db-ok"); }
-    catch (Exception ex) { return Results.Problem("DB connect failed: " + ex.Message); }
-});
-
-// ---------- API ----------
 
 // -------- Trade Signal Webhook --------
 // Receives alerts like:
 // {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","qty":"{{strategy.order.contracts}}",
-//  "price":"{{close}}","trigger_time":"{{timenow}}","max_lag":"20","strategy_id":"d2ecb3e5-1c49-4a05-bbcc-f99313098977"}
+//  "price":"{{close}}","trigger_time":"{{timenow}}","max_lag":"20","strategy_id":"..."}
 
 app.MapPost("/webhooks/trade",
     ([FromBody] TradeSignal payload, [FromServices] TradeSignalStore store) =>
 {
     var receivedAt = DateTimeOffset.UtcNow;
 
-    // Try parse trigger_time as ISO-8601 or Unix seconds/milliseconds
-    var (triggerTs, lagSeconds) = TradeSignalUtils.TryParseTriggerTime(payload.TriggerTime);
-
-    // Parse optional max_lag
-    int? maxLag = TradeSignalUtils.TryParseInt(payload.MaxLag);
+    // Parse trigger_time and max_lag if present
+    var (triggerTs, lagSeconds) = TryParseTriggerTime(payload.TriggerTime);
+    var maxLag = TryParseInt(payload.MaxLag);
 
     bool accepted = true;
     string? reason = null;
@@ -165,6 +143,33 @@ app.MapGet("/webhooks/trade/recent",
     take = Math.Clamp(take, 1, 200);
     return Results.Json(store.Last(take));
 });
+
+
+app.MapGet("/debug/auth", (HttpContext ctx) =>
+{
+    var uidClaim = ctx.User?.FindFirst("uid")?.Value;
+    var uidItem  = ctx.Items.TryGetValue("user_id", out var v) ? v?.ToString() : null;
+    var auth = ctx.User?.Identity?.IsAuthenticated == true;
+    return Results.Json(new { authenticated = auth, uidClaim, uidItem });
+}).RequireAuthorization();
+
+// health + debug
+app.MapGet("/ping", () => Results.Ok("pong"));
+app.MapGet("/debug/cs", (IConfiguration cfg) =>
+{
+    var cs = cfg.GetConnectionString("Default");
+    return string.IsNullOrWhiteSpace(cs) ? Results.Problem("Missing ConnectionStrings:Default")
+                                         : Results.Ok("cs-present");
+});
+app.MapGet("/debug/db", async (IConfiguration cfg) =>
+{
+    var cs = cfg.GetConnectionString("Default");
+    if (string.IsNullOrWhiteSpace(cs)) return Results.Problem("Missing ConnectionStrings:Default");
+    try { await using var c = new MySqlConnector.MySqlConnection(cs); await c.OpenAsync(); return Results.Ok("db-ok"); }
+    catch (Exception ex) { return Results.Problem("DB connect failed: " + ex.Message); }
+});
+
+// ---------- API ----------
 app.MapGet("/", () => Results.Redirect("/data/status"));
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
@@ -578,6 +583,151 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+// GET /data/details/item?href=...
+app.MapGet("/data/details/item",
+(
+    [FromServices] DetailsStore store,
+    [FromQuery] string href,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    if (string.IsNullOrWhiteSpace(href))
+        return Results.BadRequest(new { message = "href is required" });
+
+    var rec = store.Get(href);
+    if (rec is null)
+        return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var item = MapDetailsRecordToAllhrefsItem(
+        rec,
+        preferTeamsInfoHtml,
+        preferMatchBetweenHtml,
+        preferSeparateMatchesHtml,
+        preferBetStatsHtml,
+        preferFactsHtml,
+        preferLastTeamsHtml,
+        preferTeamsStatisticsHtml,
+        preferTeamStandingsHtml
+    );
+
+    return Results.Json(item);
+});
+
+// GET /data/details/item-by-index?index=0
+// index is based on the SAME ordering used in /data/details/allhrefs (LastUpdatedUtc desc)
+app.MapGet("/data/details/item-by-index",
+(
+    [FromServices] DetailsStore store,
+    [FromQuery] int index,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    var list = store.Export().items
+        .OrderByDescending(i => i.LastUpdatedUtc)
+        .ToList();
+
+    if (index < 0 || index >= list.Count)
+        return Results.NotFound(new { message = "index out of range", index, total = list.Count });
+
+    var rec = list[index];
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var item = MapDetailsRecordToAllhrefsItem(
+        rec,
+        preferTeamsInfoHtml,
+        preferMatchBetweenHtml,
+        preferSeparateMatchesHtml,
+        preferBetStatsHtml,
+        preferFactsHtml,
+        preferLastTeamsHtml,
+        preferTeamsStatisticsHtml,
+        preferTeamStandingsHtml
+    );
+
+    return Results.Json(item);
+});
+
+// POST /data/details/items   (optional small-batch to reduce round-trips)
+// Body: ["href1","href2",...]
+app.MapPost("/data/details/items",
+async (
+    [FromServices] DetailsStore store,
+    [FromBody] string[] hrefs,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    var list = (hrefs ?? Array.Empty<string>())
+        .Select(DetailsStore.Normalize)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Select(h => store.Get(h))
+        .Where(r => r is not null)
+        .Cast<DetailsRecord>()
+        .ToList();
+
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    var dict = list.ToDictionary(
+        r => r.Href,
+        r => MapDetailsRecordToAllhrefsItem(
+                r,
+                preferTeamsInfoHtml,
+                preferMatchBetweenHtml,
+                preferSeparateMatchesHtml,
+                preferBetStatsHtml,
+                preferFactsHtml,
+                preferLastTeamsHtml,
+                preferTeamsStatisticsHtml,
+                preferTeamStandingsHtml),
+        StringComparer.OrdinalIgnoreCase
+    );
+
+    return Results.Json(new { total = dict.Count, items = dict });
+});
 
 // Optional: refresh then return the aggregated payload in one call
 app.MapPost("/data/details/refresh-and-get",
@@ -670,6 +820,99 @@ app.MapControllers();
 app.Run();
 
 
+
+// Helper to produce the SAME shape as /data/details/allhrefs items[]
+static object MapDetailsRecordToAllhrefsItem(
+    DetailsRecord i,
+    bool preferTeamsInfoHtml,
+    bool preferMatchBetweenHtml,
+    bool preferSeparateMatchesHtml,
+    bool preferBetStatsHtml,
+    bool preferFactsHtml,
+    bool preferLastTeamsHtml,
+    bool preferTeamsStatisticsHtml,
+    bool preferTeamStandingsHtml)
+{
+    // Mirrors the mapping used in /data/details/allhrefs
+    // (keep these helpers consistent with your existing code)
+    var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+
+    var matchDataBetween = preferMatchBetweenHtml
+        ? null
+        : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+
+    var recentMatchesSeparate = preferSeparateMatchesHtml
+        ? null
+        : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+
+    var rawBarCharts = preferBetStatsHtml
+        ? null
+        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+
+    var barCharts = rawBarCharts?.Select(b => new {
+        title = b.Title,
+        halfContainerId = b.HalfContainerId,
+        items = b.ToList()
+    }).ToList();
+
+    var matchFacts = preferFactsHtml
+        ? null
+        : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+
+    object? lastTeamsWinrate = null;
+    if (!preferLastTeamsHtml)
+    {
+        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
+        lastTeamsWinrate = new {
+            wins   = new[] { m[0,0], m[0,1] },
+            draws  = new[] { m[1,0], m[1,1] },
+            losses = new[] { m[2,0], m[2,1] }
+        };
+    }
+
+    var teamsStats = preferTeamsStatisticsHtml
+        ? null
+        : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+
+    var teamStandingsParsed = preferTeamStandingsHtml
+        ? null
+        : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
+
+    return new {
+        href           = i.Href,
+        lastUpdatedUtc = i.LastUpdatedUtc,
+
+        // teams info
+        teamsInfo     = parsedTeamsInfo,
+        teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+
+        // matches between
+        matchDataBetween = matchDataBetween,
+        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+        // recent matches (separate)
+        recentMatchesSeparate     = recentMatchesSeparate,
+        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+
+        // charts & facts
+        barCharts              = barCharts,
+        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+
+        matchFacts = matchFacts,
+        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+
+        // last teams winrate block
+        lastTeamsWinrate     = lastTeamsWinrate,
+        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+
+        // team statistics + standings
+        teamsStatistics     = teamsStats,
+        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+
+        teamStandings     = teamStandingsParsed,
+        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+    };
+}
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -871,7 +1114,6 @@ public sealed class TipsRefreshJob : BackgroundService
     }
 }
 
-// --------- LiveScore Scrapping Service-----
 // ---------- LiveScores: scraper service ----------
 public sealed class LiveScoresScraperService
 {
@@ -1247,13 +1489,13 @@ public static class GetStartupMainTableDataGroup2024
                                 .Descendants("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("value"));
 
-                            var backgroundtipcolor = Colors.DarkSlateGray;
+                            var backgroundtipcolor = Colors.Black;
                             if (tip != null)
                             {
                                 var tipClass = tip.Attributes["class"].Value;
                                 if (tipClass == "value success") backgroundtipcolor = Colors.Green;
                                 else if (tipClass == "value failed") backgroundtipcolor = Colors.Red;
-                                else backgroundtipcolor = Colors.DarkSlateGray;
+                                else backgroundtipcolor = Colors.Black;
                             }
 
                             var likebutton = matchItem.Descendants("div")
@@ -1934,76 +2176,4 @@ public sealed class DetailsRefreshJob : BackgroundService
             _gate.Release();
         }
     }
-}
-
-
-// ---- Trade Signal types & utils ----
-public sealed class TradeSignal
-{
-    [JsonPropertyName("symbol")]
-    public string? Symbol { get; set; }
-
-    [JsonPropertyName("side")]
-    public string? Side { get; set; }
-
-    [JsonPropertyName("qty")]
-    public string? Qty { get; set; }
-
-    [JsonPropertyName("price")]
-    public string? Price { get; set; }
-
-    // Accepts ISO-8601, Unix seconds, or Unix milliseconds (e.g., TradingView {{timenow}})
-    [JsonPropertyName("trigger_time")]
-    public string? TriggerTime { get; set; }
-
-    [JsonPropertyName("max_lag")]
-    public string? MaxLag { get; set; }
-
-    [JsonPropertyName("strategy_id")]
-    public string? StrategyId { get; set; }
-}
-
-public record TradeSignalReceived(
-    TradeSignal Payload,
-    DateTimeOffset ReceivedUtc,
-    double? LagSeconds,
-    bool Accepted,
-    string? Reason
-);
-
-public sealed class TradeSignalStore
-{
-    private readonly ConcurrentQueue<TradeSignalReceived> _q = new();
-
-    public void Add(TradeSignalReceived r)
-    {
-        _q.Enqueue(r);
-        while (_q.Count > 200 && _q.TryDequeue(out _)) { } // cap memory
-    }
-
-    public IReadOnlyList<TradeSignalReceived> Last(int n)
-        => _q.Reverse().Take(n).ToList();
-}
-
-public static class TradeSignalUtils
-{
-    public static (DateTimeOffset? ts, double? lagSeconds) TryParseTriggerTime(string? trigger)
-    {
-        if (string.IsNullOrWhiteSpace(trigger))
-            return (null, null);
-
-        if (DateTimeOffset.TryParse(trigger, out var iso))
-            return (iso, (DateTimeOffset.UtcNow - iso.ToUniversalTime()).TotalSeconds);
-
-        if (long.TryParse(trigger, out var unix))
-        {
-            var isMillis = unix >= 1_000_000_000_000;
-            var ts = DateTimeOffset.FromUnixTimeMilliseconds(isMillis ? unix : unix * 1000L);
-            return (ts, (DateTimeOffset.UtcNow - ts).TotalSeconds);
-        }
-
-        return (null, null);
-    }
-
-    public static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
 }
