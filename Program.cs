@@ -22,8 +22,6 @@ using Google.Apis.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddSingleton<TradeSignalStore>();
-
 builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
 
 // --- Auth & Controllers ---
@@ -821,76 +819,6 @@ app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore 
 app.MapControllers();
 app.Run();
 
-public sealed class TradeSignal
-{
-    [JsonPropertyName("symbol")]
-    public string? Symbol { get; set; }
-
-    [JsonPropertyName("side")]
-    public string? Side { get; set; }
-
-    [JsonPropertyName("qty")]
-    public string? Qty { get; set; }
-
-    [JsonPropertyName("price")]
-    public string? Price { get; set; }
-
-    // Accepts ISO-8601, Unix seconds, or Unix milliseconds (e.g., TradingView {{timenow}})
-    [JsonPropertyName("trigger_time")]
-    public string? TriggerTime { get; set; }
-
-    [JsonPropertyName("max_lag")]
-    public string? MaxLag { get; set; }
-
-    [JsonPropertyName("strategy_id")]
-    public string? StrategyId { get; set; }
-}
-
-public record TradeSignalReceived(
-    TradeSignal Payload,
-    DateTimeOffset ReceivedUtc,
-    double? LagSeconds,
-    bool Accepted,
-    string? Reason
-);
-
-public sealed class TradeSignalStore
-{
-    private readonly ConcurrentQueue<TradeSignalReceived> _q = new();
-
-    public void Add(TradeSignalReceived r)
-    {
-        _q.Enqueue(r);
-        while (_q.Count > 200 && _q.TryDequeue(out _)) { } // cap memory
-    }
-
-    public IReadOnlyList<TradeSignalReceived> Last(int n)
-        => _q.Reverse().Take(n).ToList();
-}
-
-// ---- Helpers for parsing trigger_time / max_lag ----
-static (DateTimeOffset? ts, double? lagSeconds) TryParseTriggerTime(string? trigger)
-{
-    if (string.IsNullOrWhiteSpace(trigger))
-        return (null, null);
-
-    // ISO-8601?
-    if (DateTimeOffset.TryParse(trigger, out var iso))
-        return (iso, (DateTimeOffset.UtcNow - iso.ToUniversalTime()).TotalSeconds);
-
-    // Unix seconds?
-    if (long.TryParse(trigger, out var unix))
-    {
-        // Heuristic: treat >= 10^12 as milliseconds, otherwise seconds
-        var isMillis = unix >= 1_000_000_000_000;
-        var ts = DateTimeOffset.FromUnixTimeMilliseconds(isMillis ? unix : unix * 1000L);
-        return (ts, (DateTimeOffset.UtcNow - ts).TotalSeconds);
-    }
-
-    return (null, null);
-}
-
-static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
 
 
 // Helper to produce the SAME shape as /data/details/allhrefs items[]
