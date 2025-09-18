@@ -1184,9 +1184,6 @@ public sealed class Top10ScraperService
     {
         try
         {
-			var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo();
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
             // Explicitly fetch the top10 page
             var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
             var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
