@@ -81,6 +81,10 @@ builder.Services.AddHostedService<DetailsRefreshJob>();
 builder.Services.AddSingleton<TipsStore>();
 builder.Services.AddSingleton<TipsScraperService>();
 builder.Services.AddHostedService<TipsRefreshJob>();
+
+builder.Services.AddSingleton<Top10Store>();
+builder.Services.AddSingleton<Top10ScraperService>();
+builder.Services.AddHostedService<Top10RefreshJob>();
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -223,7 +227,16 @@ app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
     return Results.Json(groups);
 });
 
+// /data/top10 -> groups with metadata + items (store-backed, same as /data/parsed)
+app.MapGet("/data/top10", ([FromServices] Top10Store store) =>
+{
+    var s = store.Current;
+    if (s is null || s.Payload is null)
+        return Results.NotFound(new { message = "No data yet" });
 
+    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
+    return Results.Json(groups);
+});
 
 // Raw HTML snapshot of the main page
 app.MapGet("/data/html", ([FromServices] ResultStore store) =>
@@ -1119,6 +1132,155 @@ public sealed class TipsRefreshJob : BackgroundService
         catch (Exception ex)
         {
             Debug.WriteLine($"[tips] run failed: {ex}");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+}
+
+// ---------- Top10 storage / service / job ----------
+public static class Top10Files
+{
+    public const string Dir  = "/var/lib/datasvc";
+    public const string File = "/var/lib/datasvc/Top10.json";
+
+    public static async Task SaveAsync(DataSnapshot snap)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
+        var tmp = File + ".tmp";
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, File, overwrite: true);
+    }
+
+    public static async Task<DataSnapshot?> LoadAsync()
+    {
+        if (!System.IO.File.Exists(File)) return null;
+        try
+        {
+            var json = await System.IO.File.ReadAllTextAsync(File);
+            return JsonSerializer.Deserialize<DataSnapshot>(json);
+        }
+        catch { return null; }
+    }
+}
+
+public sealed class Top10Store
+{
+    private readonly object _gate = new();
+    private DataSnapshot? _current;
+    public DataSnapshot? Current { get { lock (_gate) return _current; } }
+    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
+}
+
+public sealed class Top10ScraperService
+{
+    private readonly Top10Store _store;
+    public Top10ScraperService([FromServices] Top10Store store) => _store = store;
+
+    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            // Explicitly fetch the top10 page
+            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
+            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+
+            var payload = new DataPayload(html, titles, table);
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+            _store.Set(snap);
+            await Top10Files.SaveAsync(snap);
+            return snap;
+        }
+        catch (Exception ex)
+        {
+            var last = _store.Current;
+            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
+            _store.Set(snap);
+            await Top10Files.SaveAsync(snap);
+            return snap;
+        }
+    }
+}
+
+public sealed class Top10RefreshJob : BackgroundService
+{
+    private readonly Top10ScraperService _svc;
+    private readonly Top10Store _store;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly TimeZoneInfo _tz;
+
+    public Top10RefreshJob(Top10ScraperService svc, Top10Store store)
+    {
+        _svc = svc;
+        _store = store;
+        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+        _tz = !string.IsNullOrWhiteSpace(tzId)
+            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+            : TimeZoneInfo.Local;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // Warm from disk
+        var prev = await Top10Files.LoadAsync();
+        if (prev is not null) _store.Set(prev);
+
+        // Initial run
+        await RunSafelyOnce(stoppingToken);
+
+        // Also tick at the top of each hour
+        _ = HourlyLoop(stoppingToken);
+
+        // Keep the 5-minute cadence
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                await RunSafelyOnce(stoppingToken);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task HourlyLoop(CancellationToken ct)
+    {
+        try
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
+                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
+                if (nextHour == 24) nextHour = 0;
+                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
+                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
+
+                var delay = nextTopLocal - nowLocal;
+                if (delay > TimeSpan.Zero)
+                    await Task.Delay(delay, ct);
+
+                await RunSafelyOnce(ct);
+
+                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
+                while (await hourly.WaitForNextTickAsync(ct))
+                    await RunSafelyOnce(ct);
+            }
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RunSafelyOnce(CancellationToken ct)
+    {
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try
+        {
+            await _svc.FetchAndStoreAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[Top10] run failed: {ex}");
         }
         finally
         {
