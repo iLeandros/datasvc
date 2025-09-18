@@ -1184,10 +1184,13 @@ public sealed class Top10ScraperService
     {
         try
         {
+			var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo();
+            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
             // Explicitly fetch the top10 page
             var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
             var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, 0);
 
             var payload = new DataPayload(html, titles, table);
             var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
@@ -1588,7 +1591,7 @@ public static class GetStartupMainTitlesAndHrefs2024
 
 public static class GetStartupMainTableDataGroup2024
 {
-    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent)
+    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, int contrainerSkip = 1) // 0 for Top10
     {
         try
         {
@@ -1601,7 +1604,7 @@ public static class GetStartupMainTableDataGroup2024
                 .FirstOrDefault(o => o.GetAttributeValue("class", "") == "datacotainer full")?
                 .Descendants("div")
                 .Where(o => o.GetAttributeValue("class", "") == "predictions")
-                .Skip(1)
+                .Skip(contrainerSkip)
                 .FirstOrDefault()?
                 .Elements("div")
                 .Where(o => o.Attributes["id"] != null);
