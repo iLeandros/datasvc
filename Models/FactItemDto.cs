@@ -1,4 +1,4 @@
-
+namespace DataSvc.Models;
 
 public sealed class FactItemDto
 {
