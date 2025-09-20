@@ -1598,13 +1598,14 @@ public static class GetStartupMainTableDataGroup2024
             var tableDataGroup = new ObservableCollection<TableDataGroup>();
 
             var matchesGroups = website.DocumentNode.Descendants("div")
-                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "datacotainer full")?
-                .Descendants("div")
-                .Where(o => o.GetAttributeValue("class", "") == "predictions")
-                .Skip(contrainerSkip)
-                .FirstOrDefault()?
-                .Elements("div")
-                .Where(o => o.Attributes["id"] != null);
+							    .FirstOrDefault(o => o.GetAttributeValue("class", "") == "datacotainer full")?
+							    .Descendants("div")
+							    .Where(o => o.GetAttributeValue("class", "") == "predictions")
+							    .Skip(contrainerSkip) // skip the toolbar block; include all subsequent prediction sections
+							    .SelectMany(pred => pred.Elements("div")
+								.Where(o => o.Attributes["id"] != null)) // collect all competition blocks from all sections
+							    .ToList();
+
 
             if (matchesGroups != null)
             {
@@ -1729,12 +1730,13 @@ public static class GetStartupMainTableDataGroup2024
                         }
 
                         var groupImage = group.Descendants("img").FirstOrDefault()?.Attributes["src"].Value;
-                        var groupName = group.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText.Trim();
+						var groupName  = group.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText.Trim();
+						
+						if (groupImage != null && groupName != null && items.Count > 0)
+						{
+						    tableDataGroup.Add(new TableDataGroup(groupImage, groupName, "TIP", items));
+						}
 
-                        if (groupImage != null && groupName != null)
-                        {
-                            tableDataGroup.Add(new TableDataGroup(groupImage, groupName, "TIP", items));
-                        }
                     }
                 }
             }
