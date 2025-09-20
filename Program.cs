@@ -1984,6 +1984,8 @@ public record DetailsPayload(
 	string? TeamStandingsHtml // NEW
 );
 
+// Place with your other models
+public sealed record ProposedResult(string Code, double Probability);
 // Extend DetailsRecord to carry persisted proposals (nullable for back-compat)
 public record DetailsRecord(
     string Href,
