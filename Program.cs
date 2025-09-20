@@ -946,7 +946,40 @@ static object MapDetailsRecordToAllhrefsItem(
         .Analyze(core)                      // returns List<ProposedResult>
         ?.OrderByDescending(p => p.Probability)
         .ToList();
-	
+
+	// Return core + analyzer output at the end
+    return new {
+        core.href,
+        core.lastUpdatedUtc,
+
+        core.teamsInfo,
+        core.teamsInfoHtml,
+
+        core.matchDataBetween,
+        core.matchBetweenHtml,
+
+        core.recentMatchesSeparate,
+        core.recentMatchesSeparateHtml,
+
+        core.barCharts,
+        core.teamsBetStatisticsHtml,
+
+        core.matchFacts,
+        core.factsHtml,
+
+        core.lastTeamsWinrate,
+        core.lastTeamsMatchesHtml,
+
+        core.teamsStatistics,
+        core.teamsStatisticsHtml,
+
+        core.teamStandings,
+        core.teamStandingsHtml,
+
+        // <-- appended at the end as requested
+        proposedResults
+    };
+	/*
     return new {
         href           = i.Href,
         lastUpdatedUtc = i.LastUpdatedUtc,
@@ -984,6 +1017,7 @@ static object MapDetailsRecordToAllhrefsItem(
 		// <-- appended at the end as requested
         proposedResults
     };
+	*/
 }
 static void SaveGzipCopy(string jsonPath)
 {
