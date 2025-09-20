@@ -1,2424 +1,958 @@
-using Microsoft.AspNetCore.Mvc;
-using System.Collections.Concurrent;
-using DataSvc.Models;
-using DataSvc.ModelHelperCalls;
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Net;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using HtmlAgilityPack;
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.ResponseCompression;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
+using System;
+using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
-using System.IO.Compression;
-using Microsoft.AspNetCore.Authentication;
-using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
-using MySqlConnector;
-using Google.Apis.Auth;
+using System.Text;
+using DataSvc.Models;
 
+namespace DataSvc.Analyzer;
 
-var builder = WebApplication.CreateBuilder(args);
-
-builder.Services.Configure<AuthOptions>(builder.Configuration.GetSection("Auth"));
-
-// --- Auth & Controllers ---
-builder.Services.AddAuthentication(options =>
+public static class TipAnalyzer
 {
-    options.DefaultAuthenticateScheme = SessionAuthHandler.Scheme;
-    options.DefaultChallengeScheme = SessionAuthHandler.Scheme;
-})
-.AddScheme<AuthenticationSchemeOptions, SessionAuthHandler>(SessionAuthHandler.Scheme, _ => { });
-
-builder.Services.AddAuthorization();
-
-// Controllers (for AuthController). We return camelCase to match the MAUI client.
-builder.Services.AddControllers().AddJsonOptions(o =>
-{
-    o.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.CamelCase;
-});
-
-// Compression + CORS
-//builder.Services.AddResponseCompression();
-builder.Services.Configure<GzipCompressionProviderOptions>(p =>
-{
-    p.Level = System.IO.Compression.CompressionLevel.Fastest;
-});
-builder.Services.AddResponseCompression(o =>
-{
-    o.EnableForHttps = true;
-    o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
-});
-builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
-
-// add next to your existing ResponseCompression config
-builder.Services.AddResponseCompression(o =>
-{
-    o.EnableForHttps = true;
-    o.MimeTypes = ResponseCompressionDefaults.MimeTypes
-        .Concat(new[] { "application/json", "application/x-ndjson", "text/event-stream" });
-});
-
-// Livescores DI
-builder.Services.AddSingleton<LiveScoresStore>();
-builder.Services.AddSingleton<LiveScoresScraperService>();
-builder.Services.AddHostedService<LiveScoresRefreshJob>();
-
-// Trade Signal Webhook DI
-builder.Services.AddSingleton<TradeSignalStore>();
-
-// App services
-builder.Services.AddSingleton<ResultStore>();
-builder.Services.AddSingleton<ScraperService>();
-builder.Services.AddHostedService<RefreshJob>();
-
-builder.Services.AddSingleton<DetailsStore>();
-builder.Services.AddSingleton<DetailsScraperService>();
-builder.Services.AddHostedService<DetailsRefreshJob>();
-
-builder.Services.AddSingleton<TipsStore>();
-builder.Services.AddSingleton<TipsScraperService>();
-builder.Services.AddHostedService<TipsRefreshJob>();
-
-builder.Services.AddSingleton<Top10Store>();
-builder.Services.AddSingleton<Top10ScraperService>();
-builder.Services.AddHostedService<Top10RefreshJob>();
-// Program.cs (server)
-builder.Services.ConfigureHttpJsonOptions(o =>
-{
-    o.SerializerOptions.PropertyNamingPolicy = null;       // keep PascalCase
-    o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
-});
-
-var app = builder.Build();
-app.UseResponseCompression();
-app.UseCors();
-
-app.UseAuthentication();
-app.UseAuthorization();
-
-// Show errors while debugging
-if (app.Environment.IsDevelopment())
-{
-    app.UseDeveloperExceptionPage();
-}
-else
-{
-    app.UseExceptionHandler("/error");
-    app.MapGet("/error", () => Results.Problem("An error occurred."));
-}
-
-// ---------- API ----------
-
-// -------- Trade Signal Webhook --------
-// Receives alerts like:
-// {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","qty":"{{strategy.order.contracts}}",
-//  "price":"{{close}}","trigger_time":"{{timenow}}","max_lag":"20","strategy_id":"d2ecb3e5-1c49-4a05-bbcc-f99313098977"}
-
-app.MapPost("/webhooks/trade",
-    ([FromBody] TradeSignal payload, [FromServices] TradeSignalStore store) =>
-{
-    var receivedAt = DateTimeOffset.UtcNow;
-
-    // Try parse trigger_time as ISO-8601 or Unix seconds/milliseconds
-    var (triggerTs, lagSeconds) = TradeSignalUtils.TryParseTriggerTime(payload.TriggerTime);
-
-    // Parse optional max_lag
-    int? maxLag = TradeSignalUtils.TryParseInt(payload.MaxLag);
-
-    bool accepted = true;
-    string? reason = null;
-
-    if (maxLag.HasValue && lagSeconds.HasValue && lagSeconds.Value > maxLag.Value)
+    public sealed record ProposedResult(string Code, double Probability);
+    public static List<ProposedResult> Analyze(
+                        DetailsItemDto d,
+                        string homeName,
+                        string awayName,
+                        string? proposedCode = null)
     {
-        accepted = false;
-        reason = $"Lag {lagSeconds.Value:F1}s exceeds max_lag {maxLag.Value}.";
-    }
+        var list = Analyze(d, homeName, awayName); // core calc
 
-    var record = new TradeSignalReceived(payload, receivedAt, lagSeconds, accepted, reason);
-    store.Add(record);
+        if (string.IsNullOrWhiteSpace(proposedCode)) return list;
 
-    if (!accepted)
-        return Results.BadRequest(new { ok = false, error = reason, lagSeconds, receivedAtUtc = receivedAt });
+        // --- helpers ------------------------------------------------------------
+        static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
+        static double Sigmoid(double z) => 1.0 / (1.0 + Math.Exp(-z));
+        static double Logit(double p)
+        {
+            // protect against 0/1 to avoid +/-infinity
+            const double eps = 1e-9;
+            p = Math.Min(1 - eps, Math.Max(eps, p));
+            return Math.Log(p / (1 - p));
+        }
+        static double LogitBump(double p, double tau, double lo = 0.05, double hi = 0.95)
+        {
+            if (double.IsNaN(p)) return p;
+            var pp = Sigmoid(Logit(p) + tau);
+            return Math.Min(hi, Math.Max(lo, pp));
+        }
 
-    return Results.Ok(new { ok = true, lagSeconds, receivedAtUtc = receivedAt });
-});
+        // normalize code formatting
+        string tip = proposedCode.Trim().ToUpperInvariant();
 
-// Quick inspector to see the last N webhook posts (default 50, max 200).
-app.MapGet("/webhooks/trade/recent",
-    ([FromServices] TradeSignalStore store, [FromQuery] int take = 50) =>
-{
-    take = Math.Clamp(take, 1, 200);
-    return Results.Json(store.Last(take));
-});
-app.MapGet("/", () => Results.Redirect("/data/status"));
+        // index for quick lookup
+        var idx = list
+            .Select((r, i) => (r.Code.ToUpperInvariant(), i))
+            .ToDictionary(t => t.Item1, t => t.i);
 
-app.MapGet("/data/status", ([FromServices] ResultStore store) =>
-{
-    var s = store.Current;
-    if (s is null) return Results.Json(new { ready = false, message = "No data yet. Initial refresh pending." });
-    return Results.Json(new { ready = s.Ready, s.LastUpdatedUtc, s.Error });
-});
+        // convenience getter/setter
+        double Get(string code) => idx.TryGetValue(code.ToUpperInvariant(), out var i) ? list[i].Probability : double.NaN;
+        void Set(string code, double p)
+        {
+            if (idx.TryGetValue(code.ToUpperInvariant(), out var i))
+                list[i] = new ProposedResult(list[i].Code, Clamp01(p));
+        }
 
-app.MapGet("/debug/auth", (HttpContext ctx) =>
-{
-    var uidClaim = ctx.User?.FindFirst("uid")?.Value;
-    var uidItem  = ctx.Items.TryGetValue("user_id", out var v) ? v?.ToString() : null;
-    var auth = ctx.User?.Identity?.IsAuthenticated == true;
-    return Results.Json(new { authenticated = auth, uidClaim, uidItem });
-}).RequireAuthorization();
+        // --- apply prior --------------------------------------------------------
+        // Stronger prior for 1X2, milder for single markets
+        const double TAU_1X2 = 0.45;
+        const double TAU_SOLO = 0.35;
 
-// health + debug
-app.MapGet("/ping", () => Results.Ok("pong"));
-app.MapGet("/debug/cs", (IConfiguration cfg) =>
-{
-    var cs = cfg.GetConnectionString("Default");
-    return string.IsNullOrWhiteSpace(cs) ? Results.Problem("Missing ConnectionStrings:Default")
-                                         : Results.Ok("cs-present");
-});
-app.MapGet("/debug/db", async (IConfiguration cfg) =>
-{
-    var cs = cfg.GetConnectionString("Default");
-    if (string.IsNullOrWhiteSpace(cs)) return Results.Problem("Missing ConnectionStrings:Default");
-    try { await using var c = new MySqlConnector.MySqlConnection(cs); await c.OpenAsync(); return Results.Ok("db-ok"); }
-    catch (Exception ex) { return Results.Problem("DB connect failed: " + ex.Message); }
-});
-
-// ---------- API ----------
-app.MapGet("/", () => Results.Redirect("/data/status"));
-
-app.MapGet("/data/status", ([FromServices] ResultStore store) =>
-{
-    var s = store.Current;
-    if (s is null) return Results.Json(new { ready = false, message = "No data yet. Initial refresh pending." });
-    return Results.Json(new { ready = s.Ready, s.LastUpdatedUtc, s.Error });
-});
-
-// /data/titles -> titles/hrefs only
-app.MapGet("/data/titles", ([FromServices] ResultStore store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
-    return Results.Json(s.Payload.TitlesAndHrefs);
-});
-
-// /data/parsed -> groups with metadata + items (DTO)
-app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null)
-        return Results.NotFound(new { message = "No data yet" });
-
-    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-    return Results.Json(groups); // no projection needed
-});
-
-
-// /data/tips -> groups with metadata + items (store-backed, same as /data/parsed)
-app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null)
-        return Results.NotFound(new { message = "No data yet" });
-
-    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-    return Results.Json(groups);
-});
-
-// /data/top10 -> groups with metadata + items (store-backed, same as /data/parsed)
-app.MapGet("/data/top10", ([FromServices] Top10Store store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null)
-        return Results.NotFound(new { message = "No data yet" });
-
-    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-    return Results.Json(groups);
-});
-
-// Raw HTML snapshot of the main page
-app.MapGet("/data/html", ([FromServices] ResultStore store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
-    return Results.Text(s.Payload.HtmlContent ?? "", "text/html; charset=utf-8");
-});
-
-// Saved JSON snapshot (full)
-app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
-
-// Manual refresh (main page)
-app.MapPost("/data/refresh", async ([FromServices] ScraperService svc) =>
-{
-    var snap = await svc.FetchAndStoreAsync();
-    return Results.Json(new { ok = snap.Ready, snap.LastUpdatedUtc, snap.Error });
-});
-
-// -------- Details API --------
-app.MapGet("/data/details/status", ([FromServices] DetailsStore store) =>
-{
-    var idx = store.Index();
-    return Results.Json(new { total = idx.Count, lastSavedUtc = store.LastSavedUtc });
-});
-
-app.MapGet("/data/details/index", ([FromServices] DetailsStore store) =>
-{
-    var idx = store.Index()
-        .Select(x => new { href = x.href, lastUpdatedUtc = x.lastUpdatedUtc })  // <- properties, not fields
-        .OrderByDescending(x => x.lastUpdatedUtc)
-        .ToList();
-
-    return Results.Json(idx);
-});
-
-
-// ?href=...
-app.MapGet("/data/details/download", (HttpContext ctx) =>
-{
-    var jsonPath = DetailsFiles.File;           // e.g., /var/lib/datasvc/details.json
-    var gzPath   = jsonPath + ".gz";
-    if (!System.IO.File.Exists(jsonPath))
-        return Results.NotFound(new { message = "No details file yet" });
-
-    var acceptsGzip = ctx.Request.Headers.AcceptEncoding.ToString()
-                           .Contains("gzip", StringComparison.OrdinalIgnoreCase);
-
-    var pathToSend = (acceptsGzip && System.IO.File.Exists(gzPath)) ? gzPath : jsonPath;
-    var fi = new FileInfo(pathToSend);
-
-    ctx.Response.Headers["Vary"] = "Accept-Encoding";
-    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString(); // compressed or raw length, whichever we send
-
-    if (pathToSend.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
-        ctx.Response.Headers["Content-Encoding"] = "gzip";
-
-    return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "details.json");
-});
-
-app.MapPost("/data/parsed/cleanup",
-    ([FromServices] ResultStore store,
-     [FromQuery] bool clear = false,
-     [FromQuery] bool deleteFile = false) =>
-{
-    int deletedFiles = 0;
-
-    if (clear)
-    {
-        // set an empty snapshot (Payload null); /data/parsed will return 404 afterwards
-        var snap = new DataSnapshot(DateTimeOffset.UtcNow, false, null, "cleared");
-        store.Set(snap);
-    }
-
-    if (deleteFile && System.IO.File.Exists(DataFiles.File))
-    {
-        System.IO.File.Delete(DataFiles.File);
-        deletedFiles = 1;
-    }
-
-    return Results.Json(new
-    {
-        ok = true,
-        cleared = clear,
-        deletedFiles
-    });
-});
-app.MapPost("/data/details/cleanup",
-    async ([FromServices] ResultStore root,
-           [FromServices] DetailsStore store,
-           [FromQuery] bool clear = false,
-           [FromQuery] bool pruneFromParsed = false,
-           [FromQuery] int? olderThanMinutes = null,
-           [FromQuery] bool dryRun = false) =>
-{
-    // snapshot current state
-    var (items, now) = store.Export();  // gives you the list + "now" timestamp
-    int before = items.Count;
-
-    if (clear)
-    {
-        if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove = before, wouldKeep = 0 });
-        store.Import(Array.Empty<DetailsRecord>()); // clears map via Import()
-        await DetailsFiles.SaveAsync(store);
-        return Results.Json(new { ok = true, removed = before, kept = 0 });
-    }
-
-    // Build "kept" set
-    IEnumerable<DetailsRecord> kept = items;
-
-    if (olderThanMinutes is int min && min >= 0)
-    {
-        var cutoff = now - TimeSpan.FromMinutes(min);
-        kept = kept.Where(i => i.LastUpdatedUtc >= cutoff);
-    }
-
-    if (pruneFromParsed)
-    {
-        var hrefs = root.Current?.Payload?.TableDataGroup?
-            .SelectMany(g => g.Items)
-            .Select(i => i.Href)
-            .Where(h => !string.IsNullOrWhiteSpace(h))
-            .Select(DetailsStore.Normalize)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        kept = kept.Where(i => hrefs.Contains(i.Href));
-    }
-
-    var keptList = kept.ToList();
-    int removed = before - keptList.Count;
-
-    if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove = removed, wouldKeep = keptList.Count });
-
-    // Apply & persist
-    store.Import(keptList);              // Import() clears and re-adds items
-    await DetailsFiles.SaveAsync(store); // persist to /var/lib/datasvc/details.json
-
-    return Results.Json(new { ok = true, removed, kept = keptList.Count });
-});
-
-app.MapGet("/data/details", ([FromServices] DetailsStore store, [FromQuery] string href) =>
-{
-    if (string.IsNullOrWhiteSpace(href))
-        return Results.BadRequest(new { message = "href is required" });
-
-    var rec = store.Get(href); // store.Get() normalizes internally
-    if (rec is null)
-        return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
-
-    return Results.Json(rec.Payload);
-});
-
-// -------- LiveScores API --------
-app.MapGet("/data/livescores/status", ([FromServices] LiveScoresStore store) =>
-{
-    var dates = store.Dates();
-    return Results.Json(new { totalDates = dates.Count, dates, lastSavedUtc = store.LastSavedUtc });
-});
-
-app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
-{
-    return Results.Json(store.Dates());
-});
-
-app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
-{
-    // default: today in server's configured TZ (job/store use same TZ basis)
-    var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-    var tz = !string.IsNullOrWhiteSpace(tzId)
-        ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-        : TimeZoneInfo.Local;
-
-    var localTodayIso = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz).Date.ToString("yyyy-MM-dd");
-    var key = string.IsNullOrWhiteSpace(date) ? localTodayIso : date;
-
-    var d = store.Get(key);
-    return d is null ? Results.NotFound(new { message = "No livescores for date", date = key }) : Results.Json(d);
-});
-
-app.MapPost("/data/livescores/refresh",
-    async ([FromServices] LiveScoresScraperService svc) =>
-{
-    var (refreshed, lastUpdatedUtc) = await svc.FetchAndStoreAsync();
-    return Results.Json(new { ok = true, refreshed, lastUpdatedUtc });
-});
-
-app.MapGet("/data/livescores/download", (HttpContext ctx) =>
-{
-    var jsonPath = LiveScoresFiles.File;
-    var gzPath   = jsonPath + ".gz";
-    if (!System.IO.File.Exists(jsonPath))
-        return Results.NotFound(new { message = "No livescores file yet" });
-
-    var acceptsGzip = ctx.Request.Headers.AcceptEncoding.ToString()
-                         .Contains("gzip", StringComparison.OrdinalIgnoreCase);
-
-    var pathToSend = (acceptsGzip && System.IO.File.Exists(gzPath)) ? gzPath : jsonPath;
-    var fi = new FileInfo(pathToSend);
-
-    ctx.Response.Headers["Vary"] = "Accept-Encoding";
-    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString();
-    if (pathToSend.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
-        ctx.Response.Headers["Content-Encoding"] = "gzip";
-
-    return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "livescores.json");
-});
-
-// Keep only the last N days (default 4). Also supports dryRun and explicit "keep" list for debugging.
-app.MapPost("/data/livescores/cleanup",
-    async ([FromServices] LiveScoresStore store,
-           [FromQuery] int keepDays = 4,
-           [FromQuery] bool dryRun = false) =>
-{
-    var dates = store.Dates().ToList();
-    var keep = dates
-        .OrderByDescending(d => d)
-        .Take(Math.Max(1, keepDays))
-        .ToList();
-
-    var wouldRemove = dates.Count - keep.Count;
-    if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove, wouldKeep = keep.Count, keep });
-
-    var removed = store.ShrinkTo(keep);
-    await LiveScoresFiles.SaveAsync(store);
-    return Results.Json(new { ok = true, removed, kept = keep.Count, keep });
-});
-
-
-// All details for all hrefs (keyed by normalized href)
-// Toggles you already have:
-//   ?teamsInfo=html        -> return original teamsinfo HTML
-//   ?matchBetween=html     -> return original matchbtwteams HTML
-// New toggle for this parser:
-//   ?betStats=html         -> return original teamsbetstatistics HTML (omit parsed barCharts)
-app.MapGet("/data/details/allhrefs",
-    ([FromServices] DetailsStore store,
-     [FromQuery] string? teamsInfo,
-     [FromQuery] string? matchBetween,
-	 [FromQuery] string? separateMatches,
-     [FromQuery] string? betStats,
-	 [FromQuery] string? facts,
-	 [FromQuery] string? lastTeamsMatches,
-	 [FromQuery] string? teamsStatistics,
-	 [FromQuery] string? teamStandings) => // NEW
-{
-    bool preferTeamsInfoHtml    = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferMatchBetweenHtml = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferBetStatsHtml     = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
-	bool preferFactsHtml        = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase); // <— NEW
-	bool preferLastTeamsHtml    = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
-	bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
-	bool preferTeamsStatisticsHtml  = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase); // NEW
-	bool preferTeamStandingsHtml = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase); // NEW
-	
-    var (items, generatedUtc) = store.Export();
-
-    var byHref = items
-        .OrderByDescending(i => i.LastUpdatedUtc)
-        .ToDictionary(
-            i => i.Href,
-            i =>
+        // 1X2 family handling (bump selected, then renormalize and rebuild double chance)
+        if (tip is "1" or "X" or "2")
+        {
+            double p1 = Get("1"), px = Get("X"), p2 = Get("2");
+            if (!double.IsNaN(p1 + px + p2) && p1 + px + p2 > 1e-9)
             {
-                // If you've already added these helpers earlier, keep using them
-                var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+                // bump selected
+                if (tip == "1") p1 = LogitBump(p1, TAU_1X2);
+                else if (tip == "X") px = LogitBump(px, TAU_1X2);
+                else p2 = LogitBump(p2, TAU_1X2);
 
-                var matchDataBetween = preferMatchBetweenHtml
-                    ? null
-                    : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+                // renormalize to sum=1, preserving ratio of the non-bumped two
+                double s = p1 + px + p2;
+                if (s > 1e-9) { p1 /= s; px /= s; p2 /= s; }
 
-				// NEW: parse the per-team recent matches (your new helper)
-				var recentMatchesSeparate = preferSeparateMatchesHtml
-				    ? null
-				    : MatchSeparatelyHelper.GetMatchDataSeparately(
-				          i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+                Set("1", p1); Set("X", px); Set("2", p2);
 
+                // rebuild double-chance
+                Set("1X", Clamp01(p1 + px));
+                Set("X2", Clamp01(px + p2));
+                // rebuild double-chance from UPDATED 1X2
+                var (p1xNew, px2New, p12New) = BuildDoubleChance(p1, px, p2);
+                Set("1X", p1xNew);
+                Set("X2", px2New);
 
-                // NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
-                //var barCharts = preferBetStatsHtml
-                //    ? null
-                //    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+                // reapply the 12 dump on the fresh p12
+                double dec1 = Dc12FilterPx(px, p2);
+                double dec2 = Dc12FilterHomeDom(p1, p2);
+                double dec3 = Dc12FilterAwayDom(p1, p2);
+                double totalDec = Math.Clamp(dec1 + dec2 + dec3, 0.0, 0.20);
+                Set("12", Clamp01(p12New * (1.0 - totalDec)));
 
-				var rawBarCharts = preferBetStatsHtml ? null
-				    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
-				
-				var barCharts = rawBarCharts?.Select(b => new {
-				    title = b.Title,
-				    halfContainerId = b.HalfContainerId,
-				    items = b.ToList() // materialize the MatchFactData entries
-				}).ToList();
+            }
 
+            return list;
+        }
 
-				// NEW: facts (typed list or raw HTML)
-	            var matchFacts = preferFactsHtml
-	                ? null
-	                : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+        // after building idx and normalizing tip
+        bool isDoubleChance = tip is "1X" or "X2" or "12";
+        // Standalone markets
+        // Recognized codes (case-insensitive): BTS, OTS, HTS, GTS,
+        // O 1.5 / O 2.5 / O 3.5, U 1.5 / U 2.5 / U 3.5, HTO 1.5/2.5/3.5, HTU 1.5/2.5/3.5
+        // If the code exists in the list, just bump it.
+        if (idx.ContainsKey(tip) && !isDoubleChance)
+        {
+            double p = Get(tip);
+            if (!double.IsNaN(p))
+            {
+                p = LogitBump(p, TAU_SOLO);
+                Set(tip, p);
 
-				// BEFORE
-				// var lastTeamsWinrate = preferLastTeamsHtml 
-				//     ? null
-				//     : LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
-				
-				// AFTER (safe for System.Text.Json)
-				object? lastTeamsWinrate = null;
-				if (!preferLastTeamsHtml)
-				{
-				    var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
-				                i.Payload.LastTeamsMatchesHtml ?? string.Empty);
-				
-				    lastTeamsWinrate = new
-				    {
-				        wins   = new[] { m[0,0], m[0,1] },
-				        draws  = new[] { m[1,0], m[1,1] },
-				        losses = new[] { m[2,0], m[2,1] }
-				    };
-				}
+                // For totals, you can optionally keep complements coherent (e.g., U = 1 - O)
+                // Try to detect matching complement and rebuild it from p to keep consistency.
+                bool isOver = tip.StartsWith("O ");
+                bool isUnder = tip.StartsWith("U ");
+                bool isHTOver = tip.StartsWith("HTO");
+                bool isHTUnder = tip.StartsWith("HTU");
 
-				var teamsStats = preferTeamsStatisticsHtml
-				    ? null
-				    : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+                string? complement = null;
+                if (isOver) complement = tip.Replace("O ", "U ");
+                else if (isUnder) complement = tip.Replace("U ", "O ");
+                else if (isHTOver) complement = tip.Replace("HTO", "HTU");
+                else if (isHTUnder) complement = tip.Replace("HTU", "HTO");
 
-				var teamStandingsParsed = preferTeamStandingsHtml
-	                ? null
-	                : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty); // NEW
-				
-                return new
+                if (complement != null && idx.ContainsKey(complement))
                 {
-                    href           = i.Href,
-                    lastUpdatedUtc = i.LastUpdatedUtc,
+                    // keep a clean complement
+                    Set(complement, Clamp01(1.0 - p));
+                }
+            }
 
-                    // teams info
-                    teamsInfo      = parsedTeamsInfo,
-                    teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
-
-                    // matches between
-                    matchDataBetween = matchDataBetween,
-                    matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-					recentMatchesSeparate      = recentMatchesSeparate, // NEW parsed object
-					recentMatchesSeparateHtml  = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
-
-
-                    // NEW: bar charts parsed from teamsbetstatistics
-                    barCharts             = barCharts,
-                    teamsBetStatisticsHtml= preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
-
-					// NEW: facts
-	                matchFacts = matchFacts,
-	                factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
-
-					lastTeamsWinrate       = lastTeamsWinrate,                  // NEW (3x2 matrix: [W,D,L] x [team1,team2])
-					lastTeamsMatchesHtml   = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
-
-                    // NEW: team statistics (typed or raw)
-				    teamsStatistics     = teamsStats,
-				    teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
-
-					teamStandings     = teamStandingsParsed,
-                	teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-                };
-            },
-            StringComparer.OrdinalIgnoreCase
-        );
-
-    return Results.Json(new
-    {
-        total        = byHref.Count,
-        lastSavedUtc = store.LastSavedUtc,
-        generatedUtc,
-        items        = byHref
-    });
-});
-// GET /data/details/item?href=...
-app.MapGet("/data/details/item",
-(
-    [FromServices] DetailsStore store,
-    [FromQuery] string href,
-    [FromQuery] string? teamsInfo,
-    [FromQuery] string? matchBetween,
-    [FromQuery] string? separateMatches,
-    [FromQuery] string? betStats,
-    [FromQuery] string? facts,
-    [FromQuery] string? lastTeamsMatches,
-    [FromQuery] string? teamsStatistics,
-    [FromQuery] string? teamStandings
-) =>
-{
-    if (string.IsNullOrWhiteSpace(href))
-        return Results.BadRequest(new { message = "href is required" });
-
-    var rec = store.Get(href);
-    if (rec is null)
-        return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
-
-    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
-
-    var item = MapDetailsRecordToAllhrefsItem(
-        rec,
-        preferTeamsInfoHtml,
-        preferMatchBetweenHtml,
-        preferSeparateMatchesHtml,
-        preferBetStatsHtml,
-        preferFactsHtml,
-        preferLastTeamsHtml,
-        preferTeamsStatisticsHtml,
-        preferTeamStandingsHtml
-    );
-
-    return Results.Json(item);
-});
-
-// GET /data/details/item-by-index?index=0
-// index is based on the SAME ordering used in /data/details/allhrefs (LastUpdatedUtc desc)
-app.MapGet("/data/details/item-by-index",
-(
-    [FromServices] DetailsStore store,
-    [FromQuery] int index,
-    [FromQuery] string? teamsInfo,
-    [FromQuery] string? matchBetween,
-    [FromQuery] string? separateMatches,
-    [FromQuery] string? betStats,
-    [FromQuery] string? facts,
-    [FromQuery] string? lastTeamsMatches,
-    [FromQuery] string? teamsStatistics,
-    [FromQuery] string? teamStandings
-) =>
-{
-    var list = store.Export().items
-        .OrderByDescending(i => i.LastUpdatedUtc)
-        .ToList();
-
-    if (index < 0 || index >= list.Count)
-        return Results.NotFound(new { message = "index out of range", index, total = list.Count });
-
-    var rec = list[index];
-
-    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
-
-    var item = MapDetailsRecordToAllhrefsItem(
-        rec,
-        preferTeamsInfoHtml,
-        preferMatchBetweenHtml,
-        preferSeparateMatchesHtml,
-        preferBetStatsHtml,
-        preferFactsHtml,
-        preferLastTeamsHtml,
-        preferTeamsStatisticsHtml,
-        preferTeamStandingsHtml
-    );
-
-    return Results.Json(item);
-});
-
-// POST /data/details/items   (optional small-batch to reduce round-trips)
-// Body: ["href1","href2",...]
-app.MapPost("/data/details/items",
-async (
-    [FromServices] DetailsStore store,
-    [FromBody] string[] hrefs,
-    [FromQuery] string? teamsInfo,
-    [FromQuery] string? matchBetween,
-    [FromQuery] string? separateMatches,
-    [FromQuery] string? betStats,
-    [FromQuery] string? facts,
-    [FromQuery] string? lastTeamsMatches,
-    [FromQuery] string? teamsStatistics,
-    [FromQuery] string? teamStandings
-) =>
-{
-    var list = (hrefs ?? Array.Empty<string>())
-        .Select(DetailsStore.Normalize)
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .Select(h => store.Get(h))
-        .Where(r => r is not null)
-        .Cast<DetailsRecord>()
-        .ToList();
-
-    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
-    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
-
-    var dict = list.ToDictionary(
-        r => r.Href,
-        r => MapDetailsRecordToAllhrefsItem(
-                r,
-                preferTeamsInfoHtml,
-                preferMatchBetweenHtml,
-                preferSeparateMatchesHtml,
-                preferBetStatsHtml,
-                preferFactsHtml,
-                preferLastTeamsHtml,
-                preferTeamsStatisticsHtml,
-                preferTeamStandingsHtml),
-        StringComparer.OrdinalIgnoreCase
-    );
-
-    return Results.Json(new { total = dict.Count, items = dict });
-});
-
-// Optional: refresh then return the aggregated payload in one call
-app.MapPost("/data/details/refresh-and-get",
-    async ([FromServices] DetailsScraperService svc,
-           [FromServices] DetailsStore store) =>
-{
-    await svc.RefreshAllFromCurrentAsync();
-
-    var (items, generatedUtc) = store.Export();
-
-    var byHref = items.ToDictionary(
-        i => i.Href,
-        i => new
-        {
-            href                   = i.Href,  // include href in each object
-            lastUpdatedUtc         = i.LastUpdatedUtc,
-            teamsInfoHtml          = i.Payload.TeamsInfoHtml,
-            matchBetweenHtml       = i.Payload.MatchBetweenHtml,
-            lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
-            teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
-            teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
-        },
-        StringComparer.OrdinalIgnoreCase
-    );
-
-    return Results.Json(new { total = byHref.Count, generatedUtc, items = byHref });
-});
-
-app.MapGet("/data/details/has", ([FromServices] DetailsStore store, [FromQuery] string href) =>
-{
-    if (string.IsNullOrWhiteSpace(href))
-        return Results.BadRequest(new { message = "href is required" });
-
-    var norm = DetailsStore.Normalize(href);
-    var present = store.Index().Any(x => string.Equals(x.href, norm, StringComparison.OrdinalIgnoreCase));
-    return Results.Json(new { normalized = norm, present });
-});
-
-// List first 50 cache keys we currently have in memory
-app.MapGet("/data/details/debug/keys", ([FromServices] DetailsStore store) =>
-{
-    var keys = store.Index()
-                    .Select(x => x.href)
-                    .Take(50)
-                    .ToList();
-    return Results.Json(keys);
-});
-
-// Manual refresh (details for all current items)
-app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService svc) =>
-{
-    var result = await svc.RefreshAllFromCurrentAsync();
-    return Results.Json(new { refreshed = result.Refreshed, skipped = result.Skipped, errors = result.Errors.Count, result.LastUpdatedUtc });
-});
-// Returns the first href currently in memory so we can copy/paste it
-// Quick ping to see if the main scraper produced hrefs right now
-app.MapGet("/data/first-href", ([FromServices] ResultStore store) =>
-{
-    var href = store.Current?.Payload?.TableDataGroup?
-        .SelectMany(g => g.Items)
-        .Select(i => i.Href)
-        .FirstOrDefault(h => !string.IsNullOrWhiteSpace(h));
-    return Results.Json(new { href });
-});
-
-// Scrape ONE details page on-demand (doesn't require the cache to be warm)
-app.MapGet("/data/details/fetch", async ([FromQuery] string href) =>
-{
-    if (string.IsNullOrWhiteSpace(href))
-        return Results.BadRequest(new { message = "href is required" });
-
-    var rec = await DetailsScraperService.FetchOneAsync(href);
-    return Results.Json(rec.Payload);
-});
-
-// Fetch ONE details page and STORE it (also save to disk)
-app.MapPost("/data/details/fetch-and-store", async ([FromServices] DetailsStore store, [FromQuery] string href) =>
-{
-    if (string.IsNullOrWhiteSpace(href))
-        return Results.BadRequest(new { message = "href is required" });
-
-    var rec = await DetailsScraperService.FetchOneAsync(href);
-    store.Set(rec);                          // put into the in-memory map
-    await DetailsFiles.SaveAsync(store);     // persist to /var/lib/datasvc/details.json
-    return Results.Json(new { ok = true, href = rec.Href });
-});
-
-// Map MVC controllers (AuthController)
-app.MapControllers();
-app.Run();
-
-
-
-// Helper to produce the SAME shape as /data/details/allhrefs items[]
-static object MapDetailsRecordToAllhrefsItem(
-    DetailsRecord i,
-    bool preferTeamsInfoHtml,
-    bool preferMatchBetweenHtml,
-    bool preferSeparateMatchesHtml,
-    bool preferBetStatsHtml,
-    bool preferFactsHtml,
-    bool preferLastTeamsHtml,
-    bool preferTeamsStatisticsHtml,
-    bool preferTeamStandingsHtml)
-{
-    // Mirrors the mapping used in /data/details/allhrefs
-    // (keep these helpers consistent with your existing code)
-    var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
-
-    var matchDataBetween = preferMatchBetweenHtml
-        ? null
-        : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
-
-    var recentMatchesSeparate = preferSeparateMatchesHtml
-        ? null
-        : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
-
-    var rawBarCharts = preferBetStatsHtml
-        ? null
-        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
-
-    var barCharts = rawBarCharts?.Select(b => new {
-        title = b.Title,
-        halfContainerId = b.HalfContainerId,
-        items = b.ToList()
-    }).ToList();
-
-    var matchFacts = preferFactsHtml
-        ? null
-        : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
-
-    object? lastTeamsWinrate = null;
-    if (!preferLastTeamsHtml)
-    {
-        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
-        lastTeamsWinrate = new {
-            wins   = new[] { m[0,0], m[0,1] },
-            draws  = new[] { m[1,0], m[1,1] },
-            losses = new[] { m[2,0], m[2,1] }
-        };
-    }
-
-    var teamsStats = preferTeamsStatisticsHtml
-        ? null
-        : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
-
-    var teamStandingsParsed = preferTeamStandingsHtml
-        ? null
-        : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
-
-    return new {
-        href           = i.Href,
-        lastUpdatedUtc = i.LastUpdatedUtc,
-
-        // teams info
-        teamsInfo     = parsedTeamsInfo,
-        teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
-
-        // matches between
-        matchDataBetween = matchDataBetween,
-        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-        // recent matches (separate)
-        recentMatchesSeparate     = recentMatchesSeparate,
-        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
-
-        // charts & facts
-        barCharts              = barCharts,
-        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
-
-        matchFacts = matchFacts,
-        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
-
-        // last teams winrate block
-        lastTeamsWinrate     = lastTeamsWinrate,
-        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
-
-        // team statistics + standings
-        teamsStatistics     = teamsStats,
-        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
-
-        teamStandings     = teamStandingsParsed,
-        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-    };
-}
-static void SaveGzipCopy(string jsonPath)
-{
-    var gzPath = jsonPath + ".gz";
-    using var input = File.OpenRead(jsonPath);
-    using var output = File.Create(gzPath);
-    using var gz = new GZipStream(output, CompressionLevel.Fastest, leaveOpen: false);
-    input.CopyTo(gz);
-}
-// ---------- Models & storage ----------
-public sealed class ResultStore
-{
-    private readonly object _gate = new();
-    private DataSnapshot? _current;
-    public DataSnapshot? Current { get { lock (_gate) return _current; } }
-    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
-}
-
-public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
-
-public record DataPayload(
-    string HtmlContent,
-    System.Collections.ObjectModel.ObservableCollection<TitlesAndHrefs> TitlesAndHrefs,
-    System.Collections.ObjectModel.ObservableCollection<TableDataGroup> TableDataGroup
-);
-
-
-public static class DataFiles
-{
-    public const string Dir  = "/var/lib/datasvc";
-    public const string File = "/var/lib/datasvc/latest.json";
-
-    public static async Task SaveAsync(DataSnapshot snap)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
-    }
-
-    public static async Task<DataSnapshot?> LoadAsync()
-    {
-        if (!System.IO.File.Exists(File)) return null;
-        try
-        {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            return JsonSerializer.Deserialize<DataSnapshot>(json);
+            return list;
         }
-        catch { return null; }
-    }
-}
 
-// ---------- Tips storage / service / job ----------
-public static class TipsFiles
-{
-    public const string Dir  = "/var/lib/datasvc";
-    public const string File = "/var/lib/datasvc/tips.json";
-
-    public static async Task SaveAsync(DataSnapshot snap)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
+        // Unknown code -> return original list unchanged
+        return list;
     }
 
-    public static async Task<DataSnapshot?> LoadAsync()
+    public static List<ProposedResult> Analyze(DetailsItemDto d, string homeName, string awayName)
     {
-        if (!System.IO.File.Exists(File)) return null;
-        try
+        // --- 1) Build signals -------------------------------------------------
+        // 1X2 charts (0..1) + conditional chart weight
+        var chart1x2 = Read1X2FromCharts(d, homeName, awayName); // p's in 0..1
+        var wChart1x2 = (!double.IsNaN(chart1x2.Home)
+                      || !double.IsNaN(chart1x2.Draw)
+                      || !double.IsNaN(chart1x2.Away)) ? 2.0 : 0.0;
+
+        // BTTS / OTS charts (0..1) + conditional weights
+        double chartBtts = ReadTeamToScore(d, "both") / 100.0;
+        double wChartBtts = double.IsNaN(chartBtts) ? 0.0 : 2.0;
+
+        double chartOts = ReadTeamToScore(d, "only one") / 100.0;
+        double wChartOts = double.IsNaN(chartOts) ? 0.0 : 2.0;
+
+        // O/U charts (Over side only; Under is 1-Over) + conditional weights
+        double chartOU15 = ReadOverUnder(d, 1.5, true) / 100.0;
+        double wChartOU15 = double.IsNaN(chartOU15) ? 0.0 : 2.0;
+
+        double chartOU25 = ReadOverUnder(d, 2.5, true) / 100.0;
+        double wChartOU25 = double.IsNaN(chartOU25) ? 0.0 : 2.0;
+
+        double chartOU35 = ReadOverUnder(d, 3.5, true) / 100.0;
+        double wChartOU35 = double.IsNaN(chartOU35) ? 0.0 : 2.0;
+
+        // Historical signals
+        var h2h = ComputeH2H(d, homeName, awayName);             // includes 1X2 + OU + BTTS from H2H
+        var sepHome = ComputeTeamRatesFromSeparate(d, homeName);
+        var sepAway = ComputeTeamRatesFromSeparate(d, awayName);
+        var factsHome = ComputeTeamRatesFromFacts(d, homeName);
+        var factsAway = ComputeTeamRatesFromFacts(d, awayName);
+
+        // Poisson-from-facts O/U hints (0..1), shrink gamma as desired (0.85–0.95 typical)
+        double o15Facts = FactsOver(factsHome.ScoreChance, factsAway.ConcedeChance,
+                                    factsAway.ScoreChance, factsHome.ConcedeChance,
+                                    line: 1.5, gamma: 0.90);
+
+        double o25Facts = FactsOver(factsHome.ScoreChance, factsAway.ConcedeChance,
+                                    factsAway.ScoreChance, factsHome.ConcedeChance,
+                                    line: 2.5, gamma: 0.90);
+
+        double o35Facts = FactsOver(factsHome.ScoreChance, factsAway.ConcedeChance,
+                                    factsAway.ScoreChance, factsHome.ConcedeChance,
+                                    line: 3.5, gamma: 0.90);
+
+        // --- Standings-based Poisson + motivation (NEW) ----------------------
+        double wStand = 0;
+        double o15Stand = double.NaN, o25Stand = double.NaN, o35Stand = double.NaN;
+        double htsStand = double.NaN, gtsStand = double.NaN, bttsStand = double.NaN;
+        double p1Stand = double.NaN, pxStand = double.NaN, p2Stand = double.NaN;
+
+        var stCtx = TryReadStandings(d, homeName, awayName);
+        if (stCtx is not null)
         {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            return JsonSerializer.Deserialize<DataSnapshot>(json);
+            // Pressure: relegation/Europe (top tier guess) scaled by time & gaps
+            double pressureHome = 0, pressureAway = 0;
+            int seasonMatches = (stCtx.Rows.Count == 18) ? 34 : 38;
+            bool topTier = true; // if you can detect tiers, set appropriately
+            var rules = GuessRules(stCtx.Rows.Count, topTier);
+
+            int safeRank = Math.Max(1, stCtx.Rows.Count - rules.RelegationSlots);
+            int safePts = stCtx.Rows.FirstOrDefault(r => r.Position == safeRank)?.Points ?? stCtx.Home.Points;
+
+            pressureHome = PressureScore(stCtx.Home.Position, stCtx.Home.Points, stCtx.Home.Matches,
+                                         rules, targetUp: true, targetRank: safeRank, targetPts: safePts,
+                                         seasonMatches: seasonMatches);
+            pressureAway = PressureScore(stCtx.Away.Position, stCtx.Away.Points, stCtx.Away.Matches,
+                                         rules, targetUp: true, targetRank: safeRank, targetPts: safePts,
+                                         seasonMatches: seasonMatches);
+
+            // Lambdas from standings (attack/defense) + apply motivation multipliers
+            var (lamH0, lamA0, w) = LambdasFromStandings(stCtx, hfa: 1.10, shrink: 0.70);
+            var (attH, attA, drawM) = MotivationMultipliers(pressureHome, pressureAway);
+            double lamH = lamH0 * attH;
+            double lamA = lamA0 * attA;
+            wStand = w;
+
+            // Turn lambdas into market hints
+            o15Stand = OverFromLambda(lamH + lamA, 1.5);
+            o25Stand = OverFromLambda(lamH + lamA, 2.5);
+            o35Stand = OverFromLambda(lamH + lamA, 3.5);
+
+            htsStand = 1 - Math.Exp(-lamH);
+            gtsStand = 1 - Math.Exp(-lamA);
+            bttsStand = htsStand * gtsStand;
+
+            (p1Stand, pxStand, p2Stand) = OneXTwoFromLambdas(lamH, lamA);
+            pxStand = Clamp01(pxStand * drawM);       // soften draw if either side “must win”
+
+            // Renormalize standings 1X2 hint to a proper distribution
+            double s1x2 = p1Stand + pxStand + p2Stand;
+            if (s1x2 > 1e-9) { p1Stand /= s1x2; pxStand /= s1x2; p2Stand /= s1x2; }
         }
-        catch { return null; }
-    }
-}
 
-public sealed class TipsStore
-{
-    private readonly object _gate = new();
-    private DataSnapshot? _current;
-    public DataSnapshot? Current { get { lock (_gate) return _current; } }
-    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
-}
+        // --- 2) Derive market probabilities from signals ---------------------
 
-public sealed class TipsScraperService
-{
-    private readonly TipsStore _store;
-    public TipsScraperService([FromServices] TipsStore store) => _store = store;
-
-    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        try
+        // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
+        var p1 = Blend(new[]
         {
-            // Explicitly fetch the tips page
-            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/tips");
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+            C(chart1x2.Home,   w: wChart1x2),
+            C(h2h.PHome,       w: wSqrt(h2h.NH2H)),
+            C(Avg( sepHome.WinRate,  sepAway.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
+            C(Avg(factsHome.WinRate, factsAway.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
+            C(p1Stand,         w: wStand) // NEW
+        });
 
-            var payload = new DataPayload(html, titles, table);
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-            _store.Set(snap);
-            await TipsFiles.SaveAsync(snap);
-            return snap;
-        }
-        catch (Exception ex)
+        var px = Blend(new[]
+                {
+            C(chart1x2.Draw,   w: wChart1x2),
+            C(h2h.PDraw,       w: wSqrt(h2h.NH2H)),
+            C(Avg( sepHome.DrawRate,  sepAway.DrawRate ), w: wSqrt(sepHome.N + sepAway.N)),
+            C(Avg(factsHome.DrawRate, factsAway.DrawRate), w: wSqrt(factsHome.N + factsAway.N)),
+            C(pxStand,         w: wStand) // NEW
+        });
+
+        var p2 = Blend(new[]
         {
-            var last = _store.Current;
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-            _store.Set(snap);
-            await TipsFiles.SaveAsync(snap);
-            return snap;
-        }
-    }
-}
+            C(chart1x2.Away,   w: wChart1x2),
+            C(h2h.PAway,       w: wSqrt(h2h.NH2H)),
+            C(Avg( sepAway.WinRate,  sepHome.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
+            C(Avg(factsAway.WinRate, factsHome.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
+            C(p2Stand,         w: wStand) // NEW
+        });
+        // After the three Blend(...) assignments:
+        (p1, px, p2) = Normalize1X2(p1, px, p2);
 
-public sealed class TipsRefreshJob : BackgroundService
-{
-    private readonly TipsScraperService _svc;
-    private readonly TipsStore _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public TipsRefreshJob(TipsScraperService svc, TipsStore store)
-    {
-        _svc = svc;
-        _store = store;
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Warm from disk
-        var prev = await TipsFiles.LoadAsync();
-        if (prev is not null) _store.Set(prev);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Also tick at the top of each hour
-        _ = HourlyLoop(stoppingToken);
-
-        // Keep the 5-minute cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
+        // Initial double-chance (coherent even if standings are missing)
+        var (p1x, px2, p12) = BuildDoubleChance(p1, px, p2);
+        /*
+        // Double chance
+        var p1x = Clamp01(p1 + px);
+        var px2 = Clamp01(px + p2);
+        var p12 = Clamp01(p1 + p2);
+        */
+        // BTTS / OTS with standings hint
+        var btts = Blend(new[]
         {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunSafelyOnce(stoppingToken);
-        }
-        catch (OperationCanceledException) { }
-    }
+            C(chartBtts,                       w: wChartBtts),
+            C(h2h.PBTTS,                       w: wSqrt(h2h.NH2H)),
+            // Independence-ish: P(BTTS) ≈ P(home scores)*P(away scores)
+            C(sepHome.ScoreRate * sepAway.ScoreRate,                  w: wSqrt(sepHome.N + sepAway.N)),
+            C(factsHome.ScoreChance * factsAway.ScoreChance,          w: 1.5),
+            C(factsHome.ConcedeChance * factsAway.ConcedeChance,      w: 1.5),
+            C(bttsStand,                                              w: wStand) // NEW
+        });
 
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
+        var ots = Blend(new[]
         {
-            while (!ct.IsCancellationRequested)
+            C(chartOts,                        w: wChartOts),
+            C(h2h.POnlyOne,                    w: wSqrt(h2h.NH2H)),
+            // ≈ P(home scores)*(1-P(away scores)) + P(away scores)*(1-P(home scores))
+            C(sepHome.ScoreRate*(1-sepAway.ScoreRate) + sepAway.ScoreRate*(1-sepHome.ScoreRate),
+              w: wSqrt(sepHome.N + sepAway.N))
+            // (You can add a facts-only OTS proxy if you want; left as-is)
+        });
+
+        // HTS/GTS with standings hint
+        var hts = Blend(new[]
+        {
+            C(Avg(factsHome.ScoreChance, factsAway.ConcedeChance), w: 2),
+            C(h2h.PHomeScored,                                     w: wSqrt(h2h.NH2H)),
+            C(Avg(sepHome.ScoreRate,   sepAway.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
+            C(htsStand,                                            w: wStand) // NEW
+        });
+
+        var gts = Blend(new[]
+        {
+            C(Avg(factsAway.ScoreChance, factsHome.ConcedeChance), w: 2),
+            C(h2h.PAwayScored,                                     w: wSqrt(h2h.NH2H)),
+            C(Avg(sepAway.ScoreRate,   sepHome.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
+            C(gtsStand,                                            w: wStand) // NEW
+        });
+
+        // Over/Under totals: chart + H2H + separate + facts (2.5) + facts-Poisson + standings-Poisson
+        var o15 = Blend(new[]
+        {
+            C(chartOU15,                                     w: wChartOU15),
+            C(h2h.POver15,                                   w: wSqrt(h2h.NH2H)),
+            C(Avg(sepHome.Over15Rate, sepAway.Over15Rate),   w: wSqrt(sepHome.N + sepAway.N)),
+            C(o15Facts,                                      w: 1.3), // facts→Poisson
+            C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+        });
+        var u15 = 1 - o15;
+
+        var o25 = Blend(new[]
+        {
+            C(chartOU25,                                     w: wChartOU25),
+            C(h2h.POver25,                                   w: wSqrt(h2h.NH2H)),
+            C(Avg(sepHome.Over25Rate, sepAway.Over25Rate),   w: wSqrt(sepHome.N + sepAway.N)),
+            C(Avg(factsHome.Over25RateFacts, factsAway.Over25RateFacts), w: wSqrt(factsHome.N + factsAway.N)),
+            C(o25Facts,                                      w: 1.3), // facts→Poisson
+            C(o25Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+        });
+        var u25 = 1 - o25;
+
+        var o35 = Blend(new[]
+        {
+            C(chartOU35,                                     w: wChartOU35),
+            C(h2h.POver35,                                   w: wSqrt(h2h.NH2H)),
+            C(Avg(sepHome.Over35Rate, sepAway.Over35Rate),   w: wSqrt(sepHome.N + sepAway.N)),
+            C(o35Facts,                                      w: 1.3), // facts→Poisson
+            C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+        });
+        var u35 = 1 - o35;
+
+        // ==================== Positive-only overlay ===========================
+        // Only allow standings/motivation to push "positive" outcomes up (and draw down).
+
+        double UpFactor(double w) => Math.Min(0.35, 0.10 + 0.10 * w); // 0.10..0.30+
+
+        void UpOnly(ref double baseVal, double hint, double w)
+        {
+            if (!double.IsNaN(hint) && hint > baseVal)
             {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce(ct);
-
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
-                    await RunSafelyOnce(ct);
+                double a = UpFactor(w);
+                baseVal = Clamp01(baseVal + a * (hint - baseVal));
             }
         }
-        catch (OperationCanceledException) { }
-    }
 
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
+        void DownOnlyDraw(ref double p1v, ref double pxv, ref double p2v, double pxHintV, double w)
         {
-            await _svc.FetchAndStoreAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[tips] run failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-}
-
-// ---------- Top10 storage / service / job ----------
-public static class Top10Files
-{
-    public const string Dir  = "/var/lib/datasvc";
-    public const string File = "/var/lib/datasvc/Top10.json";
-
-    public static async Task SaveAsync(DataSnapshot snap)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
-    }
-
-    public static async Task<DataSnapshot?> LoadAsync()
-    {
-        if (!System.IO.File.Exists(File)) return null;
-        try
-        {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            return JsonSerializer.Deserialize<DataSnapshot>(json);
-        }
-        catch { return null; }
-    }
-}
-
-public sealed class Top10Store
-{
-    private readonly object _gate = new();
-    private DataSnapshot? _current;
-    public DataSnapshot? Current { get { lock (_gate) return _current; } }
-    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
-}
-
-public sealed class Top10ScraperService
-{
-    private readonly Top10Store _store;
-    public Top10ScraperService([FromServices] Top10Store store) => _store = store;
-
-    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            // Explicitly fetch the top10 page
-            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, 0);
-
-            var payload = new DataPayload(html, titles, table);
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-            _store.Set(snap);
-            await Top10Files.SaveAsync(snap);
-            return snap;
-        }
-        catch (Exception ex)
-        {
-            var last = _store.Current;
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-            _store.Set(snap);
-            await Top10Files.SaveAsync(snap);
-            return snap;
-        }
-    }
-}
-
-public sealed class Top10RefreshJob : BackgroundService
-{
-    private readonly Top10ScraperService _svc;
-    private readonly Top10Store _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public Top10RefreshJob(Top10ScraperService svc, Top10Store store)
-    {
-        _svc = svc;
-        _store = store;
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Warm from disk
-        var prev = await Top10Files.LoadAsync();
-        if (prev is not null) _store.Set(prev);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Also tick at the top of each hour
-        _ = HourlyLoop(stoppingToken);
-
-        // Keep the 5-minute cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunSafelyOnce(stoppingToken);
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
-        {
-            while (!ct.IsCancellationRequested)
+            if (!double.IsNaN(pxHintV) && pxHintV < pxv)
             {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce(ct);
-
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
-                    await RunSafelyOnce(ct);
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
-        {
-            await _svc.FetchAndStoreAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[Top10] run failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-}
-
-// ---------- LiveScores: scraper service ----------
-public sealed class LiveScoresScraperService
-{
-    private readonly LiveScoresStore _store;
-    private readonly TimeZoneInfo _tz;
-
-    public LiveScoresScraperService([FromServices] LiveScoresStore store)
-    {
-        _store = store;
-        // follow same TZ strategy as your Tips job (env TOP_OF_HOUR_TZ or local) :contentReference[oaicite:6]{index=6}
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    static string BuildUrl(DateTime localDay)
-    {
-        // Statarea typically supports date query; we try param first, fallback to plain page.
-        var iso = localDay.ToString("yyyy-MM-dd");
-        return $"https://www.statarea.com/livescore?date={iso}";
-    }
-
-    public async Task<(int Refreshed, DateTimeOffset LastUpdatedUtc)> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        int refreshed = 0;
-
-        var now = DateTimeOffset.UtcNow;
-        var localToday = TimeZoneInfo.ConvertTime(now, _tz).Date;
-        var days = Enumerable.Range(0, 4).Select(off => localToday.AddDays(-off)).ToList();
-
-        foreach (var d in days)
-        {
-            ct.ThrowIfCancellationRequested();
-            var url = BuildUrl(d);
-
-            // Reuse your hardened HTTP fetcher (adds UA, gzip/brotli, cookies, referer, etc.) :contentReference[oaicite:7]{index=7}
-            string html;
-            try
-            {
-                html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
-            }
-            catch
-            {
-                // Fallback: today without query (some sites treat "today" differently)
-                if (d == localToday)
-                    html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/livescore");
+                double a = UpFactor(w);
+                double newPx = Clamp01(pxv - a * (pxv - pxHintV));
+                double sNonDraw = p1v + p2v;
+                if (sNonDraw > 1e-9)
+                {
+                    double scale = (1.0 - newPx) / sNonDraw;
+                    p1v *= scale; p2v *= scale; pxv = newPx;
+                }
                 else
-                    throw;
-            }
-
-            var dateIso = d.ToString("yyyy-MM-dd");
-            var day = LiveScoresParser.ParseDay(html, dateIso);
-            _store.Set(day);
-            refreshed++;
-        }
-
-        // Enforce rolling window (keep exactly 4 dates)
-        var keep = days.Select(d => d.ToString("yyyy-MM-dd")).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _store.ShrinkTo(keep);
-
-        await LiveScoresFiles.SaveAsync(_store);
-        return (refreshed, DateTimeOffset.UtcNow);
-    }
-}
-
-// ---------- LiveScores: background job ----------
-public sealed class LiveScoresRefreshJob : BackgroundService
-{
-    private readonly LiveScoresScraperService _svc;
-    private readonly LiveScoresStore _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-
-    public LiveScoresRefreshJob(LiveScoresScraperService svc, LiveScoresStore store)
-    {
-        _svc = svc; _store = store;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Warm from disk
-        var prev = await LiveScoresFiles.LoadAsync();
-        if (prev is not null) _store.Import(prev.Value.days);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Keep the 5-minute cadence (same pattern you use elsewhere) :contentReference[oaicite:8]{index=8}
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunSafelyOnce(stoppingToken);
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try { await _svc.FetchAndStoreAsync(ct); }
-        catch { /* swallow; file state remains last good */ }
-        finally { _gate.Release(); }
-    }
-}
-
-
-// ---------- Background job ----------
-public sealed class ScraperService
-{
-    private readonly ResultStore _store;
-    public ScraperService( [FromServices] ResultStore store ) => _store = store;
-
-    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo();
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
-
-            var payload = new DataPayload(html, titles, table);
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-            _store.Set(snap);
-            await DataFiles.SaveAsync(snap);
-            return snap;
-        }
-        catch (Exception ex)
-        {
-            var last = _store.Current;
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-            _store.Set(snap);
-            await DataFiles.SaveAsync(snap);
-            return snap;
-        }
-    }
-}
-
-public sealed class RefreshJob : BackgroundService
-{
-    private readonly ScraperService _svc;
-    private readonly ResultStore _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public RefreshJob(ScraperService svc, ResultStore store)
-    {
-        _svc = svc; 
-        _store = store;
-        // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        var prev = await DataFiles.LoadAsync();
-        if (prev is not null) _store.Set(prev);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Kick off the hour-aligned loop in parallel
-        _ = HourlyLoop(stoppingToken);
-
-        // Keep the existing 5-minute cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-            {
-                await RunSafelyOnce(stoppingToken);
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
-        {
-            // Wait until the next top of the hour in the configured timezone
-            while (!ct.IsCancellationRequested)
-            {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce(ct);
-
-                // After the first aligned tick, continue hourly
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
                 {
-                    await RunSafelyOnce(ct);
+                    pxv = newPx;
                 }
             }
         }
-        catch (OperationCanceledException) { }
-    }
 
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        // If another run is in progress (e.g., 5-min tick collides with hourly), skip this one
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
+        // Over lines: push up only if standings Poisson suggests higher totals
+        UpOnly(ref o15, o15Stand, wStand);
+        UpOnly(ref o25, o25Stand, wStand);
+        UpOnly(ref o35, o35Stand, wStand);
+        // Under complements
+        u15 = 1 - o15; u25 = 1 - o25; u35 = 1 - o35;
+
+        // HTS / GTS / BTTS: push up only
+        UpOnly(ref hts, htsStand, wStand);
+        UpOnly(ref gts, gtsStand, wStand);
+        UpOnly(ref btts, bttsStand, wStand);
+
+        // Draw: push DOWN only; redistribute mass to 1 and 2
+        DownOnlyDraw(ref p1, ref px, ref p2, pxStand, wStand);
+
+        (p1, px, p2) = Normalize1X2(p1, px, p2);
+
+        // Rebuild DC from complements to stay consistent
+        (p1x, px2, p12) = BuildDoubleChance(p1, px, p2);
+
+        /*
+        // Rebuild double-chance from updated 1X2
+        p1x = Clamp01(p1 + px);
+        px2 = Clamp01(px + p2);
+        p12 = Clamp01(p1 + p2);
+        */
+
+        // Half-time O/U not reliably present in your feed -> NaN
+        double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
+        double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
+        // === DC '12' filters & pumps (no feedback into 1X2/DC normalization) ===
+        double dec1 = Dc12FilterPx(px, p2);
+        double dec2 = Dc12FilterHomeDom(p1, p2);
+        double dec3 = Dc12FilterAwayDom(p1, p2);
+        double totalDec = Math.Clamp(dec1 + dec2 + dec3, 0.0, 0.20);
+        double p12_adj = Clamp01(p12 * (1.0 - totalDec));
+
+        // Presentation-only pumps tied to the filters (do not alter p1/px/p2 used for DC)
+        double p1_disp = Clamp01(p1 * (1.0 + dec1 + dec2));
+        double px_disp = Clamp01(px * (1.0 + dec1));
+        double p2_disp = Clamp01(p2 * (1.0 + dec3));
+        double hts_disp = Clamp01(hts * (1.0 + dec1 + dec2));
+        double gts_disp = Clamp01(gts * (1.0 + dec3));
+
+        // Right before the return at the end of Analyze(d, home, away):
+        var results = new List<ProposedResult>
         {
-            await _svc.FetchAndStoreAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[refresh] run failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-}
+            new("1", p1_disp), new("X", px_disp), new("2", p2_disp),
+            new("1X",  p1x), new("X2", px2), new("12", p12_adj),
 
-public class GetStartupMainPageFullInfo2024
-{
-    static readonly CookieContainer Cookies = new();
-    static readonly HttpClient http = new(new HttpClientHandler {
-        AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate | DecompressionMethods.Brotli,
-        AllowAutoRedirect = true,
-        UseCookies = true,
-        CookieContainer = Cookies
-    }) { Timeout = TimeSpan.FromSeconds(60) };
+            new("BTS", btts), new("OTS", ots),
+            new("HTS", hts_disp),  new("GTS", gts_disp),
 
-    public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
-    {
-        url ??= Environment.GetEnvironmentVariable("DATA_SOURCE_URL")
-                ?? "https://www.statarea.com/predictions";
+            new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
+            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),
 
-        var req = new HttpRequestMessage(HttpMethod.Get, url);
-        req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
-        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
-        req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-        req.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
-        req.Headers.Referrer = new Uri("https://www.statarea.com/");
-
-        using var res = await http.SendAsync(req);
-        res.EnsureSuccessStatusCode();
-        return await res.Content.ReadAsStringAsync();
-    }
-}
-
-public static class GetStartupMainTitlesAndHrefs2024
-{
-    public static ObservableCollection<TitlesAndHrefs> GetStartupMainTitlesAndHrefs(string htmlContent)
-    {
-        try
-        {
-            var website = new HtmlDocument();
-            website.LoadHtml(htmlContent);
-
-            var titlesAndhrefs = new ObservableCollection<TitlesAndHrefs>();
-            var topbar = website.DocumentNode.Descendants("div")
-                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "navigator")?
-                .Descendants("div")
-                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "buttons")?
-                .Elements("a")
-                .ToList();
-
-            if (topbar != null)
-            {
-                foreach (var item in topbar)
-                {
-                    var titleAndHref = new TitlesAndHrefs
-			{
-			    Dates = item.InnerText,
-			    Href  = item.Attributes["href"].Value
-			};
-
-                    titlesAndhrefs.Add(titleAndHref);
-                }
-            }
-
-            return titlesAndhrefs;
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine("GetStartupMainTitlesAndHrefs2024 error: " + ex.Message);
-            throw new Exception("Couldn't get GetStartupMainTitlesAndHrefs2024", ex.InnerException);
-        }
-    }
-}
-
-public static class GetStartupMainTableDataGroup2024
-{
-    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, int contrainerSkip = 1) // 0 for Top10
-    {
-        try
-        {
-            var website = new HtmlDocument();
-            website.LoadHtml(htmlContent);
-
-            var tableDataGroup = new ObservableCollection<TableDataGroup>();
-
-            var matchesGroups = website.DocumentNode.Descendants("div")
-                .FirstOrDefault(o => o.GetAttributeValue("class", "") == "datacotainer full")?
-                .Descendants("div")
-                .Where(o => o.GetAttributeValue("class", "") == "predictions")
-                .Skip(contrainerSkip)
-                .FirstOrDefault()?
-                .Elements("div")
-                .Where(o => o.Attributes["id"] != null);
-
-            if (matchesGroups != null)
-            {
-                foreach (var group in matchesGroups)
-                {
-                    var items = new ObservableCollection<TableDataItem>();
-
-                    var body = group.Descendants("div")
-                        .FirstOrDefault(o => o.GetAttributeValue("class", "") == "body");
-
-                    var matchesItems = body?.Elements("div")
-                        .Where(o => o.GetAttributeValue("class", "") == "match");
-
-                    if (matchesItems != null)
-                    {
-                        foreach (var matchItem in matchesItems)
-                        {
-                            var time = matchItem.Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "date")?.InnerText;
-
-                            var teamone = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?
-                                .Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?.InnerText;
-
-                            var hrefs = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?
-                                .Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?
-                                .Element("a")?.Attributes["href"].Value;
-
-                            if (hrefs != null) hrefs = hrefs.Replace(" ", "%20");
-
-                            var teamonescore = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "hostteam")?.FirstChild?.InnerText;
-
-                            var teamtwo = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "guestteam")?
-                                .Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?.InnerText;
-
-                            var teamtwoscore = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "guestteam")?.FirstChild?.InnerText;
-
-                            var tip = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "tip")?
-                                .Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("value"));
-
-                            var backgroundtipcolor = Colors.Black;
-                            if (tip != null)
-                            {
-                                var tipClass = tip.Attributes["class"].Value;
-                                if (tipClass == "value success") backgroundtipcolor = Colors.Green;
-                                else if (tipClass == "value failed") backgroundtipcolor = Colors.Red;
-                                else backgroundtipcolor = Colors.Black;
-                            }
-
-                            var likebutton = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "like");
-
-                            var likepositive = likebutton?.Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likepositive")?
-                                .Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "value")?.InnerText;
-
-                            var likenegative = likebutton?.Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likenegative")?
-                                .Elements("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "value")?.InnerText;
-
-                            const string likebuttonimage = @"https://cdn0.iconfinder.com/data/icons/essentials-solid-glyphs-vol-1/100/Facebook-Like-Good-512.png";
-                            const string dislikebuttonimage = @"https://cdn3.iconfinder.com/data/icons/wpzoom-developer-icon-set/500/139-512.png";
-
-                            var likesandvotes = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "inforow")?
-                                .FirstChild?
-                                .Elements("div")
-                                .Where(a => a.GetAttributeValue("class", "").Contains("coefbox")).ToList();
-
-                            if (likesandvotes != null && likesandvotes.Count >= 11)
-                            {
-                                items.Add(new TableDataItem(
-                                    "flag",
-                                    backgroundtipcolor,
-                                    time ?? "",
-                                    renameTeam.renameTeamNameToFitDisplayLabel(teamone ?? ""),
-                                    teamonescore,
-                                    teamtwoscore,
-                                    renameTeam.renameTeamNameToFitDisplayLabel(teamtwo ?? ""),
-                                    tip?.InnerText,
-                                    likebuttonimage,
-                                    dislikebuttonimage,
-                                    likepositive,
-                                    likenegative,
-                                    likesandvotes[0].InnerText,
-                                    likesandvotes[1].InnerText,
-                                    likesandvotes[2].InnerText,
-                                    likesandvotes[3].InnerText,
-                                    likesandvotes[4].InnerText,
-                                    likesandvotes[5].InnerText,
-                                    likesandvotes[6].InnerText,
-                                    likesandvotes[7].InnerText,
-                                    likesandvotes[8].InnerText,
-                                    likesandvotes[9].InnerText,
-                                    likesandvotes[10].InnerText,
-                                    "Beta",
-                                    hrefs,
-                                    Colors.LightGray
-                                ));
-                            }
-                        }
-
-                        var groupImage = group.Descendants("img").FirstOrDefault()?.Attributes["src"].Value;
-                        var groupName = group.Descendants("div").FirstOrDefault(o => o.GetAttributeValue("class", "") == "name")?.InnerText.Trim();
-
-                        if (groupImage != null && groupName != null)
-                        {
-                            tableDataGroup.Add(new TableDataGroup(groupImage, groupName, "TIP", items));
-                        }
-                    }
-                }
-            }
-
-            return tableDataGroup;
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine("GetStartupMainTableDataGroup2024 error: " + ex.Message);
-            throw new Exception("Couldn't get GetStartupMainTableDataGroup2024", ex);
-        }
-    }
-}
-// ---------- NEW: Details models, store, files, scraper, job ----------
-// ---------- LiveScores: models, storage, files ----------
-public record LiveScoreItem(
-    string Time,
-    string Status,
-    string HomeTeam,
-    string HomeGoals,
-    string AwayGoals,
-    string AwayTeam
-);
-
-public record LiveScoreGroup(
-    string Competition,
-    List<LiveScoreItem> Matches
-);
-
-public record LiveScoreDay(
-    string Date,                 // "yyyy-MM-dd" in Europe/Brussels (server-local is ok if TZ is set)
-    List<LiveScoreGroup> Groups
-);
-
-public sealed class LiveScoresStore
-{
-    private readonly ConcurrentDictionary<string, LiveScoreDay> _days = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _saveGate = new();
-    public DateTimeOffset? LastSavedUtc { get; private set; }
-
-    public void Set(LiveScoreDay day) => _days[day.Date] = day;
-    public LiveScoreDay? Get(string date) => _days.TryGetValue(date, out var d) ? d : null;
-
-    public (IReadOnlyList<LiveScoreDay> items, DateTimeOffset now) Export()
-        => (_days.Values.OrderByDescending(x => x.Date).ToList(), DateTimeOffset.UtcNow);
-
-    public void Import(IEnumerable<LiveScoreDay> items)
-    {
-        _days.Clear();
-        foreach (var d in items) _days[d.Date] = d;
-    }
-
-    public IReadOnlyCollection<string> Dates() => _days.Keys.OrderByDescending(x => x).ToList();
-    public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
-
-    /// Keep only the requested dates (by exact string key)
-    public int ShrinkTo(IReadOnlyCollection<string> keep)
-    {
-        var set = new HashSet<string>(keep, StringComparer.OrdinalIgnoreCase);
-        int removed = 0;
-        foreach (var key in _days.Keys)
-        {
-            if (!set.Contains(key))
-            {
-                if (_days.TryRemove(key, out _)) removed++;
-            }
-        }
-        return removed;
-    }
-}
-
-public static class LiveScoresFiles
-{
-    public const string File = "/var/lib/datasvc/livescores.json";
-
-    public static async Task SaveAsync(LiveScoresStore store)
-    {
-        Directory.CreateDirectory(Path.GetDirectoryName(File)!);
-        var (items, now) = store.Export();
-        var envelope = new
-        {
-            lastSavedUtc = now,
-            days = items
+            new("HTO 1.5", hto15), new("HTO 2.5", hto25), new("HTO 3.5", hto35),
+            new("HTU 1.5", htu15), new("HTU 2.5", htu25), new("HTU 3.5", htu35),
         };
 
-        var json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
+        // Hide empty markets entirely
+        results = results.Where(r => !double.IsNaN(r.Probability)).ToList();
 
-        try
-		{
-		    var gzPath = File + ".gz";
-		    await using var input = System.IO.File.OpenRead(File);
-		    await using var output = System.IO.File.Create(gzPath);
-		    using var gz = new System.IO.Compression.GZipStream(
-		        output,
-		        System.IO.Compression.CompressionLevel.Fastest,
-		        leaveOpen: false
-		    );
-		    await input.CopyToAsync(gz);
-		}
-		catch
-		{
-		    // Non-fatal: if gzip fails, the plain JSON is still available.
-		}
-
-        store.MarkSaved(now);
+        return results;
     }
 
-    public static async Task<(List<LiveScoreDay> days, DateTimeOffset? lastSavedUtc)?> LoadAsync()
+
+    // ====================== helpers ======================
+    // Keep it near the other helpers
+    private static (double p1, double px, double p2) Normalize1X2(double p1, double px, double p2)
     {
-        if (!System.IO.File.Exists(File)) return null;
-        try
+        // treat NaNs as 0 in the sum, but preserve them for output if everything is NaN
+        double s = 0;
+        bool v1 = !double.IsNaN(p1), vx = !double.IsNaN(px), v2 = !double.IsNaN(p2);
+        if (v1) s += p1;
+        if (vx) s += px;
+        if (v2) s += p2;
+
+        if (s <= 1e-12)
+            return (double.NaN, double.NaN, double.NaN);
+
+        double scale = 1.0 / s;
+        double n1 = v1 ? Clamp01(p1 * scale) : double.NaN;
+        double nx = vx ? Clamp01(px * scale) : double.NaN;
+        double n2 = v2 ? Clamp01(p2 * scale) : double.NaN;
+
+        // if any was NaN, re-fill missing piece so total is ~1
+        int cnt = (v1 ? 1 : 0) + (vx ? 1 : 0) + (v2 ? 1 : 0);
+        if (cnt == 2)
         {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            using var doc = JsonDocument.Parse(json);
-            var root = doc.RootElement;
+            if (!v1 && !double.IsNaN(nx) && !double.IsNaN(n2)) n1 = Clamp01(1 - nx - n2);
+            if (!vx && !double.IsNaN(n1) && !double.IsNaN(n2)) nx = Clamp01(1 - n1 - n2);
+            if (!v2 && !double.IsNaN(n1) && !double.IsNaN(nx)) n2 = Clamp01(1 - n1 - nx);
+        }
 
-            var last = root.TryGetProperty("lastSavedUtc", out var tsEl) && tsEl.ValueKind is not JsonValueKind.Null
-                ? tsEl.GetDateTimeOffset()
-                : (DateTimeOffset?)null;
+        return (n1, nx, n2);
+    }
 
-            var days = new List<LiveScoreDay>();
-            if (root.TryGetProperty("days", out var daysEl) && daysEl.ValueKind == JsonValueKind.Array)
+    private static (double p1x, double px2, double p12) BuildDoubleChance(double p1, double px, double p2)
+    {
+        // Prefer complements to eliminate rounding drift
+        // If something is NaN, fall back to sums where possible.
+        double one(double x) => double.IsNaN(x) ? double.NaN : x;
+        double p1x = !double.IsNaN(p2) ? Clamp01(1 - p2) : (double.IsNaN(p1) || double.IsNaN(px) ? double.NaN : Clamp01(p1 + px));
+        double px2 = !double.IsNaN(p1) ? Clamp01(1 - p1) : (double.IsNaN(px) || double.IsNaN(p2) ? double.NaN : Clamp01(px + p2));
+        double p12 = !double.IsNaN(px) ? Clamp01(1 - px) : (double.IsNaN(p1) || double.IsNaN(p2) ? double.NaN : Clamp01(p1 + p2));
+        return (p1x, px2, p12);
+    }
+
+
+    private static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
+    private static double AvgOld(double a, double b) => (a + b) / 2.0;
+    // Replace the current Avg
+    private static double Avg(double a, double b)
+    {
+        bool aOk = !double.IsNaN(a);
+        bool bOk = !double.IsNaN(b);
+        if (aOk && bOk) return (a + b) / 2.0;
+        if (aOk) return a;
+        if (bOk) return b;
+        return double.NaN;
+    }
+
+    private static double wSqrt(int n) => Math.Sqrt(Math.Max(0, n)); // adaptive weight
+
+    private sealed record Contrib(double P, double W);
+    private static Contrib C(double p, double w) => new(Clamp01(p), w);
+    private static double Blend(IEnumerable<Contrib> parts)
+    {
+        double sumW = 0, sumPW = 0;
+        foreach (var (p, w) in parts.Where(x => !double.IsNaN(x.P) && x.W > 0))
+        {
+            sumPW += p * w;
+            sumW += w;
+        }
+        return sumW <= 0 ? double.NaN : Clamp01(sumPW / sumW);
+    }
+
+    // ---------- CHART READS ----------
+    private static (double Home, double Draw, double Away) Read1X2FromCharts(DetailsItemDto d, string home, string away)
+    {
+        double? c1_home = ReadChartPercent(d, "1 X 2", "HalfContainer1", home);
+        double? c1_draw = ReadChartPercent(d, "1 X 2", "HalfContainer1", "draw");
+        double? c1_away = ReadChartPercent(d, "1 X 2", "HalfContainer1", "opponent");
+
+        double? c2_home = ReadChartPercent(d, "1 X 2", "HalfContainer2", "opponent");
+        double? c2_draw = ReadChartPercent(d, "1 X 2", "HalfContainer2", "draw");
+        double? c2_away = ReadChartPercent(d, "1 X 2", "HalfContainer2", away);
+
+        double homeP = AvgPct(c1_home, c2_home);
+        double drawP = AvgPct(c1_draw, c2_draw);
+        double awayP = AvgPct(c1_away, c2_away);
+
+        return (homeP / 100.0, drawP / 100.0, awayP / 100.0);
+    }
+
+    private static double ReadTeamToScore(DetailsItemDto d, string item)
+    {
+        var c1 = ReadChartPercent(d, "Team to score", "HalfContainer1", item);
+        var c2 = ReadChartPercent(d, "Team to score", "HalfContainer2", item);
+        return AvgPct(c1, c2);
+    }
+
+    private static double ReadOverUnder(DetailsItemDto d, double line, bool wantOver)
+    {
+        string title = $"Over/under {line.ToString(CultureInfo.InvariantCulture)} for all goals in matches";
+        string item = wantOver ? "over" : "under";
+        var c1 = ReadChartPercent(d, title, "HalfContainer1", item);
+        var c2 = ReadChartPercent(d, title, "HalfContainer2", item);
+        return AvgPct(c1, c2);
+    }
+
+    private static double FactsOver(double pScoreHome, double pConcedeAway,
+                            double pScoreAway, double pConcedeHome,
+                            double line, double gamma = 0.9)
+    {
+        // If any input is missing, skip this term
+        if (double.IsNaN(pScoreHome) || double.IsNaN(pConcedeAway) ||
+            double.IsNaN(pScoreAway) || double.IsNaN(pConcedeHome))
+            return double.NaN;
+
+        return OverFromFacts(pScoreHome, pConcedeAway, pScoreAway, pConcedeHome, line, gamma);
+    }
+
+    static double OverFromFacts(double pScoreHome, double pConcedeAway,
+                        double pScoreAway, double pConcedeHome,
+                        double line, double gamma = 0.9)
+    {
+        double pH = Clamp01((pScoreHome + pConcedeAway) / 2.0);
+        double pA = Clamp01((pScoreAway + pConcedeHome) / 2.0);
+
+        double lamH = -Math.Log(Math.Max(1e-9, 1 - pH));
+        double lamA = -Math.Log(Math.Max(1e-9, 1 - pA));
+        double lamT = gamma * (lamH + lamA);
+
+        int k = line switch { 1.5 => 1, 2.5 => 2, 3.5 => 3, 0.5 => 0, _ => (int)Math.Floor(line) };
+        double cdf = 0.0;
+        double term = Math.Exp(-lamT);
+        for (int i = 0; i <= k; i++)
+        {
+            if (i > 0) term *= lamT / i;
+            cdf += term;
+        }
+        return Clamp01(1.0 - cdf);
+    }
+
+    private static double AvgPctOld(double? a, double? b)
+    {
+        var xs = new[] { a, b }.Where(v => v.HasValue).Select(v => v!.Value).ToArray();
+        if (xs.Length == 0) return 0;
+        return xs.Average();
+    }
+    // Replace the current AvgPct
+    private static double AvgPct(double? a, double? b)
+    {
+        var xs = new[] { a, b }.Where(v => v.HasValue).Select(v => v!.Value).ToArray();
+        if (xs.Length == 0) return double.NaN;   // was 0 -> NaN so Blend ignores it
+        return xs.Average();
+    }
+
+
+    private static double? ReadChartPercent(DetailsItemDto d, string title, string halfContainerId, string itemName)
+    {
+        if (d?.BarCharts == null) return null;
+        var chart = d.BarCharts.FirstOrDefault(c =>
+            c.Title?.Equals(title, StringComparison.OrdinalIgnoreCase) == true &&
+            c.HalfContainerId?.Equals(halfContainerId, StringComparison.OrdinalIgnoreCase) == true);
+
+        var item = chart?.Items?.FirstOrDefault(i =>
+            i.Name?.Equals(itemName, StringComparison.OrdinalIgnoreCase) == true);
+
+        return item?.Percentage;
+    }
+
+    // ---------- H2H AGGREGATION ----------
+    private sealed record H2HStats(
+        int NH2H,
+        double PHome, double PDraw, double PAway,
+        double POver15, double POver25, double POver35,
+        double PBTTS, double POnlyOne,
+        double PHomeScored, double PAwayScored
+    );
+
+    private static H2HStats ComputeH2H(DetailsItemDto d, string home, string away)
+    {
+        var matches = d?.MatchDataBetween?.Matches ?? new List<MatchBetweenItemDto>();
+        int n = 0, hW = 0, dW = 0, aW = 0, over15 = 0, over25 = 0, over35 = 0, btts = 0, onlyOne = 0, hScored = 0, aScored = 0;
+
+        foreach (var m in matches)
+        {
+            if (!TryInt(m.HostGoals, out var hg) || !TryInt(m.GuestGoals, out var gg)) continue;
+            string host = m.HostTeam ?? "", guest = m.GuestTeam ?? "";
+            if (!(SameTeam(host, home) && SameTeam(guest, away)) &&
+                !(SameTeam(host, away) && SameTeam(guest, home))) continue;
+
+            n++;
+            int total = hg + gg;
+            if (hg > gg) { if (SameTeam(host, home)) hW++; else aW++; }
+            else if (hg < gg) { if (SameTeam(guest, home)) hW++; else aW++; }
+            else dW++;
+
+            if (total > 1) over15++;
+            if (total > 2) over25++;
+            if (total > 3) over35++;
+
+            bool hs = (SameTeam(host, home) ? hg : gg) > 0;
+            bool as_ = (SameTeam(host, home) ? gg : hg) > 0;
+            if (hs) hScored++;
+            if (as_) aScored++;
+
+            if (hg > 0 && gg > 0) btts++;
+            if ((hg > 0) ^ (gg > 0)) onlyOne++;
+        }
+
+        double toPOld(int x) => n == 0 ? 0 : (double)x / n;
+        // In ComputeH2H, replace the local toP:
+        double toP(int x) => n == 0 ? double.NaN : (double)x / n;  // was 0
+
+        return new H2HStats(
+            n,
+            toP(hW), toP(dW), toP(aW),
+            toP(over15), toP(over25), toP(over35),
+            toP(btts), toP(onlyOne),
+            toP(hScored), toP(aScored)
+        );
+    }
+
+    // ---------- SEPARATE MATCHES + FACTS ----------
+    private sealed record TeamRates(
+        int N,
+        double WinRate, double DrawRate, double LossRate,
+        double ScoreRate, double ConcedeRate,
+        double Over15Rate, double Over25Rate, double Over35Rate,
+        double Over25RateFacts, double ScoreChance, double ConcedeChance
+    );
+
+    private static TeamRates ComputeTeamRatesFromSeparate(DetailsItemDto d, string team)
+    {
+        var all = d?.RecentMatchesSeparate?.Matches ?? new List<MatchBetweenItemDto>();
+        int n = 0, wins = 0, draws = 0, losses = 0, scored = 0, conceded = 0, ov15 = 0, ov25 = 0, ov35 = 0;
+
+        foreach (var m in all)
+        {
+            if (!IsTeamInMatch(m, team)) continue;
+            if (!TryInt(m.HostGoals, out var hg) || !TryInt(m.GuestGoals, out var gg)) continue;
+
+            bool teamIsHost = SameTeam(m.HostTeam, team);
+            int forG = teamIsHost ? hg : gg;
+            int agG = teamIsHost ? gg : hg;
+
+            n++;
+            if (forG > agG) wins++; else if (forG == agG) draws++; else losses++;
+            if (forG > 0) scored++;
+            if (agG > 0) conceded++;
+            int total = hg + gg;
+            if (total > 1) ov15++;
+            if (total > 2) ov25++;
+            if (total > 3) ov35++;
+        }
+
+        double toPOld(int x) => n == 0 ? 0 : (double)x / n;
+        // In ComputeTeamRatesFromSeparate, replace the local toP:
+        double toP(int x) => n == 0 ? double.NaN : (double)x / n;  // was 0
+
+        return new TeamRates(
+            N: n,
+            WinRate: toP(wins), DrawRate: toP(draws), LossRate: toP(losses),
+            ScoreRate: toP(scored), ConcedeRate: toP(conceded),
+            Over15Rate: toP(ov15), Over25Rate: toP(ov25), Over35Rate: toP(ov35),
+            Over25RateFacts: double.NaN, // filled by facts path
+            ScoreChance: double.NaN,
+            ConcedeChance: double.NaN
+        );
+    }
+
+    private static TeamRates ComputeTeamRatesFromFacts(DetailsItemDto d, string team)
+    {
+        var t = d?.TeamsStatistics?.FirstOrDefault(x => SameTeam(x.TeamName, team));
+        if (t?.FactItems == null) return new TeamRates(0, 0, 0, 0, 0, 0, 0, 0, 0, double.NaN, double.NaN, double.NaN);
+
+        int wins = (int?)t.FactItems.FirstOrDefault(f => f.Label?.StartsWith("Number of", StringComparison.OrdinalIgnoreCase) == true &&
+                                                            f.Label.Contains("wins", StringComparison.OrdinalIgnoreCase))?.Value ?? 0;
+        int draws = (int?)t.FactItems.FirstOrDefault(f => f.Label?.StartsWith("Number of", StringComparison.OrdinalIgnoreCase) == true &&
+                                                            f.Label.Contains("draws", StringComparison.OrdinalIgnoreCase))?.Value ?? 0;
+        int losses = (int?)t.FactItems.FirstOrDefault(f => f.Label?.StartsWith("Number of", StringComparison.OrdinalIgnoreCase) == true &&
+                                                            f.Label.Contains("loses", StringComparison.OrdinalIgnoreCase))?.Value ?? 0;
+        int n = Math.Max(0, wins + draws + losses);
+
+        int over25 = (int?)t.FactItems.FirstOrDefault(f => f.Label?.Contains("Matches over 2.5 goals", StringComparison.OrdinalIgnoreCase) == true)?.Value ?? 0;
+        int under25 = (int?)t.FactItems.FirstOrDefault(f => f.Label?.Contains("Matches under 2.5 goals", StringComparison.OrdinalIgnoreCase) == true)?.Value ?? 0;
+
+        double scoreChance = (double?)t.FactItems.FirstOrDefault(f => f.Label?.Equals("Chance to score goal next match", StringComparison.OrdinalIgnoreCase) == true)?.Value ?? double.NaN;
+        double concedeChance = (double?)t.FactItems.FirstOrDefault(f => f.Label?.Equals("Chance to conceded goal next match", StringComparison.OrdinalIgnoreCase) == true)?.Value ?? double.NaN;
+
+        double toPOld(int x) => n == 0 ? 0 : (double)x / n;
+        double over25RateFactsOlD = (n == 0) ? double.NaN : (double)over25 / Math.Max(1, over25 + under25);
+        // In ComputeTeamRatesFromFacts, replace both spots:
+        double toP(int x) => n == 0 ? double.NaN : (double)x / n;  // Win/Draw/Loss rates
+        double over25RateFacts = (over25 + under25) == 0 ? double.NaN : (double)over25 / (over25 + under25);
+
+
+        return new TeamRates(
+            N: n,
+            WinRate: toP(wins), DrawRate: toP(draws), LossRate: toP(losses),
+            ScoreRate: double.IsNaN(scoreChance) ? double.NaN : Clamp01(scoreChance / 100.0), // optional mapping
+            ConcedeRate: double.IsNaN(concedeChance) ? double.NaN : Clamp01(concedeChance / 100.0), // optional mapping
+            Over15Rate: double.NaN, Over25Rate: double.NaN, Over35Rate: double.NaN,
+            Over25RateFacts: over25RateFacts,
+            ScoreChance: double.IsNaN(scoreChance) ? double.NaN : Clamp01(scoreChance / 100.0),
+            ConcedeChance: double.IsNaN(concedeChance) ? double.NaN : Clamp01(concedeChance / 100.0)
+        );
+    }
+
+    private static bool IsTeamInMatch(MatchBetweenItemDto m, string team)
+        => SameTeam(m.HostTeam, team) || SameTeam(m.GuestTeam, team);
+
+    private static bool SameTeam(string? a, string? b)
+    {
+        static string N(string s)
+        {
+            s = (s ?? "").Trim().ToLowerInvariant();
+            var sb = new StringBuilder(s.Length);
+            foreach (char ch in s)
+                if (!char.IsPunctuation(ch)) sb.Append(ch == ' ' ? ' ' : ch);
+            return string.Join(' ', sb.ToString().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries));
+        }
+        return N(a ?? "") == N(b ?? "");
+    }
+
+    private static bool TryInt(object? val, out int num)
+    {
+        if (val is int i) { num = i; return true; }
+        if (val is string s && int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var j))
+        { num = j; return true; }
+        num = 0; return false;
+    }
+
+    // ====================== Standings + Motivation helpers ======================
+
+    // Lightweight league rules guess (you can swap with a concrete per-league map)
+    public sealed record LeagueRules(
+        int TotalTeams,
+        int RelegationSlots,
+        (int from, int to)? PromoPlayoff,
+        int AutoPromoSlots = 0,
+        int EuropeSlots = 0
+    );
+
+    static LeagueRules GuessRules(int totalTeams, bool topTier)
+    {
+        if (topTier && totalTeams == 20) return new(totalTeams, RelegationSlots: 3, PromoPlayoff: null, AutoPromoSlots: 0, EuropeSlots: 4);
+        if (!topTier && totalTeams == 24) return new(totalTeams, RelegationSlots: 3, PromoPlayoff: (3, 6), AutoPromoSlots: 2, EuropeSlots: 0);
+        return new(totalTeams, RelegationSlots: Math.Max(2, totalTeams / 10), PromoPlayoff: null, AutoPromoSlots: 0, EuropeSlots: topTier ? 4 : 0);
+    }
+
+    static double PressureScore(int teamRank, int teamPts, int matchesPlayed,
+                                LeagueRules rules, bool targetUp, int targetRank, int targetPts,
+                                int seasonMatches = 38)
+    {
+        int remaining = Math.Max(0, seasonMatches - matchesPlayed);
+        int rankGap = targetUp ? Math.Max(0, teamRank - targetRank) : Math.Max(0, targetRank - teamRank);
+        int ptsGap = Math.Max(0, targetUp ? (targetPts - teamPts) : (teamPts - targetPts));
+
+        double r = rankGap / Math.Max(1.0, rules.TotalTeams - 1);
+        double p = ptsGap / Math.Max(1.0, 3 * remaining + 1);
+        double time = 1.0 - (double)remaining / Math.Max(1, seasonMatches);
+
+        return Math.Max(0, Math.Min(1, 0.5 * r + 0.5 * p)) * (0.5 + 0.5 * time);
+    }
+
+    // Return (attackMultHome, attackMultAway, drawMult)
+    static (double attH, double attA, double drawMult) MotivationMultipliers(double pressureHome, double pressureAway)
+    {
+        double baseBoost = 0.10; // up to +10% attack for each side
+        double attH = 1.0 + baseBoost * pressureHome;
+        double attA = 1.0 + baseBoost * pressureAway;
+
+        double drawCut = 0.10 * Math.Max(pressureHome, pressureAway); // up to -10% draw
+        double drawMult = 1.0 - drawCut;
+
+        return (attH, attA, drawMult);
+    }
+
+    // Reflection-safe standings reader (handles TeamStandings.Standings with Overall.GoalsScored/Conceded)
+    private sealed record StandRowProxy(int Position, string TeamName, int Matches, int Points, int GF, int GA);
+    private sealed record StandingsContext(StandRowProxy Home, StandRowProxy Away, List<StandRowProxy> Rows, double LeagueMu);
+
+    private static StandingsContext? TryReadStandings(DetailsItemDto d, string homeName, string awayName)
+    {
+        object? ts = GetProp(d, "TeamStandings") ?? GetProp(d, "teamStandings");
+        if (ts is null) return null;
+
+        var rowsObj = GetProp(ts, "Standings") ?? GetProp(ts, "standings");
+        if (rowsObj is not System.Collections.IEnumerable list) return null;
+
+        var rows = new List<StandRowProxy>();
+        foreach (var r in list)
+        {
+            bool isHeader = GetBool(r, "IsHeader");
+            string team = (GetString(r, "TeamName") ?? "").Trim();
+            if (isHeader || string.IsNullOrWhiteSpace(team)) continue;
+
+            int pos = GetInt(r, "Position");
+            int matches = GetInt(r, "Matches");
+            int points = GetInt(r, "Points");
+
+            var overall = GetProp(r, "Overall");
+            int gf = overall is null ? 0 : GetInt(overall, "GoalsScored");
+            int ga = overall is null ? 0 : GetInt(overall, "GoalsConceded");
+
+            rows.Add(new StandRowProxy(pos, team, matches, points, gf, ga));
+        }
+
+        if (rows.Count == 0) return null;
+
+        var home = rows.FirstOrDefault(x => SameTeam(x.TeamName, homeName));
+        var away = rows.FirstOrDefault(x => SameTeam(x.TeamName, awayName));
+        if (home is null || away is null) return null;
+
+        double sumGF = rows.Sum(r => (double)r.GF);
+        double sumP = rows.Sum(r => (double)Math.Max(0, r.Matches));
+        double mu = (sumGF > 0 && sumP > 0) ? sumGF / sumP : 1.30; // team goals/match (fallback)
+
+        return new StandingsContext(home, away, rows, mu);
+    }
+
+    private static object? GetProp(object obj, string name) => obj.GetType().GetProperty(name)?.GetValue(obj);
+    private static int GetInt(object obj, string name) => int.TryParse(Convert.ToString(GetProp(obj, name)), out var v) ? v : 0;
+    private static string? GetString(object obj, string name) => Convert.ToString(GetProp(obj, name));
+    private static bool GetBool(object obj, string name) => bool.TryParse(Convert.ToString(GetProp(obj, name)), out var b) && b;
+
+    // Build lambdas from standings attack/defense multipliers + HFA, with shrinkage
+    private static (double lamH, double lamA, double weight) LambdasFromStandings(StandingsContext s, double hfa = 1.10, double shrink = 0.70)
+    {
+        double mu = Math.Max(0.4, Math.Min(2.0, s.LeagueMu)); // keep sane (team goals/match)
+
+        double GFh = (double)s.Home.GF / Math.Max(1, s.Home.Matches);
+        double GAh = (double)s.Home.GA / Math.Max(1, s.Home.Matches);
+        double GFa = (double)s.Away.GF / Math.Max(1, s.Away.Matches);
+        double GAa = (double)s.Away.GA / Math.Max(1, s.Away.Matches);
+
+        double Ah = SafeDiv(GFh, mu);
+        double Va = SafeDiv(GAa, mu);
+        double Aa = SafeDiv(GFa, mu);
+        double Vh = SafeDiv(GAh, mu);
+
+        Ah = 1 + shrink * (Ah - 1);
+        Va = 1 + shrink * (Va - 1);
+        Aa = 1 + shrink * (Aa - 1);
+        Vh = 1 + shrink * (Vh - 1);
+
+        double lamH = mu * Ah * Va * hfa;
+        double lamA = mu * Aa * Vh;
+
+        int n = Math.Min(s.Home.Matches, s.Away.Matches);
+        double w = Math.Min(2.0, Math.Sqrt(Math.Max(0, n)));
+
+        return (lamH, lamA, w);
+
+        static double SafeDiv(double a, double b) => b <= 0 ? 1.0 : Math.Max(0.2, Math.Min(5.0, a / b));
+    }
+
+    private static double OverFromLambda(double lambdaTotal, double line)
+    {
+        int k = (int)Math.Floor(line);              // 1.5→1, 2.5→2, 3.5→3
+        double lam = Math.Max(1e-6, lambdaTotal);
+        double term = Math.Exp(-lam), cdf = term;   // P(X≤0)
+        for (int i = 1; i <= k; i++) { term *= lam / i; cdf += term; }
+        return Clamp01(1 - cdf);
+    }
+
+    private static (double p1, double px, double p2) OneXTwoFromLambdas(double lamH, double lamA, int maxGoals = 10)
+    {
+        lamH = Math.Max(1e-6, lamH);
+        lamA = Math.Max(1e-6, lamA);
+
+        var ph = new double[maxGoals + 1];
+        var pa = new double[maxGoals + 1];
+        ph[0] = Math.Exp(-lamH); pa[0] = Math.Exp(-lamA);
+        for (int i = 1; i <= maxGoals; i++) { ph[i] = ph[i - 1] * lamH / i; pa[i] = pa[i - 1] * lamA / i; }
+
+        double pHome = 0, pDraw = 0, pAway = 0;
+        for (int h = 0; h <= maxGoals; h++)
+            for (int a = 0; a <= maxGoals; a++)
             {
-                foreach (var d in daysEl.EnumerateArray())
-                {
-                    var date = d.GetProperty("Date").GetString() ?? "";
-                    var groups = new List<LiveScoreGroup>();
-                    if (d.TryGetProperty("Groups", out var groupsEl) && groupsEl.ValueKind == JsonValueKind.Array)
-                    {
-                        foreach (var g in groupsEl.EnumerateArray())
-                        {
-                            var comp = g.GetProperty("Competition").GetString() ?? "";
-                            var matches = new List<LiveScoreItem>();
-                            if (g.TryGetProperty("Matches", out var msEl) && msEl.ValueKind == JsonValueKind.Array)
-                            {
-                                foreach (var m in msEl.EnumerateArray())
-                                {
-                                    matches.Add(new LiveScoreItem(
-                                        m.GetProperty("Time").GetString() ?? "",
-                                        m.GetProperty("Status").GetString() ?? "",
-                                        m.GetProperty("HomeTeam").GetString() ?? "",
-                                        m.GetProperty("HomeGoals").GetString() ?? "",
-                                        m.GetProperty("AwayGoals").GetString() ?? "",
-                                        m.GetProperty("AwayTeam").GetString() ?? ""
-                                    ));
-                                }
-                            }
-                            groups.Add(new LiveScoreGroup(comp, matches));
-                        }
-                    }
-                    days.Add(new LiveScoreDay(date, groups));
-                }
+                double p = ph[h] * pa[a];
+                if (h > a) pHome += p; else if (h == a) pDraw += p; else pAway += p;
             }
-
-            return (days, last);
-        }
-        catch { return null; }
+        return (Clamp01(pHome), Clamp01(pDraw), Clamp01(pAway));
     }
-}
-
-public record DetailsPayload(
-    string? TeamsInfoHtml,
-    string? MatchBetweenHtml,
-	string? TeamMatchesSeparateHtml, // NEW
-    string? LastTeamsMatchesHtml,
-    string? TeamsStatisticsHtml,
-    string? TeamsBetStatisticsHtml,
-	string? FactsHtml, // <— NEW (nullable for backward compat)
-	string? TeamStandingsHtml // NEW
-);
-
-public record DetailsRecord(string Href, DateTimeOffset LastUpdatedUtc, DetailsPayload Payload);
-
-public sealed class DetailsStore
-{
-    private readonly ConcurrentDictionary<string, DetailsRecord> _map = new(StringComparer.OrdinalIgnoreCase);
-    private readonly object _saveGate = new();
-    public DateTimeOffset? LastSavedUtc { get; private set; }
-
-    public void Set(DetailsRecord rec) => _map[rec.Href] = rec;
-    public DetailsRecord? Get(string href) => _map.TryGetValue(Normalize(href), out var rec) ? rec : null;
-
-    public List<(string href, DateTimeOffset lastUpdatedUtc)> Index()
-        => _map.Values.Select(v => (v.Href, v.LastUpdatedUtc)).ToList();
-
-    public (IReadOnlyList<DetailsRecord> items, DateTimeOffset now) Export()
-        => (_map.Values.ToList(), DateTimeOffset.UtcNow);
-
-    public void Import(IEnumerable<DetailsRecord> items)
+    // ====================== Double Chance 12 reduction filters ======================
+    // Filter 1: px-threshold when draw is meaningful but <= away; reduce 12 by 1–10% in [0.20,0.25]
+    private static double Dc12FilterPx(double px, double p2)
     {
-        _map.Clear();
-        foreach (var it in items) _map[it.Href] = it;
+        if (px < 0.20 || px > p2 + 1e-12) return 0.0;
+        var frac = (px - 0.20) / 0.05;               // 0 at 0.20 -> 1 at 0.25
+        var dec = 0.10 * Math.Clamp(frac, 0.0, 1.0); // up to 10%
+        if (dec < 0.01 && px >= 0.20) dec = 0.01;    // min 1% if condition holds
+        return dec;
     }
-	/// <summary>
-    /// Remove any cached href that is NOT present in <paramref name="keep"/>.
-    /// Returns the number of removed items.
-    /// </summary>
-    public int ShrinkTo(IReadOnlyCollection<string> keep)
+
+    // Filter 2: home dominance curve (matches: diff=0.21 -> 7.25%, diff=0.25 -> 10%)
+    private static double Dc12FilterHomeDom(double p1, double p2)
     {
-        var set = new HashSet<string>(keep, StringComparer.OrdinalIgnoreCase);
-        int removed = 0;
-        foreach (var key in _map.Keys)
-        {
-            if (!set.Contains(key))
-            {
-                if (_map.TryRemove(key, out _)) removed++;
-            }
-        }
-        return removed;
+        if (p1 <= p2) return 0.0;
+        var diff = p1 - p2;
+        const double alpha = 1.846;
+        var dec = 0.10 * Math.Pow(Math.Clamp(diff / 0.25, 0.0, 1.0), alpha);
+        return Math.Clamp(dec, 0.0, 0.10);
     }
-    public void MarkSaved(DateTimeOffset ts) { lock (_saveGate) LastSavedUtc = ts; }
 
-   public static string Normalize(string href)
-	{
-	    if (string.IsNullOrWhiteSpace(href)) return "";
-	
-	    var s = WebUtility.HtmlDecode(href).Trim();
-	
-	    // If it's already absolute, return the canonical AbsoluteUri.
-	    // This handles inputs like ".../Slough Town (England)/..." by encoding to %20.
-	    if (Uri.TryCreate(s, UriKind.Absolute, out var abs))
-	        return abs.AbsoluteUri;
-	
-	    // Protocol-relative (//host/...)
-	    if (s.StartsWith("//")) return "https:" + s;
-	
-	    // Host without scheme
-	    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
-	        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
-	        return "https://" + s.TrimStart('/');
-	
-	    // Site-relative
-	    var baseUri = new Uri("https://www.statarea.com/");
-	    if (!s.StartsWith("/")) s = "/" + s;
-	    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
-	}
-}
-
-public static class DetailsFiles
-{
-    public const string File = "/var/lib/datasvc/details.json";
-
-    public static async Task SaveAsync( [FromServices] DetailsStore store )
+    // Filter 3: away dominance (mirrored curve)
+    private static double Dc12FilterAwayDom(double p1, double p2)
     {
-        var (items, now) = store.Export();
-        var json = JsonSerializer.Serialize(new { lastSavedUtc = now, items }, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        Directory.CreateDirectory(Path.GetDirectoryName(File)!);
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
-        store.MarkSaved(now);
+        if (p2 <= p1) return 0.0;
+        var diff = p2 - p1;
+        const double alpha = 1.846;
+        var dec = 0.10 * Math.Pow(Math.Clamp(diff / 0.25, 0.0, 1.0), alpha);
+        return Math.Clamp(dec, 0.0, 0.10);
     }
-
-    public static async Task<IReadOnlyList<DetailsRecord>> LoadAsync()
-    {
-        if (!System.IO.File.Exists(File)) return Array.Empty<DetailsRecord>();
-        try
-        {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            var doc = JsonDocument.Parse(json);
-            var items = doc.RootElement.GetProperty("items").Deserialize<List<DetailsRecord>>() ?? new();
-            return items;
-        }
-        catch { return Array.Empty<DetailsRecord>(); }
-    }
-}
-
-public sealed class DetailsScraperService
-{
-    private readonly ResultStore _root;
-    private readonly DetailsStore _store;
-	
-	static int GetEnvInt(string name, int def)
-    => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
-
-	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
-	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
-	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1)); // 3h default
-
-    static readonly SocketsHttpHandler _handler = new()
-	{
-	    AutomaticDecompression = DecompressionMethods.Brotli | DecompressionMethods.GZip | DecompressionMethods.Deflate,
-	    AllowAutoRedirect = true,
-	    MaxConnectionsPerServer = 100,
-	    PooledConnectionLifetime = TimeSpan.FromMinutes(10),
-	    EnableMultipleHttp2Connections = true,
-	};
-	static readonly HttpClient http = new(_handler);
-
-    public DetailsScraperService(ResultStore root, DetailsStore store)
-    {
-        _root = root;
-        _store = store;
-    }
-
-    public sealed record RefreshSummary(
-									    int Refreshed,
-									    int Skipped,
-									    int Deleted,
-									    List<string> Errors,
-									    DateTimeOffset LastUpdatedUtc
-									);
-
-
-    public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
-	{
-	    var current = _root.Current?.Payload?.TableDataGroup;
-	    if (current is null)
-	        return new RefreshSummary(0, 0, 0, new List<string>{ "No root payload yet" }, DateTimeOffset.UtcNow);
-	
-	    var hrefs = current.SelectMany(g => g.Items)
-	                       .Select(i => i.Href)
-	                       .Where(h => !string.IsNullOrWhiteSpace(h))
-	                       .Select(DetailsStore.Normalize)
-	                       .Distinct(StringComparer.OrdinalIgnoreCase)
-	                       .ToList();
-	
-	    int refreshed = 0, skipped = 0;
-	    var errors = new List<string>();
-	    var sem = new SemaphoreSlim(_maxParallel);
-	    var now = DateTimeOffset.UtcNow;
-	
-	    var tasks = hrefs.Select(async href =>
-	    {
-	        await sem.WaitAsync(ct);
-	        try
-	        {
-	            var existing = _store.Get(href);
-	            if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
-	            {
-	                Interlocked.Increment(ref skipped);
-	                return;
-	            }
-	
-	            var rec = await FetchOneAsync(href, ct);
-	            _store.Set(rec);
-	            Interlocked.Increment(ref refreshed);
-	        }
-	        catch (Exception ex)
-	        {
-	            lock (errors) errors.Add($"{href}: {ex.Message}");
-	        }
-	        finally { sem.Release(); }
-	    });
-	
-	    await Task.WhenAll(tasks);
-
-		// (A) If we parsed 0 hrefs this tick, keep the existing cache intact.
-		if (hrefs.Count == 0)
-		{
-		    errors.Add("Parsed 0 hrefs — skipped prune/save to avoid wiping cache.");
-		    return new RefreshSummary(refreshed, skipped, 0, errors, DateTimeOffset.UtcNow);
-		}
-		
-		// (B) If we had zero verified items (nothing refreshed and nothing valid by TTL),
-		//     keep the cache instead of pruning.
-		if ((refreshed + skipped) == 0 && _store.Index().Count > 0)
-		{
-		    errors.Add("No successes this tick — kept previous cache, skipping prune/save.");
-		    return new RefreshSummary(refreshed, skipped, 0, errors, DateTimeOffset.UtcNow);
-		}
-		
-		var deleted = _store.ShrinkTo(hrefs);
-		
-		// (C) If after all that we somehow have 0 items, avoid persisting an empty file.
-		if (_store.Index().Count == 0)
-		{
-		    errors.Add("Store empty after refresh — not saving empty details.json.");
-		    return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
-		}
-		
-		await DetailsFiles.SaveAsync(_store);
-		return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
-
-	}
-	
-	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
-	{
-	    var abs = DetailsStore.Normalize(href);
-	    Debug.WriteLine($"[details] fetching: {abs}");
-	
-	    // env-configurable per-request timeout (default 10s)
-	    var timeoutSeconds = 10;
-	    if (int.TryParse(Environment.GetEnvironmentVariable("DETAILS_TIMEOUT_SECONDS"), out var t) && t > 0)
-	        timeoutSeconds = t;
-	
-	    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-	    linkedCts.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
-	
-	    using var req = new HttpRequestMessage(HttpMethod.Get, abs)
-	    {
-	        Version = HttpVersion.Version20,
-	        VersionPolicy = HttpVersionPolicy.RequestVersionOrHigher
-	    };
-	    req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-	    req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
-	    req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-	    req.Headers.Referrer = new Uri("https://www.statarea.com/");
-	
-	    using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
-	    res.EnsureSuccessStatusCode();
-	    var html = await res.Content.ReadAsStringAsync(linkedCts.Token);
-	
-	    // ---- parse the 5 sections from the fetched page ----
-	    var doc = new HtmlAgilityPack.HtmlDocument();
-	    doc.LoadHtml(html);
-	
-	    // Helper: pick the first div with an exact class token match
-	    static string? SectionFirst(HtmlDocument d, string cls) =>
-	        d.DocumentNode.SelectSingleNode($"//div[contains(concat(' ', normalize-space(@class), ' '), ' {cls} ')]")?.OuterHtml;
-	
-	    // Helper: choose the *filled* matchbtwteams block (most rows / longest non-blank)
-	    static string? SectionMatchBetweenFilled(HtmlDocument d, out int foundNodes, out int pickedRows)
-	    {
-	        var nodes = d.DocumentNode.SelectNodes("//div[contains(concat(' ', normalize-space(@class), ' '), ' matchbtwteams ')]");
-	        foundNodes = nodes?.Count ?? 0;
-	        pickedRows = 0;
-	        if (nodes is null || nodes.Count == 0) return null;
-	
-	        HtmlAgilityPack.HtmlNode? best = null;
-	        var bestScore = int.MinValue;
-	
-	        foreach (var n in nodes)
-	        {
-	            var rows = n.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchitem ')]");
-	            var rowCount = rows?.Count ?? 0;
-	            var text  = HtmlEntity.DeEntitize(n.InnerText ?? string.Empty).Trim();
-	            var len   = n.InnerHtml?.Length ?? 0;
-	
-	            // row count dominates; prefer longer; penalize blank/&nbsp;
-	            var score = rowCount * 1_000_000 + len;
-	            if (string.IsNullOrEmpty(text) || text == "&nbsp;") score -= 100_000_000;
-	
-	            if (score > bestScore)
-	            {
-	                bestScore = score;
-	                best = n;
-	                pickedRows = rowCount;
-	            }
-	        }
-	        return best?.OuterHtml ?? nodes[0].OuterHtml;
-	    }
-		// Program.cs — replace SectionFactsWithRows with this version
-		static string? SectionFactsWithRows(HtmlDocument d)
-		{
-		    // Case-insensitive token match helper via XPath translate()
-		    const string ToLower = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-		    const string ToUpper = "abcdefghijklmnopqrstuvwxyz";
-		    string tokenFacts = " contains(concat(' ', translate(normalize-space(@class), '" + ToLower + "', '" + ToUpper + "'), ' '), ' facts ') ";
-		
-		    // 1) Primary candidates: any DIV/SECTION with class contains 'facts' OR id contains 'facts' (case-insensitive)
-		    var candidates = d.DocumentNode.SelectNodes(
-		        "//*[self::div or self::section][" + tokenFacts + "] | " +
-		        "//*[@id and contains(translate(@id,'" + ToLower + "','" + ToUpper + "'),'facts')]"
-		    ) ?? new HtmlNodeCollection(null);
-		
-		    // 2) Anchor hint: the page uses #linkmatchfacts – grab the first facts-block that follows it
-		    var anchor = d.DocumentNode.SelectSingleNode("//*[@name='linkmatchfacts' or @id='linkmatchfacts']");
-		    if (anchor != null)
-		    {
-		        var near = anchor.SelectSingleNode(
-		            "following::*[self::div or self::section][" + tokenFacts + "][1]"
-		        );
-		        if (near != null) candidates.Add(near);
-		    }
-		
-		    // 3) If there are multiple blocks, prefer the one that looks "filled"
-		    HtmlNode? best = null;
-		    int bestScore = int.MinValue;
-		
-		    foreach (var n in candidates.Distinct())
-		    {
-		        // tolerate case differences for inner nodes too
-		        var rows  = n.SelectNodes(".//*[contains(translate(@class,'" + ToLower + "','" + ToUpper + "'),'datarow')]")?.Count ?? 0;
-		        var chart = n.SelectNodes(".//*[contains(translate(@class,'" + ToLower + "','" + ToUpper + "'),'stackedbarchart')]")?.Count ?? 0;
-		        var len   = n.InnerHtml?.Length ?? 0;
-		
-		        // rows dominate, then presence of chart, then length
-		        int score = rows * 1_000_000 + chart * 10_000 + len;
-		        if (score > bestScore) { bestScore = score; best = n; }
-		    }
-		
-		    // Debug aid (optional)
-		    Debug.WriteLine($"[details] facts: candidates={candidates.Count}, pickedScore={bestScore}");
-		
-		    return best?.OuterHtml;
-		}
-
-
-	
-	    // Use helpers
-	    var teamsInfoHtml        = SectionFirst(doc, "teamsinfo");
-	    var lastTeamsMatchesHtml = SectionFirst(doc, "lastteamsmatches");
-	    var teamsStatisticsHtml  = SectionFirst(doc, "teamsstatistics");
-	    var teamsBetStatsHtml    = SectionFirst(doc, "teamsbetstatistics");
-		// NEW: the 6th div
-		var factsHtml = SectionFactsWithRows(doc); // instead of SectionFirst(doc, "facts")
-
-		var teamMatchesSeparateHtml = SectionFirst(doc, "lastteamsmatches"); // NEW
-		
-	    int mbDivs, mbRows;
-	    var matchBetweenHtml = SectionMatchBetweenFilled(doc, out mbDivs, out mbRows);
-	    Debug.WriteLine($"[details] matchbtwteams: found {mbDivs} block(s); picked block with {mbRows} row(s)");
-
-		var teamStandingsHtml = SectionFirst(doc, "teamstandings"); // NEW
-		
-	    var payload = new DetailsPayload(
-	        TeamsInfoHtml:          teamsInfoHtml,
-	        MatchBetweenHtml:       matchBetweenHtml,
-			TeamMatchesSeparateHtml: teamMatchesSeparateHtml, // NEW
-	        LastTeamsMatchesHtml:   lastTeamsMatchesHtml,
-	        TeamsStatisticsHtml:    teamsStatisticsHtml,
-	        TeamsBetStatisticsHtml: teamsBetStatsHtml,
-			FactsHtml:              factsHtml,
-			TeamStandingsHtml:    teamStandingsHtml // NEW
-	    );
-	
-	    return new DetailsRecord(abs, DateTimeOffset.UtcNow, payload);
-	}
-}
-
-public sealed class DetailsRefreshJob : BackgroundService
-{
-    private readonly DetailsScraperService _svc;
-    private readonly DetailsStore _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public DetailsRefreshJob(DetailsScraperService svc, DetailsStore store)
-    {
-        _svc = svc; 
-        _store = store;
-        // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Load previous cache on startup
-        var prev = await DetailsFiles.LoadAsync();
-        if (prev.Count > 0) _store.Import(prev);
-
-        // Let the main page warm up first
-        try { await Task.Delay(TimeSpan.FromSeconds(20), stoppingToken); } catch { }
-
-        // Initial run
-        await RunSafelyOnce("initial", stoppingToken);
-
-        // Start hourly aligned loop in parallel
-        _ = HourlyLoop(stoppingToken);
-
-        // Every 5 minutes — keep existing cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-            {
-                await RunSafelyOnce("tick", stoppingToken);
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
-        {
-            // Wait until the next top of the hour in the configured timezone
-            while (!ct.IsCancellationRequested)
-            {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce("hourly", ct);
-
-                // After the first aligned tick, continue hourly
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
-                {
-                    await RunSafelyOnce("hourly", ct);
-                }
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunSafelyOnce(string reason, CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
-        {
-            var r = await _svc.RefreshAllFromCurrentAsync(ct);
-            Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[details] {reason} failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-}
-// ---- Trade Signal types & utils ----
-public sealed class TradeSignal
-{
-    [JsonPropertyName("symbol")]
-    public string? Symbol { get; set; }
-
-    [JsonPropertyName("side")]
-    public string? Side { get; set; }
-
-    [JsonPropertyName("qty")]
-    public string? Qty { get; set; }
-
-    [JsonPropertyName("price")]
-    public string? Price { get; set; }
-
-    // Accepts ISO-8601, Unix seconds, or Unix milliseconds (e.g., TradingView {{timenow}})
-    [JsonPropertyName("trigger_time")]
-    public string? TriggerTime { get; set; }
-
-    [JsonPropertyName("max_lag")]
-    public string? MaxLag { get; set; }
-
-    [JsonPropertyName("strategy_id")]
-    public string? StrategyId { get; set; }
-}
-
-public record TradeSignalReceived(
-    TradeSignal Payload,
-    DateTimeOffset ReceivedUtc,
-    double? LagSeconds,
-    bool Accepted,
-    string? Reason
-);
-
-public sealed class TradeSignalStore
-{
-    private readonly ConcurrentQueue<TradeSignalReceived> _q = new();
-
-    public void Add(TradeSignalReceived r)
-    {
-        _q.Enqueue(r);
-        while (_q.Count > 200 && _q.TryDequeue(out _)) { } // cap memory
-    }
-
-    public IReadOnlyList<TradeSignalReceived> Last(int n)
-        => _q.Reverse().Take(n).ToList();
-}
-
-public static class TradeSignalUtils
-{
-    public static (DateTimeOffset? ts, double? lagSeconds) TryParseTriggerTime(string? trigger)
-    {
-        if (string.IsNullOrWhiteSpace(trigger))
-            return (null, null);
-
-        if (DateTimeOffset.TryParse(trigger, out var iso))
-            return (iso, (DateTimeOffset.UtcNow - iso.ToUniversalTime()).TotalSeconds);
-
-        if (long.TryParse(trigger, out var unix))
-        {
-            var isMillis = unix >= 1_000_000_000_000;
-            var ts = DateTimeOffset.FromUnixTimeMilliseconds(isMillis ? unix : unix * 1000L);
-            return (ts, (DateTimeOffset.UtcNow - ts).TotalSeconds);
-        }
-
-        return (null, null);
-    }
-
-    public static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
 }
