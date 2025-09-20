@@ -16,6 +16,7 @@ using System.Linq;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+using DataSvc.Analyzer; // AuthController + SessionAuthHandler namespace
 using MySqlConnector;
 using Google.Apis.Auth;
 
@@ -846,8 +847,62 @@ app.MapControllers();
 app.Run();
 
 
+// FULL METHOD: builds a stable "core" object for TipAnalyzer from a DetailsRecord.
+static object BuildCoreForAnalysis(DetailsRecord i)
+{
+    var parsedTeamsInfo       = TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+    var matchDataBetween      = MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+    var recentMatchesSeparate = MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
 
-// Helper to produce the SAME shape as /data/details/allhrefs items[]
+    var rawBarCharts = BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+    var barCharts    = rawBarCharts?.Select(b => new
+    {
+        title = b.Title,
+        halfContainerId = b.HalfContainerId,
+        items = b.ToList()
+    }).ToList();
+
+    var matchFacts = MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
+
+    var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
+        i.Payload.LastTeamsMatchesHtml ?? string.Empty
+    );
+    var lastTeamsWinrate = new
+    {
+        wins = new[] { m[0, 0], m[0, 1] },
+        draws = new[] { m[1, 0], m[1, 1] },
+        losses = new[] { m[2, 0], m[2, 1] }
+    };
+
+    var teamsStats          = GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+    var teamStandingsParsed = TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
+
+    return new
+    {
+        href = i.Href,
+        lastUpdatedUtc = i.LastUpdatedUtc,
+        teamsInfo = parsedTeamsInfo,
+        matchDataBetween,
+        recentMatchesSeparate,
+        barCharts,
+        matchFacts,
+        lastTeamsWinrate,
+        teamsStatistics = teamsStats,
+        teamStandings = teamStandingsParsed
+    };
+}
+
+
+// FULL METHOD: runs the analyzer and sorts by Probability desc.
+static IReadOnlyList<ProposedResult>? ComputeProposals(DetailsRecord i)
+{
+    var list = TipAnalyzer.Analyze(BuildCoreForAnalysis(i));
+    return list?.OrderByDescending(p => p.Probability).ToList();
+}
+
+
+// FULL METHOD: shapes a single "details item" exactly like /data/details/allhrefs uses,
+// with HTML toggles respected, and appends `proposedResults` at the end.
 static object MapDetailsRecordToAllhrefsItem(
     DetailsRecord i,
     bool preferTeamsInfoHtml,
@@ -859,43 +914,54 @@ static object MapDetailsRecordToAllhrefsItem(
     bool preferTeamsStatisticsHtml,
     bool preferTeamStandingsHtml)
 {
-    // Mirrors the mapping used in /data/details/allhrefs
-    // (keep these helpers consistent with your existing code)
+    // teams info
     var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
 
+    // matches between
     var matchDataBetween = preferMatchBetweenHtml
         ? null
         : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
 
+    // recent matches (separate)
     var recentMatchesSeparate = preferSeparateMatchesHtml
         ? null
         : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
 
-    var rawBarCharts = preferBetStatsHtml
+    // charts
+    var barCharts = preferBetStatsHtml
         ? null
-        : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+        : BarChartsParser
+            .GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty)?
+            .Select(b => new
+            {
+                title = b.Title,
+                halfContainerId = b.HalfContainerId,
+                items = b.ToList()
+            })
+            .ToList();
 
-    var barCharts = rawBarCharts?.Select(b => new {
-        title = b.Title,
-        halfContainerId = b.HalfContainerId,
-        items = b.ToList()
-    }).ToList();
-
+    // match facts
     var matchFacts = preferFactsHtml
         ? null
         : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
 
-    object? lastTeamsWinrate = null;
-    if (!preferLastTeamsHtml)
-    {
-        var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? "");
-        lastTeamsWinrate = new {
-            wins   = new[] { m[0,0], m[0,1] },
-            draws  = new[] { m[1,0], m[1,1] },
-            losses = new[] { m[2,0], m[2,1] }
-        };
-    }
+    // last teams winrate block
+    var lastTeamsWinrate = preferLastTeamsHtml
+        ? null
+        : (() =>
+        {
+            var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
+                i.Payload.LastTeamsMatchesHtml ?? string.Empty
+            );
+            return new
+            {
+                wins = new[] { m[0, 0], m[0, 1] },
+                draws = new[] { m[1, 0], m[1, 1] },
+                losses = new[] { m[2, 0], m[2, 1] }
+            };
+        })();
 
+    // team statistics + standings
     var teamsStats = preferTeamsStatisticsHtml
         ? null
         : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
@@ -904,121 +970,50 @@ static object MapDetailsRecordToAllhrefsItem(
         ? null
         : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
 
+    // Use saved proposals if present (persisted), otherwise compute once on-demand
+    var proposedResults = i.ProposedResults ?? ComputeProposals(i);
 
-	// Build the core item first (this mirrors your existing return shape)
-    var core = new {
-        href           = i.Href,
+    // NOTE: property order in JSON isn't guaranteed, but we place `proposedResults` last in the anonymous type.
+    return new
+    {
+        href = i.Href,
         lastUpdatedUtc = i.LastUpdatedUtc,
 
         // teams info
-        teamsInfo      = parsedTeamsInfo,
-        teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
-
-        // matches between
-        matchDataBetween = matchDataBetween,
-        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-        // recent matches (separate)
-        recentMatchesSeparate     = recentMatchesSeparate,
-        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
-
-        // charts & facts
-        barCharts              = barCharts,
-        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
-
-        matchFacts = matchFacts,
-        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
-
-        // last teams winrate block
-        lastTeamsWinrate     = lastTeamsWinrate,
-        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
-
-        // team statistics + standings
-        teamsStatistics     = teamsStats,
-        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
-
-        teamStandings     = teamStandingsParsed,
-        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-    };
-	
-	// New: run analyzer on the built item and append ordered results (highest first)
-    var proposedResults = TipAnalyzer
-        .Analyze(core)                      // returns List<ProposedResult>
-        ?.OrderByDescending(p => p.Probability)
-        .ToList();
-
-	// Return core + analyzer output at the end
-    return new {
-        core.href,
-        core.lastUpdatedUtc,
-
-        core.teamsInfo,
-        core.teamsInfoHtml,
-
-        core.matchDataBetween,
-        core.matchBetweenHtml,
-
-        core.recentMatchesSeparate,
-        core.recentMatchesSeparateHtml,
-
-        core.barCharts,
-        core.teamsBetStatisticsHtml,
-
-        core.matchFacts,
-        core.factsHtml,
-
-        core.lastTeamsWinrate,
-        core.lastTeamsMatchesHtml,
-
-        core.teamsStatistics,
-        core.teamsStatisticsHtml,
-
-        core.teamStandings,
-        core.teamStandingsHtml,
-
-        // <-- appended at the end as requested
-        proposedResults
-    };
-	/*
-    return new {
-        href           = i.Href,
-        lastUpdatedUtc = i.LastUpdatedUtc,
-
-        // teams info
-        teamsInfo     = parsedTeamsInfo,
+        teamsInfo = parsedTeamsInfo,
         teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
 
         // matches between
-        matchDataBetween = matchDataBetween,
+        matchDataBetween,
         matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
 
         // recent matches (separate)
-        recentMatchesSeparate     = recentMatchesSeparate,
+        recentMatchesSeparate,
         recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
 
-        // charts & facts
-        barCharts              = barCharts,
+        // bet stats & charts
+        barCharts,
         teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
 
-        matchFacts = matchFacts,
-        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+        // facts
+        matchFacts,
+        factsHtml = preferFactsHtml ? i.Payload.FactsHtml : null,
 
-        // last teams winrate block
-        lastTeamsWinrate     = lastTeamsWinrate,
+        // last teams winrate
+        lastTeamsWinrate,
         lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
 
         // team statistics + standings
-        teamsStatistics     = teamsStats,
+        teamsStatistics = teamsStats,
         teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+        teamStandings = teamStandingsParsed,
+        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null,
 
-        teamStandings     = teamStandingsParsed,
-        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-
-		// <-- appended at the end as requested
+        // NEW — appended at the end
         proposedResults
     };
-	*/
 }
+
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -1989,7 +1984,10 @@ public record DetailsPayload(
 	string? TeamStandingsHtml // NEW
 );
 
-public record DetailsRecord(string Href, DateTimeOffset LastUpdatedUtc, DetailsPayload Payload);
+public record DetailsRecord(string Href, 
+							DateTimeOffset LastUpdatedUtc, 
+							DetailsPayload Payload, 
+							IReadOnlyList<ProposedResult>? ProposedResults = null // NEW);
 
 public sealed class DetailsStore
 {
@@ -2060,10 +2058,22 @@ public static class DetailsFiles
 {
     public const string File = "/var/lib/datasvc/details.json";
 
-    public static async Task SaveAsync( [FromServices] DetailsStore store )
+    public static async Task SaveAsync([FromServices] DetailsStore store)
     {
         var (items, now) = store.Export();
-        var json = JsonSerializer.Serialize(new { lastSavedUtc = now, items }, new JsonSerializerOptions { WriteIndented = false });
+
+        // NEW: ensure ProposedResults are present and sorted before persisting
+        var materialized = items.Select(i =>
+            i.ProposedResults is not null
+                ? i
+                : i with { ProposedResults = ComputeProposals(i) }   // uses helper above
+        ).ToList();
+
+        var json = JsonSerializer.Serialize(
+            new { lastSavedUtc = now, items = materialized },
+            new JsonSerializerOptions { WriteIndented = false }
+        );
+
         var tmp = File + ".tmp";
         Directory.CreateDirectory(Path.GetDirectoryName(File)!);
         await System.IO.File.WriteAllTextAsync(tmp, json);
