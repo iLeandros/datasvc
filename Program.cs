@@ -904,6 +904,49 @@ static object MapDetailsRecordToAllhrefsItem(
         ? null
         : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
 
+
+	// Build the core item first (this mirrors your existing return shape)
+    var core = new {
+        href           = i.Href,
+        lastUpdatedUtc = i.LastUpdatedUtc,
+
+        // teams info
+        teamsInfo      = parsedTeamsInfo,
+        teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+
+        // matches between
+        matchDataBetween = matchDataBetween,
+        matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+
+        // recent matches (separate)
+        recentMatchesSeparate     = recentMatchesSeparate,
+        recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+
+        // charts & facts
+        barCharts              = barCharts,
+        teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+
+        matchFacts = matchFacts,
+        factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+
+        // last teams winrate block
+        lastTeamsWinrate     = lastTeamsWinrate,
+        lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+
+        // team statistics + standings
+        teamsStatistics     = teamsStats,
+        teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+
+        teamStandings     = teamStandingsParsed,
+        teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+    };
+	
+	// New: run analyzer on the built item and append ordered results (highest first)
+    var proposedResults = TipAnalyzer
+        .Analyze(core)                      // returns List<ProposedResult>
+        ?.OrderByDescending(p => p.Probability)
+        .ToList();
+	
     return new {
         href           = i.Href,
         lastUpdatedUtc = i.LastUpdatedUtc,
@@ -937,6 +980,9 @@ static object MapDetailsRecordToAllhrefsItem(
 
         teamStandings     = teamStandingsParsed,
         teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+
+		// <-- appended at the end as requested
+        proposedResults
     };
 }
 static void SaveGzipCopy(string jsonPath)
