@@ -1984,10 +1984,13 @@ public record DetailsPayload(
 	string? TeamStandingsHtml // NEW
 );
 
-public record DetailsRecord(string Href, 
-							DateTimeOffset LastUpdatedUtc, 
-							DetailsPayload Payload, 
-							IReadOnlyList<ProposedResult>? ProposedResults = null // NEW);
+// Extend DetailsRecord to carry persisted proposals (nullable for back-compat)
+public record DetailsRecord(
+    string Href,
+    DateTimeOffset LastUpdatedUtc,
+    DetailsPayload Payload,
+    IReadOnlyList<ProposedResult>? ProposedResults = null
+);
 
 public sealed class DetailsStore
 {
