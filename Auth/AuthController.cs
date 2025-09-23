@@ -247,8 +247,37 @@ public class AuthController : ControllerBase
     
         return NoContent(); // 204 = valid
     }
-
+    [HttpPost("reset")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
+    {
+        Console.WriteLine("ResetPassword: entered");
     
+        if (req == null)
+        {
+            Console.WriteLine("ResetPassword: req is null -> 400");
+            return BadRequest("Missing body.");
+        }
+    
+        if (string.IsNullOrWhiteSpace(req.Token) || req.Token.Length != 64 ||
+            !System.Text.RegularExpressions.Regex.IsMatch(req.Token, "^[0-9a-fA-F]{64}$"))
+        {
+            Console.WriteLine("ResetPassword: invalid token -> 400");
+            return BadRequest("Invalid token.");
+        }
+    
+        if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
+        {
+            Console.WriteLine("ResetPassword: weak password -> 400");
+            return BadRequest("Password too short.");
+        }
+    
+        // ... existing DB / token lookup logic ...
+        // For every return path, log the status you return:
+        Console.WriteLine("ResetPassword: success -> 204");
+        return NoContent();
+    }
+
+    /*
     [HttpPost("reset")]
     [AllowAnonymous]
     public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
@@ -303,7 +332,7 @@ public class AuthController : ControllerBase
     
         return NoContent();
     }
-
+    */
     
     // ====== DELETE ACCOUNT ======
     [HttpDelete("account")]
