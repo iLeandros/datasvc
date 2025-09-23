@@ -104,6 +104,43 @@ app.UseAuthorization();
 
 app.Use(async (ctx, next) =>
 {
+    var auth = ctx.Request.Headers.Authorization.ToString();
+    if (!string.IsNullOrWhiteSpace(auth) &&
+        auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        var token = auth.Substring("Bearer ".Length).Trim();
+
+        // must be the 64-hex token we issue
+        if (token.Length == 64 && System.Text.RegularExpressions.Regex.IsMatch(token, "^[0-9a-fA-F]{64}$"))
+        {
+            byte[] id = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+
+            await using var c = new MySqlConnection(connStr);
+            var uid = await c.ExecuteScalarAsync<ulong?>(@"
+                SELECT user_id
+                FROM sessions
+                WHERE id=@id AND expires_at > UTC_TIMESTAMP(3)
+                LIMIT 1;", new { id });
+
+            if (uid is not null)
+            {
+                // Mark the request as authenticated
+                var claims = new[]
+                {
+                    new Claim("uid", uid.Value.ToString()),
+                    new Claim(ClaimTypes.NameIdentifier, uid.Value.ToString())
+                };
+                ctx.User = new ClaimsPrincipal(new ClaimsIdentity(claims, authenticationType: "Session"));
+                ctx.Items["user_id"] = uid.Value;   // AuthController.TryGetUserId() also checks this
+            }
+        }
+    }
+
+    await next();
+});
+
+app.Use(async (ctx, next) =>
+{
     await next();
     var ep = ctx.GetEndpoint()?.DisplayName ?? "(no endpoint)";
     Console.WriteLine($"[{ctx.Response.StatusCode}] {ctx.Request.Method} {ctx.Request.Path} -> {ep}");
