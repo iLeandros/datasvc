@@ -226,25 +226,27 @@ public class AuthController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
-        if (string.IsNullOrWhiteSpace(token) || token.Length != 64)
-            return NotFound();
     
-        byte[] tokenHash;
-        try { tokenHash = SHA256.HashData(Convert.FromHexString(token)); }
+        // must be a 64-hex token
+        if (string.IsNullOrWhiteSpace(token) || token.Length != 64) return NotFound();
+    
+        byte[] id;
+        try { id = SHA256.HashData(Convert.FromHexString(token)); }
         catch { return NotFound(); }
     
         await using var conn = new MySqlConnection(_connString);
-        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt, DateTime? UsedAt)?>(@"
-            SELECT user_id, expires_at, used_at
+        var row = await conn.QuerySingleOrDefaultAsync<(DateTime ExpiresAt, DateTime? UsedAt)?>(@"
+            SELECT expires_at, used_at
             FROM password_resets
             WHERE id = @id
-            LIMIT 1;", new { id = tokenHash });
+            LIMIT 1;", new { id });
     
         if (row is null || row.Value.UsedAt is not null || row.Value.ExpiresAt <= DateTime.UtcNow)
             return NotFound();
     
         return NoContent(); // 204 = valid
     }
+
     
     [HttpPost("reset")]
     [AllowAnonymous]
