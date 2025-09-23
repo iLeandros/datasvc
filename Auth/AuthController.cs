@@ -252,30 +252,82 @@ public class AuthController : ControllerBase
     {
         Console.WriteLine("ResetPassword: entered");
     
-        if (req == null)
-        {
-            Console.WriteLine("ResetPassword: req is null -> 400");
+        if (req is null)
             return BadRequest("Missing body.");
-        }
     
-        if (string.IsNullOrWhiteSpace(req.Token) || req.Token.Length != 64 ||
+        // 1) Basic validation
+        if (string.IsNullOrWhiteSpace(req.Token) ||
+            req.Token.Length != 64 ||
             !System.Text.RegularExpressions.Regex.IsMatch(req.Token, "^[0-9a-fA-F]{64}$"))
-        {
-            Console.WriteLine("ResetPassword: invalid token -> 400");
             return BadRequest("Invalid token.");
-        }
     
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
-        {
-            Console.WriteLine("ResetPassword: weak password -> 400");
             return BadRequest("Password too short.");
+    
+        // 2) Derive the binary id we store (UNHEX(SHA2(token,256)))
+        var tokenHex = req.Token.ToLowerInvariant();
+        var tokenBytes = System.Text.Encoding.UTF8.GetBytes(tokenHex); // hash the string as we inserted it
+        var id = System.Security.Cryptography.SHA256.HashData(tokenBytes); // 32 bytes
+    
+        await using var conn = new MySqlConnector.MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        // 3) Look up the reset row: must exist, not used, not expired
+        var row = await conn.QuerySingleOrDefaultAsync(
+            new CommandDefinition(@"
+                SELECT user_id
+                FROM password_resets
+                WHERE id = @id
+                  AND used_at IS NULL
+                  AND expires_at > UTC_TIMESTAMP(3)
+                LIMIT 1;", new { id }, transaction: tx, cancellationToken: ct));
+    
+        if (row is null)
+        {
+            // Unknown/expired/used token
+            await tx.RollbackAsync(ct);
+            return NotFound(); // or Gone(410) if you prefer
         }
     
-        // ... existing DB / token lookup logic ...
-        // For every return path, log the status you return:
+        long userId = (long)row.user_id;
+    
+        // 4) Hash the new password (BCrypt)
+        var newHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+    
+        // 5) Update user password + mark token used
+        await conn.ExecuteAsync(
+            new CommandDefinition(@"
+                UPDATE user_auth
+                   SET password_hash = @hash
+                 WHERE user_id = @uid;", new { hash = newHash, uid = userId }, tx, cancellationToken: ct));
+    
+        // capture context info (optional)
+        byte[]? ipBytes = null;
+        if (HttpContext.Connection.RemoteIpAddress is not null)
+            ipBytes = HttpContext.Connection.RemoteIpAddress.MapToIPv6().GetAddressBytes();
+        var ua = HttpContext.Request.Headers.User-Agent.ToString();
+    
+        await conn.ExecuteAsync(
+            new CommandDefinition(@"
+                UPDATE password_resets
+                   SET used_at = UTC_TIMESTAMP(3),
+                       ip_address = @ip,
+                       user_agent = @ua
+                 WHERE id = @id;", new { id, ip = ipBytes, ua }, tx, cancellationToken: ct));
+    
+        await tx.CommitAsync(ct);
+    
         Console.WriteLine("ResetPassword: success -> 204");
         return NoContent();
     }
+    
+    public sealed class ResetRequest
+    {
+        public string Token { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
+
 
     /*
     [HttpPost("reset")]
