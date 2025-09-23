@@ -284,20 +284,22 @@ app.MapGet("/reset", async ctx =>
 					      const pw = document.getElementById('pw').value;
 					
 					      try {{
-					        const r = await fetch('/v1/auth/reset', {{
-					          method: 'POST',
-					          headers: {{ 'Content-Type': 'application/json' }},
-					          body: JSON.stringify({{ token: token, newPassword: pw }}),
-					          cache: 'no-store',
-					          credentials: 'omit'
-					        }});
-					        if (r.ok) {{
-					          msg.textContent = 'Password changed. You can close this tab.';
-					          form.style.display = 'none';
-					        }} else {{
-					          msg.textContent = 'Reset failed. The link may be invalid or expired.';
-					          btn.disabled = false;
-					        }}
+					        const r = await fetch('/v1/auth/reset', {
+							  method: 'POST',
+							  headers: { 'Content-Type': 'application/json' },
+							  body: JSON.stringify({ token: token, newPassword: pw }),
+							  cache: 'no-store',
+							  credentials: 'omit'
+							});
+							
+							const bodyText = await r.text(); // read message if any
+							if (r.ok) {
+							  msg.textContent = 'Password changed. You can close this tab.';
+							  form.style.display = 'none';
+							} else {
+							  msg.textContent = `Reset failed (${r.status}). ${bodyText || 'The link may be invalid or expired.'}`;
+							  btn.disabled = false;
+							}
 					      }} catch {{
 					        msg.textContent = 'Network error. Please try again.';
 					        btn.disabled = false;
