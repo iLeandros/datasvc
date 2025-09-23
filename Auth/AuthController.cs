@@ -269,26 +269,43 @@ public class AuthController : ControllerBase
                                        updated_at    = UTC_TIMESTAMP(3)
                                  WHERE user_id = @uid;",
                                 new { hash = hashBytes, uid = userId.Value }, tx);
-    
-        // mark token used + capture context
-        var uaRaw = Request.Headers.UserAgent.ToString();
-        var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
-        var ipBytes = GetClientIpBinary(HttpContext);
-        
-        await conn.ExecuteAsync(@"
-            UPDATE password_resets
-               SET used_at    = UTC_TIMESTAMP(3),
-                   ip_address = @ip,
-                   user_agent = @ua
-             WHERE id = @id;",
-            new { id, ip = ipBytes, ua = ua255 }, tx);
 
     
-        // optional but recommended: invalidate all sessions after password change
-        await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;", new { uid = userId }, tx);
-    
-        await tx.CommitAsync(ct);
-        return NoContent();
+        
+
+        try
+        {
+            // mark token used + capture context
+                var uaRaw = Request.Headers.UserAgent.ToString();
+                var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
+                var ipBytes = GetClientIpBinary(HttpContext);
+                
+                await conn.ExecuteAsync(@"
+                    UPDATE password_resets
+                       SET used_at    = UTC_TIMESTAMP(3),
+                           ip_address = @ip,
+                           user_agent = @ua
+                     WHERE id = @id;",
+                    new { id, ip = ipBytes, ua = ua255 }, tx);
+        
+            
+                // optional but recommended: invalidate all sessions after password change
+                await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;", new { uid = userId }, tx);
+            
+                await tx.CommitAsync(ct);
+                return NoContent();
+        }
+        catch (Exception ex)
+        {
+        #if DEBUG
+            await tx.RollbackAsync(ct);
+            return Problem(detail: ex.Message); // shows in your page as "Reset failed (500). <message>"
+        #else
+            await tx.RollbackAsync(ct);
+            _log.LogError(ex, "Reset failed");
+            return StatusCode(500);
+        #endif
+        }
     }
 
 
