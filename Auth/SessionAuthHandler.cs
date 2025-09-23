@@ -22,10 +22,12 @@ public class SessionAuthHandler : AuthenticationHandler<AuthenticationSchemeOpti
         if (string.IsNullOrWhiteSpace(auth) || !auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             return AuthenticateResult.NoResult();
 
+        /*
         var tokenHex = auth.Substring("Bearer ".Length).Trim();
         if (tokenHex.Length != 64) return AuthenticateResult.Fail("Bad token.");
 
         byte[] tokenHash;
+        tokenHash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(tokenHex));
         try { tokenHash = SHA256.HashData(Convert.FromHexString(tokenHex)); }
         catch { return AuthenticateResult.Fail("Bad token format."); }
 
@@ -35,7 +37,22 @@ public class SessionAuthHandler : AuthenticationHandler<AuthenticationSchemeOpti
             FROM sessions
             WHERE id = @id
             LIMIT 1;", new { id = tokenHash });
-
+        */
+        var tokenHex = auth.Substring("Bearer ".Length).Trim();
+        if (tokenHex.Length != 64) return AuthenticateResult.Fail("Bad token.");
+        
+        byte[] tokenHash;
+        // IMPORTANT: hash the UTF-8 of the hex string to match MakeToken()
+        try { tokenHash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(tokenHex)); }
+        catch { return AuthenticateResult.Fail("Bad token format."); }
+        
+        await using var conn = new MySqlConnector.MySqlConnection(_connString);
+        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt)?>(@"
+            SELECT user_id, expires_at
+            FROM sessions
+            WHERE id = @id
+            LIMIT 1;", new { id = tokenHash });
+    
         if (row is null || row.Value.ExpiresAt <= DateTime.UtcNow)
             return AuthenticateResult.Fail("Expired or unknown session.");
 
