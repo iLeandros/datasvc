@@ -232,13 +232,12 @@ public class AuthController : ControllerBase
     
         var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
     
-        await using var conn = new MySqlConnection(_connString);
-        await conn.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-    
         try
         {
-            // 1) Lock valid token
+            await using var conn = new MySqlConnection(_connString);
+            await conn.OpenAsync(ct);
+            await using var tx = await conn.BeginTransactionAsync(ct);
+    
             var userId = await conn.QuerySingleOrDefaultAsync<ulong?>(@"
                 SELECT user_id
                 FROM password_resets
@@ -246,8 +245,7 @@ public class AuthController : ControllerBase
                   AND used_at IS NULL
                   AND expires_at > UTC_TIMESTAMP(3)
                 FOR UPDATE
-                LIMIT 1;",
-                new { id }, tx);
+                LIMIT 1;", new { id }, tx);
     
             if (userId is null)
             {
@@ -255,9 +253,9 @@ public class AuthController : ControllerBase
                 return NotFound("Reset link is invalid, expired, or already used.");
             }
     
-            // 2) Update password (bcrypt)
-            var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword); // 60-char bcrypt
-            var hashBytes  = Encoding.UTF8.GetBytes(hashString);              // store as VARBINARY
+            var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword); // ~60 chars
+            var hashBytes  = Encoding.UTF8.GetBytes(hashString);
+    
             await conn.ExecuteAsync(@"
                 UPDATE user_auth
                    SET password_hash = @hash,
@@ -265,7 +263,6 @@ public class AuthController : ControllerBase
                  WHERE user_id = @uid;",
                 new { hash = hashBytes, uid = userId.Value }, tx);
     
-            // 3) Mark token used (cap UA to 255; IP 4/16 bytes or null)
             var uaRaw = Request.Headers.UserAgent.ToString();
             var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
             var ip    = GetClientIpBinary(HttpContext);
@@ -278,8 +275,7 @@ public class AuthController : ControllerBase
                  WHERE id = @id;",
                 new { id, ip, ua = ua255 }, tx);
     
-            // 4) Invalidate sessions
-            await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id = @uid;",
+            await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;",
                 new { uid = userId.Value }, tx);
     
             await tx.CommitAsync(ct);
@@ -287,17 +283,10 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-    #if DEBUG
-            await tx.RollbackAsync(ct);
-            return Problem(detail: ex.Message);
-    #else
-            await tx.RollbackAsync(ct);
-            _log.LogError(ex, "Reset failed");
-            return StatusCode(500);
-    #endif
+            // DEBUG: surface the exact cause so we can fix it quickly
+            return StatusCode(500, ex.Message);
         }
     }
-
 
 
     [HttpGet("reset/validate")]
