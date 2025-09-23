@@ -314,6 +314,21 @@ app.MapGet("/reset", async ctx =>
 	await ctx.Response.WriteAsync(html);
 
 });
+app.MapPost("/v1/auth/reset", async (HttpContext ctx, [FromServices] AuthController ctrl, CancellationToken ct) =>
+{
+    var req = await ctx.Request.ReadFromJsonAsync<ResetRequest>(cancellationToken: ct);
+    if (req is null) return Results.BadRequest("Missing body.");
+    var result = await ctrl.ResetPassword(req, ct);
+    return result switch
+    {
+        OkResult           => Results.Ok(),
+        NoContentResult    => Results.NoContent(),
+        NotFoundResult     => Results.NotFound(),
+        BadRequestObjectResult bad => Results.BadRequest(bad.Value),
+        ObjectResult obj when obj.StatusCode is int sc => Results.StatusCode(sc),
+        _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
+    };
+});
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
