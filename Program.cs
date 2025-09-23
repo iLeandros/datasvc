@@ -192,9 +192,9 @@ app.MapGet("/reset", async ctx =>
     var token = ctx.Request.Query["token"].ToString();
 
     // Only show the page if a 64-hex token is present
-    var hasToken = !string.IsNullOrEmpty(token)
-                   && token.Length == 64
-                   && System.Text.RegularExpressions.Regex.IsMatch(token, "^[0-9a-fA-F]{64}$");
+    bool hasToken = !string.IsNullOrEmpty(token)
+                    && token.Length == 64
+                    && System.Text.RegularExpressions.Regex.IsMatch(token, "^[0-9a-fA-F]{64}$");
 
     if (!hasToken)
     {
@@ -204,37 +204,63 @@ app.MapGet("/reset", async ctx =>
 
     var encodedToken = System.Net.WebUtility.HtmlEncode(token);
     var html = @$"<!DOCTYPE html>
-					<html><head><meta charset=""utf-8""><title>Reset Password</title></head>
+					<html>
+					<head>
+					  <meta charset=""utf-8"">
+					  <title>Reset Password</title>
+					  <meta name=""referrer"" content=""no-referrer"">
+					  <meta name=""viewport"" content=""width=device-width, initial-scale=1"">
+					</head>
 					<body style=""font-family:sans-serif;max-width:480px;margin:4rem auto"">
 					  <h1>Reset password</h1>
-					  <form onsubmit=""submit(event)"">
+					
+					  <form id=""form"">
 					    <input type=""hidden"" id=""token"" value=""{encodedToken}"">
 					    <label>New password</label><br>
 					    <input id=""pw"" type=""password"" minlength=""8"" required style=""width:100%;padding:8px""><br><br>
-					    <button type=""submit"">Reset</button>
+					    <button id=""btn"" type=""submit"">Reset</button>
 					  </form>
+					
 					  <p id=""msg""></p>
+					
 					  <script>
-					    async function submit(e) {{
-					      e.preventDefault();
+					    const form = document.getElementById('form');
+					    const btn  = document.getElementById('btn');
+					    const msg  = document.getElementById('msg');
+					
+					    form.addEventListener('submit', async function doReset(e) {{
+					      e.preventDefault();                                // stop navigation
+					      btn.disabled = true;
+					
 					      const token = document.getElementById('token').value;
-					      const pw = document.getElementById('pw').value;
-					      const r = await fetch('/v1/auth/reset', {{
-					        method: 'POST',
-					        headers: {{ 'Content-Type': 'application/json' }},
-					        body: JSON.stringify({{ token: token, newPassword: pw }})
-					      }});
-					      document.getElementById('msg').textContent = r.ok
-					        ? 'Password changed. You can close this tab.'
-					        : 'Reset failed.';
-					    }}
+					      const pw    = document.getElementById('pw').value;
+					
+					      try {{
+					        const r = await fetch('/v1/auth/reset', {{
+					          method: 'POST',
+					          headers: {{ 'Content-Type': 'application/json' }},
+					          body: JSON.stringify({{ token: token, newPassword: pw }})
+					        }});
+					
+					        if (r.ok) {{
+					          msg.textContent = 'Password changed. You can close this tab.';
+					          form.style.display = 'none';                   // hide the form
+					        }} else {{
+					          msg.textContent = 'Reset failed. The link may be invalid or expired.';
+					          btn.disabled = false;
+					        }}
+					      }} catch {{
+					        msg.textContent = 'Network error. Please try again.';
+					        btn.disabled = false;
+					      }}
+					    }});
 					  </script>
-					</body></html>";
+					</body>
+					</html>";
 
     ctx.Response.ContentType = "text/html; charset=utf-8";
     await ctx.Response.WriteAsync(html);
 });
-
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
