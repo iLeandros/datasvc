@@ -144,6 +144,24 @@ app.Use(async (ctx, next) =>
     await next();
 });
 
+app.Use(async (ctx, next) =>
+{
+    try
+    {
+        await next();
+    }
+    catch (Exception ex)
+    {
+        // Print to console AND return body so curl shows it
+        Console.WriteLine("UNHANDLED: " + ex);
+        if (!ctx.Response.HasStarted)
+        {
+            ctx.Response.StatusCode = 500;
+            ctx.Response.ContentType = "text/plain; charset=utf-8";
+            await ctx.Response.WriteAsync(ex.ToString());
+        }
+    }
+});
 
 
 // Show errors while debugging
@@ -321,6 +339,9 @@ app.MapPost("/v1/auth/reset", async (
     [FromServices] DataSvc.Auth.AuthController ctrl,
     CancellationToken ct) =>
 {
+	if (ctx.Request.Headers.ContainsKey("X-Debug-Bridge"))
+        return Results.Text("bridge-hit", "text/plain");
+	
     var req = await ctx.Request.ReadFromJsonAsync<DataSvc.Auth.AuthController.ResetRequest>(cancellationToken: ct);
     if (req is null) return Results.BadRequest("Missing body.");
 
