@@ -852,26 +852,31 @@ public class AuthController : ControllerBase
         => ctx.Connection.RemoteIpAddress?.MapToIPv6().GetAddressBytes();
 
     // FIXED: instance-based; claims first, then Items["user_id"]
+    // In AuthController (inside the class)
     private bool TryGetUserId(out ulong userId)
     {
         userId = 0;
-
+    
+        // 1) Prefer claims (works with NameIdentifier/uid/sub)
         var claim =
             User?.FindFirst("uid")?.Value ??
             User?.FindFirst(ClaimTypes.NameIdentifier)?.Value ??
             User?.FindFirst("sub")?.Value;
-
+    
         if (!string.IsNullOrEmpty(claim) && ulong.TryParse(claim, out userId))
             return true;
-
-        if (HttpContext?.Items.TryGetValue("user_id", out var v) == true)
+    
+        // 2) Then HttpContext.Items: support both snake_case and camelCase
+        if (HttpContext?.Items.TryGetValue("user_id", out var v) == true ||
+            HttpContext?.Items.TryGetValue("userId",  out v) == true) // <— added
         {
             if (v is ulong ul) { userId = ul; return true; }
             if (ulong.TryParse(v?.ToString(), out userId)) return true;
         }
-
+    
         return false;
     }
+
 
     private static async Task<UserDto> LoadUserDto(IDbConnection conn, ulong userId, CancellationToken ct)
     {
