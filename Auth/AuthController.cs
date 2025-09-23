@@ -31,6 +31,11 @@ public class AuthController : ControllerBase
     }
 
     // ====== DTOs ======
+    public sealed class ForgotPasswordRequest { public string Email { get; set; } = ""; }
+    public sealed class ResetPasswordRequest  { public string Token { get; set; } = ""; public string NewPassword { get; set; } = ""; }
+    public sealed class DeleteAccountRequest  { public string? Password { get; set; } } // optional for social-only users
+
+
     public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
     public sealed class LoginRequest    { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
     public sealed class LoginResponse   { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
@@ -147,6 +152,172 @@ public class AuthController : ControllerBase
         });
     }
 
+    // ====== FORGOT PASSWORD ======
+    [HttpPost("forgot")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Forgot([FromBody] ForgotPasswordRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+    
+        var email = (req.Email ?? "").Trim();
+        if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
+            return NoContent(); // don't reveal if email exists
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+    
+        // Look up user_id by normalized email (mirrors your login/register queries)
+        var userId = await conn.ExecuteScalarAsync<ulong?>(@"
+            SELECT ua.user_id
+            FROM user_auth ua
+            WHERE ua.email_norm = LOWER(TRIM(@em)) OR ua.email = @em
+            LIMIT 1;", new { em = email });
+    
+        // Always respond 204 to avoid user enumeration
+        if (userId is null) return NoContent();
+    
+        // Make a one-time token, store only hash (same pattern as sessions)  (MakeToken) 
+        var (token, tokenHash) = MakeToken();  // :contentReference[oaicite:2]{index=2}
+    
+        // typical 60 minutes validity
+        var expiresAt = DateTime.UtcNow.AddMinutes(60);
+    
+        // Upsert so multiple requests don't flood table (optional)
+        await conn.ExecuteAsync(@"
+            INSERT INTO password_resets (id, user_id, created_at, expires_at, used_at, ip_address, user_agent)
+            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, NULL, @ip, @ua)
+            ON DUPLICATE KEY UPDATE
+                created_at = VALUES(created_at),
+                expires_at = VALUES(expires_at),
+                used_at    = NULL,
+                ip_address = VALUES(ip_address),
+                user_agent = VALUES(user_agent);",
+            new
+            {
+                id = tokenHash,
+                uid = userId.Value,
+                exp = expiresAt,
+                ip = GetClientIpBinary(HttpContext),
+                ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+            });
+    
+    #if DEBUG
+        // In dev you might want to see the token in logs or response (remove in prod!)
+        _log.LogInformation("Password reset token for {Email}: {Token}", email, token);
+        return Ok(new { devToken = token, expiresAt });
+    #else
+        // TODO: send email with link containing ?token={token}
+        return NoContent();
+    #endif
+    }
+    
+    // ====== RESET PASSWORD ======
+    [HttpPost("reset")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Reset([FromBody] ResetPasswordRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+    
+        var tokenHex = (req.Token ?? "").Trim();
+        if (tokenHex.Length != 64) return BadRequest(new { error = "Invalid token." });
+        if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
+            return BadRequest(new { error = "Password must be at least 8 characters." });
+    
+        // hash provided token (same as how SessionAuthHandler checks sessions) :contentReference[oaicite:3]{index=3}
+        var (_, tokenHash) = MakeToken(tokenHex); // :contentReference[oaicite:4]{index=4}
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        // 1) fetch reset row (valid & unused)
+        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt, DateTime? UsedAt)?>(@"
+            SELECT user_id, expires_at, used_at
+            FROM password_resets
+            WHERE id = @id
+            LIMIT 1;", new { id = tokenHash }, tx);
+    
+        if (row is null) { await tx.RollbackAsync(ct); return NotFound(new { error = "Token not found." }); }
+        if (row.Value.UsedAt is not null) { await tx.RollbackAsync(ct); return BadRequest(new { error = "Token already used." }); }
+        if (row.Value.ExpiresAt <= DateTime.UtcNow) { await tx.RollbackAsync(ct); return BadRequest(new { error = "Token expired." }); }
+    
+        var userId = row.Value.UserId;
+    
+        // 2) update password (store bcrypt string as bytes, like register/login do) :contentReference[oaicite:5]{index=5}
+        var hashStr = BCrypt.Net.BCrypt.HashPassword(req.NewPassword, workFactor: 12);
+        var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
+    
+        await conn.ExecuteAsync(@"
+            UPDATE user_auth
+            SET password_hash = @hash
+            WHERE user_id = @uid;", new { uid = userId, hash = hashBytes }, tx);
+    
+        // 3) mark token used
+        await conn.ExecuteAsync(@"
+            UPDATE password_resets
+            SET used_at = CURRENT_TIMESTAMP(3)
+            WHERE id = @id;", new { id = tokenHash }, tx);
+    
+        // 4) revoke all sessions for that user (force re-login everywhere)  :contentReference[oaicite:6]{index=6}
+        await conn.ExecuteAsync("DELETE FROM sessions WHERE user_id = @uid;", new { uid = userId }, tx);
+    
+        await tx.CommitAsync(ct);
+        return NoContent();
+    }
+    
+    // ====== DELETE ACCOUNT ======
+    [HttpDelete("account")]
+    [Authorize]
+    public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountRequest req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var uid)) return Unauthorized(); // :contentReference[oaicite:7]{index=7}
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        // If user has a password, verify if provided (social-only accounts may have 0x00 or empty hash)
+        var auth = await conn.QuerySingleOrDefaultAsync<(string? Hash)>(@"
+            SELECT CAST(password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS Hash
+            FROM user_auth WHERE user_id = @uid LIMIT 1;", new { uid }, tx);
+    
+        if (!string.IsNullOrWhiteSpace(auth.Hash))
+        {
+            // password present -> require match
+            if (string.IsNullOrWhiteSpace(req.Password) || !BCrypt.Net.BCrypt.Verify(req.Password, auth.Hash))
+            {
+                await tx.RollbackAsync(ct);
+                return Unauthorized(new { error = "Password required to delete account." });
+            }
+        }
+    
+        // Delete child rows first to satisfy FKs; mirrors tables you already use (sessions, identities, roles, profile, auth)
+        await conn.ExecuteAsync("DELETE FROM sessions         WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_identities  WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_roles       WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_profile     WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_auth        WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM password_resets  WHERE user_id = @uid;", new { uid }, tx);
+    
+        // Finally the user row
+        await conn.ExecuteAsync("DELETE FROM users WHERE id = @uid;", new { uid }, tx);
+    
+        await tx.CommitAsync(ct);
+    
+        // best-effort: also remove current bearer session if sent
+        var tok = GetBearerToken(Request);
+        if (!string.IsNullOrEmpty(tok))
+        {
+            var (_, h) = MakeToken(tok); // hash existing token  :contentReference[oaicite:8]{index=8}
+            await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = h });
+        }
+    
+        return NoContent();
+    }
 
     
     // GET profile
