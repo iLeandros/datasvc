@@ -99,6 +99,32 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
+// after: var app = builder.Build();
+app.Use(async (ctx, next) =>
+{
+    var host = ctx.Request.Host.Host.ToLowerInvariant();
+    if (host == "scorespredict.com" || host == "www.scorespredict.com")
+    {
+        // Empty homepage
+        if (ctx.Request.Path == "/" || ctx.Request.Path == "/index.html")
+        {
+            ctx.Response.StatusCode = 204; // No Content (blank page)
+            return;
+            // Or, to show a minimal blank HTML page:
+            // ctx.Response.ContentType = "text/html; charset=utf-8";
+            // await ctx.Response.WriteAsync("");
+            // return;
+        }
+
+        // Everything else on scorespredict.com -> 404
+        ctx.Response.StatusCode = 404;
+        return;
+    }
+
+    await next();
+});
+
+
 // Show errors while debugging
 if (app.Environment.IsDevelopment())
 {
