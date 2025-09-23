@@ -265,9 +265,10 @@ public class AuthController : ControllerBase
             return BadRequest("Password too short.");
     
         // 2) Derive the binary id we store (UNHEX(SHA2(token,256)))
-        var tokenHex = req.Token.ToLowerInvariant();
-        var tokenBytes = System.Text.Encoding.UTF8.GetBytes(tokenHex); // hash the string as we inserted it
-        var id = System.Security.Cryptography.SHA256.HashData(tokenBytes); // 32 bytes
+        //var tokenHex = req.Token.ToLowerInvariant();
+        //var tokenBytes = System.Text.Encoding.UTF8.GetBytes(tokenHex); // hash the string as we inserted it
+        //var id = System.Security.Cryptography.SHA256.HashData(tokenBytes); // 32 bytes
+        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token)); // 32 bytes
     
         await using var conn = new MySqlConnector.MySqlConnection(_connString);
         await conn.OpenAsync(ct);
@@ -291,7 +292,7 @@ public class AuthController : ControllerBase
         }
     
         long userId = (long)row.user_id;
-    
+        /*
         // 4) Hash the new password (BCrypt)
         var newHash = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
     
@@ -301,7 +302,19 @@ public class AuthController : ControllerBase
                 UPDATE user_auth
                    SET password_hash = @hash
                  WHERE user_id = @uid;", new { hash = newHash, uid = userId }, tx, cancellationToken: ct));
-    
+        */
+        // 4) Hash the new password (BCrypt)
+        var newHashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
+        var newHashBytes  = Encoding.UTF8.GetBytes(newHashString);
+        
+        // 5) Update user password + mark token used
+        await conn.ExecuteAsync(
+            new CommandDefinition(@"
+                UPDATE user_auth
+                   SET password_hash = @hash
+                 WHERE user_id = @uid;",
+                new { hash = newHashBytes, uid = userId }, tx, cancellationToken: ct));
+
         // capture context info (optional)
         byte[]? ipBytes = null;
         if (HttpContext.Connection.RemoteIpAddress is not null)
