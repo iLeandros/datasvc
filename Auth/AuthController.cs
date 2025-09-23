@@ -202,7 +202,7 @@ public class AuthController : ControllerBase
         await conn.ExecuteAsync(@"
             INSERT INTO password_resets
                    (id, token_hash, user_id, created_at, expires_at, used_at, ip_address, user_agent)
-            VALUES (@id, @id,        @uid,  CURRENT_TIMESTAMP(3), @exp, NULL, @ip,       @ua);",
+            VALUES (@id, @id,        @uid,  CURRENT_TIMESTAMP(), @exp, NULL, @ip,       @ua);",
             new {
                 id  = tokenHash,
                 uid = userId.Value,
@@ -246,7 +246,7 @@ public class AuthController : ControllerBase
                 FROM password_resets
                 WHERE id = @id
                   AND used_at IS NULL
-                  AND expires_at > UTC_TIMESTAMP(3)
+                  AND expires_at > UTC_TIMESTAMP()
                 FOR UPDATE
                 LIMIT 1;", new { id }, tx);
     
@@ -262,7 +262,7 @@ public class AuthController : ControllerBase
             await conn.ExecuteAsync(@"
                 UPDATE user_auth
                    SET password_hash = @hash,
-                       updated_at    = UTC_TIMESTAMP(3)
+                       updated_at    = UTC_TIMESTAMP()
                  WHERE user_id = @uid;",
                 new { hash = hashBytes, uid = userId.Value }, tx);
     
@@ -272,7 +272,7 @@ public class AuthController : ControllerBase
     
             await conn.ExecuteAsync(@"
                 UPDATE password_resets
-                   SET used_at    = UTC_TIMESTAMP(3),
+                   SET used_at    = UTC_TIMESTAMP(),
                        ip_address = @ip,
                        user_agent = @ua
                  WHERE id = @id;",
@@ -358,7 +358,7 @@ public class AuthController : ControllerBase
                 FROM password_resets
                 WHERE id = @id
                   AND used_at IS NULL
-                  AND expires_at > UTC_TIMESTAMP(3)
+                  AND expires_at > UTC_TIMESTAMP()
                 LIMIT 1;", new { id }, transaction: tx, cancellationToken: ct));
     
         if (row is null)
@@ -401,7 +401,7 @@ public class AuthController : ControllerBase
         await conn.ExecuteAsync(
             new CommandDefinition(@"
                 UPDATE password_resets
-                   SET used_at = UTC_TIMESTAMP(3),
+                   SET used_at = UTC_TIMESTAMP(),
                        ip_address = @ip,
                        user_agent = @ua
                  WHERE id = @id;", new { id, ip = ipBytes, ua }, tx, cancellationToken: ct));
@@ -458,7 +458,7 @@ public class AuthController : ControllerBase
         // 3) Mark token as used and purge any other outstanding reset tokens for that user
         await conn.ExecuteAsync(@"
             UPDATE password_resets
-            SET used_at = UTC_TIMESTAMP(3)
+            SET used_at = UTC_TIMESTAMP()
             WHERE id = @id;", new { id = tokenHash }, tx);
     
         await conn.ExecuteAsync(@"
@@ -653,7 +653,7 @@ public class AuthController : ControllerBase
             var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
             await conn.ExecuteAsync(@"
                 INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
-                VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+                VALUES (@id, @uid, CURRENT_TIMESTAMP(), @exp, @ip, @ua);",
                 new
                 {
                     id = tokenHash,
@@ -736,7 +736,7 @@ public class AuthController : ControllerBase
 
             await conn.ExecuteAsync(@"
                 INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
-                VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+                VALUES (@id, @uid, CURRENT_TIMESTAMP(), @exp, @ip, @ua);",
                 new
                 {
                     id = tokenHash,
@@ -797,7 +797,7 @@ public class AuthController : ControllerBase
         await using var conn = new MySqlConnection(_connString);
         await conn.ExecuteAsync(@"
             INSERT INTO sessions (id, user_id, created_at, expires_at, ip_address, user_agent)
-            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, @ip, @ua);",
+            VALUES (@id, @uid, CURRENT_TIMESTAMP(), @exp, @ip, @ua);",
             new
             {
                 id = tokenHash,
