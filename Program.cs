@@ -105,24 +105,30 @@ app.Use(async (ctx, next) =>
     var host = ctx.Request.Host.Host.ToLowerInvariant();
     if (host == "scorespredict.com" || host == "www.scorespredict.com")
     {
-        // Empty homepage
-        if (ctx.Request.Path == "/" || ctx.Request.Path == "/index.html")
+        var path = ctx.Request.Path.Value ?? "";
+
+        // Allow reset page + APIs through to the app
+        if (path.StartsWith("/reset") || path.StartsWith("/v1/auth/reset"))
         {
-            ctx.Response.StatusCode = 204; // No Content (blank page)
+            await next();
             return;
-            // Or, to show a minimal blank HTML page:
-            // ctx.Response.ContentType = "text/html; charset=utf-8";
-            // await ctx.Response.WriteAsync("");
-            // return;
         }
 
-        // Everything else on scorespredict.com -> 404
+        // Blank home
+        if (path == "/" || path == "/index.html")
+        {
+            ctx.Response.StatusCode = 204;
+            return;
+        }
+
+        // Everything else is hidden
         ctx.Response.StatusCode = 404;
         return;
     }
 
     await next();
 });
+
 
 
 // Show errors while debugging
