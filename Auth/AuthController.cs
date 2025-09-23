@@ -229,11 +229,10 @@ public class AuthController : ControllerBase
             return BadRequest("Invalid token.");
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
             return BadRequest("Password too short.");
-    
-        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
-    
+
         try
         {
+            var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
