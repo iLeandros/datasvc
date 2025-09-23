@@ -185,22 +185,24 @@ public class AuthController : ControllerBase
     
         // Upsert so multiple requests don't flood table (optional)
         await conn.ExecuteAsync(@"
-            INSERT INTO password_resets (id, user_id, created_at, expires_at, used_at, ip_address, user_agent)
-            VALUES (@id, @uid, CURRENT_TIMESTAMP(3), @exp, NULL, @ip, @ua)
-            ON DUPLICATE KEY UPDATE
-                created_at = VALUES(created_at),
-                expires_at = VALUES(expires_at),
-                used_at    = NULL,
-                ip_address = VALUES(ip_address),
-                user_agent = VALUES(user_agent);",
-            new
-            {
-                id = tokenHash,
-                uid = userId.Value,
-                exp = expiresAt,
-                ip = GetClientIpBinary(HttpContext),
-                ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
-            });
+                                    INSERT INTO password_resets
+                                        (id, token_hash, user_id, created_at, expires_at, used_at, ip_address, user_agent)
+                                    VALUES
+                                        (@id, @id, @uid, CURRENT_TIMESTAMP(3), @exp, NULL, @ip, @ua)
+                                    ON DUPLICATE KEY UPDATE
+                                        created_at = VALUES(created_at),
+                                        expires_at = VALUES(expires_at),
+                                        used_at    = NULL,
+                                        ip_address = VALUES(ip_address),
+                                        user_agent = VALUES(user_agent);",
+                                    new {
+                                        id = tokenHash,
+                                        uid = userId.Value,
+                                        exp = expiresAt,
+                                        ip = GetClientIpBinary(HttpContext),
+                                        ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+                                    });
+
     
     #if DEBUG
         // In dev you might want to see the token in logs or response (remove in prod!)
@@ -212,6 +214,26 @@ public class AuthController : ControllerBase
     #endif
     }
     
+    [HttpGet("reset/validate")]
+    [AllowAnonymous]
+    public async Task<IActionResult> ValidateReset([FromQuery] string token, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
+        if (string.IsNullOrWhiteSpace(token) || token.Length != 64) return NotFound();
+    
+        byte[] tokenHash;
+        try { tokenHash = SHA256.HashData(Convert.FromHexString(token)); }
+        catch { return NotFound(); }
+    
+        await using var conn = new MySqlConnection(_connString);
+        var row = await conn.QuerySingleOrDefaultAsync<(DateTime ExpiresAt, DateTime? UsedAt)?>(@"
+            SELECT expires_at, used_at FROM password_resets WHERE id = @id LIMIT 1;",
+            new { id = tokenHash });
+    
+        if (row is null || row.Value.UsedAt is not null || row.Value.ExpiresAt <= DateTime.UtcNow) return NotFound();
+        return NoContent();
+    }
+
     // ====== RESET PASSWORD ======
     [HttpPost("reset")]
     [AllowAnonymous]
