@@ -102,6 +102,13 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.Use(async (ctx, next) =>
+{
+    await next();
+    var ep = ctx.GetEndpoint()?.DisplayName ?? "(no endpoint)";
+    Console.WriteLine($"[{ctx.Response.StatusCode}] {ctx.Request.Method} {ctx.Request.Path} -> {ep}");
+});
+
 // after: var app = builder.Build();
 app.Use(async (ctx, next) =>
 {
