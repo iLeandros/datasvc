@@ -16,11 +16,7 @@ public sealed class AuthOptions
 {
     public string GoogleWebClientId { get; set; } = "";
 }
-public sealed class ResetRequest
-{
-    public string Token { get; set; } = "";
-    public string NewPassword { get; set; } = "";
-}
+
 [ApiController]
 [Route("v1/auth")]
 public class AuthController : ControllerBase
@@ -40,7 +36,12 @@ public class AuthController : ControllerBase
     public sealed class ResetPasswordRequest  { public string Token { get; set; } = ""; public string NewPassword { get; set; } = ""; }
     public sealed class DeleteAccountRequest  { public string? Password { get; set; } } // optional for social-only users
 
-
+    public sealed class ResetRequest
+    {
+        public string Token { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
+    
     public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
     public sealed class LoginRequest    { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
     public sealed class LoginResponse   { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
