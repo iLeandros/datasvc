@@ -333,6 +333,7 @@ app.MapGet("/reset", async ctx =>
 
 });
 
+/*
 // Program.cs
 app.MapPost("/v1/auth/reset", async (
     HttpContext ctx,
@@ -364,7 +365,7 @@ app.MapPost("/v1/auth/reset", async (
         _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
     };
 });
-
+*/
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
