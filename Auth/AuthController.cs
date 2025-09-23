@@ -242,7 +242,7 @@ public class AuthController : ControllerBase
         await using var tx = await conn.BeginTransactionAsync(ct);
     
         // lock the token row to make it single-use under concurrency
-        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId)?>(@"
+        var userId = await conn.QuerySingleOrDefaultAsync<ulong?>(@"
             SELECT user_id
             FROM password_resets
             WHERE id = @id
@@ -251,8 +251,8 @@ public class AuthController : ControllerBase
             FOR UPDATE
             LIMIT 1;",
             new { id }, tx);
-    
-        if (row is null)
+        
+        if (userId is null)
         {
             await tx.RollbackAsync(ct);
             return NotFound(); // invalid/expired/used
@@ -265,11 +265,11 @@ public class AuthController : ControllerBase
         var hashBytes  = Encoding.UTF8.GetBytes(hashString);
     
         await conn.ExecuteAsync(@"
-            UPDATE user_auth
-               SET password_hash = @hash,
-                   updated_at    = UTC_TIMESTAMP(3)
-             WHERE user_id = @uid;",
-            new { hash = hashBytes, uid = userId }, tx);
+                                UPDATE user_auth
+                                   SET password_hash = @hash,
+                                       updated_at    = UTC_TIMESTAMP(3)
+                                 WHERE user_id = @uid;",
+                                new { hash = hashBytes, uid = userId.Value }, tx);
     
         // mark token used + capture context
         byte[]? ipBytes = GetClientIpBinary(HttpContext);
