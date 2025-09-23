@@ -296,11 +296,11 @@ app.MapGet("/reset", async ctx =>
 					          msg.textContent = 'Password changed. You can close this tab.';
 					          form.style.display = 'none';
 					        }} else {{
-					          msg.textContent = 'Reset failed. The link may be invalid or expired.';
+					          msg.textContent = 'Reset failed (' + r.status + '). ' + (bodyText || 'The link may be invalid or expired.');
 					          btn.disabled = false;
 					        }}
 					      }} catch {{
-					        msg.textContent = 'Reset failed (' + r.status + '). ' + (bodyText || 'The link may be invalid or expired.');
+					        msg.textContent = 'Network error. Please try again.';
 					        btn.disabled = false;
 					      }}
 					    }});
