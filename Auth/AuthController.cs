@@ -694,7 +694,7 @@ public class AuthController : ControllerBase
 
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
-
+            /*
             var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
                 SELECT
                     ua.user_id AS UserId,
@@ -707,7 +707,26 @@ public class AuthController : ControllerBase
 
             if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
                 return Unauthorized(new { error = "Invalid email or password." });
-
+            */
+            // Fetch user + hash as string
+            var auth = await conn.QuerySingleOrDefaultAsync<UserAuthRow>(@"
+                SELECT
+                    ua.user_id AS UserId,
+                    ua.email   AS Email,
+                    CAST(ua.password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS PasswordHash
+                FROM user_auth ua
+                JOIN users u ON u.id = ua.user_id
+                WHERE ua.email_norm = LOWER(TRIM(@email)) OR ua.email = @email
+                LIMIT 1;",
+                new { email = req.Email });
+            
+            if (auth is null || string.IsNullOrWhiteSpace(auth.PasswordHash))
+                return Unauthorized(new { error = "Invalid email or password." }); // also covers social-only accounts
+            
+            // Verify BCrypt
+            if (!BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash))
+                return Unauthorized(new { error = "Invalid email or password." });
+                
             bool ok;
             try { ok = BCrypt.Net.BCrypt.Verify(req.Password, auth.PasswordHash); }
             catch { return Unauthorized(new { error = "Invalid email or password." }); }
