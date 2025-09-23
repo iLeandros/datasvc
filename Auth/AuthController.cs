@@ -168,7 +168,7 @@ public class AuthController : ControllerBase
         });
     }
 
-    // ====== FORGOT PASSWORD ======
+    //Forgot password
     [HttpPost("forgot")]
     [AllowAnonymous]
     public async Task<IActionResult> Forgot([FromBody] ForgotPasswordRequest req, CancellationToken ct)
@@ -178,67 +178,55 @@ public class AuthController : ControllerBase
     
         var email = (req.Email ?? "").Trim();
         if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
-            return NoContent(); // don't reveal if email exists
+            return NoContent(); // do not reveal
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
     
-        // Look up user_id by normalized email (mirrors your login/register queries)
         var userId = await conn.ExecuteScalarAsync<ulong?>(@"
             SELECT ua.user_id
             FROM user_auth ua
             WHERE ua.email_norm = LOWER(TRIM(@em)) OR ua.email = @em
             LIMIT 1;", new { em = email });
     
-        // Always respond 204 to avoid user enumeration
-        if (userId is null) return NoContent();
+        // always behave the same
+        if (userId is null) return NoContent("User (e-mail) not found.");
     
-        // Make a one-time token, store only hash (same pattern as sessions)  (MakeToken) 
-        var (token, tokenHash) = MakeToken();  // :contentReference[oaicite:2]{index=2}
-    
-        // typical 60 minutes validity
+        var (token, tokenHash) = MakeToken();                         // SHA256(UTF8(tokenHex))  :contentReference[oaicite:0]{index=0}
         var expiresAt = DateTime.UtcNow.AddMinutes(60);
     
-        // Upsert so multiple requests don't flood table (optional)
+        // optional: ensure single active reset per user
+        await conn.ExecuteAsync(
+            "DELETE FROM password_resets WHERE user_id=@uid AND used_at IS NULL;",
+            new { uid = userId.Value });
+    
         await conn.ExecuteAsync(@"
-                                    INSERT INTO password_resets
-                                        (id, token_hash, user_id, created_at, expires_at, used_at, ip_address, user_agent)
-                                    VALUES
-                                        (@id, @id, @uid, CURRENT_TIMESTAMP(3), @exp, NULL, @ip, @ua)
-                                    ON DUPLICATE KEY UPDATE
-                                        created_at = VALUES(created_at),
-                                        expires_at = VALUES(expires_at),
-                                        used_at    = NULL,
-                                        ip_address = VALUES(ip_address),
-                                        user_agent = VALUES(user_agent);",
-                                    new {
-                                        id = tokenHash,
-                                        uid = userId.Value,
-                                        exp = expiresAt,
-                                        ip = GetClientIpBinary(HttpContext),
-                                        ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
-                                    });
-
+            INSERT INTO password_resets
+                   (id, token_hash, user_id, created_at, expires_at, used_at, ip_address, user_agent)
+            VALUES (@id, @id,        @uid,  CURRENT_TIMESTAMP(3), @exp, NULL, @ip,       @ua);",
+            new {
+                id  = tokenHash,
+                uid = userId.Value,
+                exp = expiresAt,
+                ip  = GetClientIpBinary(HttpContext),
+                ua  = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
+            });
     
     #if DEBUG
-        // In dev you might want to see the token in logs or response (remove in prod!)
         _log.LogInformation("Password reset token for {Email}: {Token}", email, token);
-        return Ok(new { devToken = token, expiresAt });
+        return Ok(new { devToken = token, expiresAt });               // your current behavior  :contentReference[oaicite:1]{index=1}
     #else
-        // TODO: send email with link containing ?token={token}
-        return NoContent();
+        return NoContent(); // email the link in production
     #endif
     }
-    
+
     //Reset password
     [HttpPost("reset")]
+    [AllowAnonymous]
     public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
     {
-        Console.WriteLine("ResetPassword: entered");
-    
         if (req is null) return BadRequest("Missing body.");
     
-        // 1) Basic validation
         if (string.IsNullOrWhiteSpace(req.Token) ||
             req.Token.Length != 64 ||
             !System.Text.RegularExpressions.Regex.IsMatch(req.Token, "^[0-9a-fA-F]{64}$"))
@@ -247,65 +235,60 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
             return BadRequest("Password too short.");
     
-        // 2) Derive the binary id we store: UNHEX(SHA2(token,256)) => SHA256 of the token *string*
-        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token)); // 32 bytes
+        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));  // same hash convention  :contentReference[oaicite:2]{index=2}
     
-        await using var conn = new MySqlConnector.MySqlConnection(_connString);
+        await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
     
-        // 3) Look up reset row (must exist, not used, not expired)
-        var row = await conn.QuerySingleOrDefaultAsync(
-            new CommandDefinition(@"
-                SELECT user_id
-                FROM password_resets
-                WHERE id = @id
-                  AND used_at IS NULL
-                  AND expires_at > UTC_TIMESTAMP(3)
-                LIMIT 1;",
-                new { id }, transaction: tx, cancellationToken: ct));
+        // lock the token row to make it single-use under concurrency
+        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId)?>(@"
+            SELECT user_id
+            FROM password_resets
+            WHERE id = @id
+              AND used_at IS NULL
+              AND expires_at > UTC_TIMESTAMP(3)
+            FOR UPDATE
+            LIMIT 1;",
+            new { id }, tx);
     
         if (row is null)
         {
             await tx.RollbackAsync(ct);
-            return NotFound();
+            return NotFound(); // invalid/expired/used
         }
     
-        long userId = (long)row.user_id;
+        var userId = row.Value.UserId;
     
-        // 4) Hash the new password (BCrypt) and store as bytes (UTF-8 of the 60-char hash string)
-        var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword); // e.g., "$2a$12$..."
+        // bcrypt hash stored as bytes (to match login path)
+        var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
         var hashBytes  = Encoding.UTF8.GetBytes(hashString);
     
-        await conn.ExecuteAsync(
-            new CommandDefinition(@"
-                UPDATE user_auth
-                   SET password_hash = @hash
-                 WHERE user_id = @uid;",
-                new { hash = hashBytes, uid = userId }, tx, cancellationToken: ct));
+        await conn.ExecuteAsync(@"
+            UPDATE user_auth
+               SET password_hash = @hash,
+                   updated_at    = UTC_TIMESTAMP(3)
+             WHERE user_id = @uid;",
+            new { hash = hashBytes, uid = userId }, tx);
     
-        // 5) Mark token used + store context info
-        byte[]? ipBytes = null;
-        if (HttpContext.Connection.RemoteIpAddress is not null)
-            ipBytes = HttpContext.Connection.RemoteIpAddress.MapToIPv6().GetAddressBytes();
-    
+        // mark token used + capture context
+        byte[]? ipBytes = GetClientIpBinary(HttpContext);
         var ua = HttpContext.Request.Headers["User-Agent"].ToString();
     
-        await conn.ExecuteAsync(
-            new CommandDefinition(@"
-                UPDATE password_resets
-                   SET used_at   = UTC_TIMESTAMP(3),
-                       ip_address = @ip,
-                       user_agent = @ua
-                 WHERE id = @id;",
-                new { id, ip = ipBytes, ua }, tx, cancellationToken: ct));
+        await conn.ExecuteAsync(@"
+            UPDATE password_resets
+               SET used_at   = UTC_TIMESTAMP(3),
+                   ip_address = @ip,
+                   user_agent = @ua
+             WHERE id = @id;",
+            new { id, ip = ipBytes, ua }, tx);
+    
+        // optional but recommended: invalidate all sessions after password change
+        await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;", new { uid = userId }, tx);
     
         await tx.CommitAsync(ct);
-    
-        Console.WriteLine("ResetPassword: success -> 204");
         return NoContent();
     }
-
 
     [HttpGet("reset/validate")]
     [AllowAnonymous]
