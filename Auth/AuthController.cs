@@ -65,6 +65,12 @@ public class AuthController : ControllerBase
         public string IdToken { get; set; } = "";
         public bool AllowCreate { get; set; } = true; // default keeps current behavior
     }
+    // ====== Password reset ======
+    public sealed class ResetRequest
+    {
+        public string Token { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
 
     [HttpPost("google")]
     [AllowAnonymous]
@@ -213,14 +219,7 @@ public class AuthController : ControllerBase
         return NoContent();
     #endif
     }
-    
-    // ====== Password reset ======
-    public sealed class ResetRequest
-    {
-        public string Token { get; set; } = "";
-        public string NewPassword { get; set; } = "";
-    }
-    
+
     [HttpGet("reset/validate")]
     [AllowAnonymous]
     public async Task<IActionResult> ValidateReset([FromQuery] string token, CancellationToken ct)
