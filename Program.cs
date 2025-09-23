@@ -190,8 +190,19 @@ app.MapGet("/", () => Results.Redirect("/data/status"));
 app.MapGet("/reset", async ctx =>
 {
     var token = ctx.Request.Query["token"].ToString();
-    var encodedToken = System.Net.WebUtility.HtmlEncode(token);
 
+    // Only show the page if a 64-hex token is present
+    var hasToken = !string.IsNullOrEmpty(token)
+                   && token.Length == 64
+                   && System.Text.RegularExpressions.Regex.IsMatch(token, "^[0-9a-fA-F]{64}$");
+
+    if (!hasToken)
+    {
+        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        return;
+    }
+
+    var encodedToken = System.Net.WebUtility.HtmlEncode(token);
     var html = @$"<!DOCTYPE html>
 					<html><head><meta charset=""utf-8""><title>Reset Password</title></head>
 					<body style=""font-family:sans-serif;max-width:480px;margin:4rem auto"">
@@ -219,10 +230,10 @@ app.MapGet("/reset", async ctx =>
 					    }}
 					  </script>
 					</body></html>";
-					
-					    ctx.Response.ContentType = "text/html; charset=utf-8";
-					    await ctx.Response.WriteAsync(html);
-					});
+
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(html);
+});
 
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
