@@ -281,20 +281,21 @@ public class AuthController : ControllerBase
         await using var tx = await conn.BeginTransactionAsync(ct);
     
         // If user has a password, verify if provided (social-only accounts may have 0x00 or empty hash)
-        var auth = await conn.QuerySingleOrDefaultAsync<(string? Hash)>(@"
-            SELECT CAST(password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS Hash
-            FROM user_auth WHERE user_id = @uid LIMIT 1;", new { uid }, tx);
-    
-        if (!string.IsNullOrWhiteSpace(auth.Hash))
+        var hash = await conn.ExecuteScalarAsync<string?>(@"
+            SELECT CAST(password_hash AS CHAR(100) CHARACTER SET utf8mb4)
+            FROM user_auth WHERE user_id = @uid LIMIT 1;",
+            new { uid }, tx);
+        
+        if (!string.IsNullOrWhiteSpace(hash))
         {
             // password present -> require match
-            if (string.IsNullOrWhiteSpace(req.Password) || !BCrypt.Net.BCrypt.Verify(req.Password, auth.Hash))
+            if (string.IsNullOrWhiteSpace(req.Password) || !BCrypt.Net.BCrypt.Verify(req.Password, hash))
             {
                 await tx.RollbackAsync(ct);
                 return Unauthorized(new { error = "Password required to delete account." });
             }
         }
-    
+
         // Delete child rows first to satisfy FKs; mirrors tables you already use (sessions, identities, roles, profile, auth)
         await conn.ExecuteAsync("DELETE FROM sessions         WHERE user_id = @uid;", new { uid }, tx);
         await conn.ExecuteAsync("DELETE FROM user_identities  WHERE user_id = @uid;", new { uid }, tx);
