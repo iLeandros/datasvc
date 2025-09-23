@@ -35,12 +35,6 @@ public class AuthController : ControllerBase
     public sealed class ForgotPasswordRequest { public string Email { get; set; } = ""; }
     public sealed class ResetPasswordRequest  { public string Token { get; set; } = ""; public string NewPassword { get; set; } = ""; }
     public sealed class DeleteAccountRequest  { public string? Password { get; set; } } // optional for social-only users
-
-    public sealed class ResetRequest
-    {
-        public string Token { get; set; } = "";
-        public string NewPassword { get; set; } = "";
-    }
     
     public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
     public sealed class LoginRequest    { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
