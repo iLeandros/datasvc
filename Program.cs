@@ -181,6 +181,35 @@ app.MapGet("/webhooks/trade/recent",
 });
 app.MapGet("/", () => Results.Redirect("/data/status"));
 
+app.MapGet("/reset", async ctx =>
+{
+    var token = ctx.Request.Query["token"].ToString();
+    var html = $@"<!DOCTYPE html>
+<html><head><meta charset=""utf-8""><title>Reset Password</title></head>
+<body style=""font-family:sans-serif;max-width:480px;margin:4rem auto"">
+  <h1>Reset password</h1>
+  <form onsubmit=""submit(event)"">
+    <input type=""hidden"" id=""token"" value=""{System.Net.WebUtility.HtmlEncode(token)}"">
+    <label>New password</label><br>
+    <input id=""pw"" type=""password"" minlength=""8"" required style=""width:100%;padding:8px""><br><br>
+    <button type=""submit"">Reset</button>
+  </form>
+  <p id=""msg""></p>
+  <script>
+    async function submit(e){e.preventDefault();
+      const token=document.getElementById('token').value;
+      const pw=document.getElementById('pw').value;
+      const r=await fetch('/v1/auth/reset',{{method:'POST',headers:{{'Content-Type':'application/json'}},
+        body:JSON.stringify({{token:token,newPassword:pw}})}});
+      document.getElementById('msg').textContent = r.ok ? 'Password changed. You can close this tab.' : 'Reset failed.';
+    }
+  </script>
+</body></html>";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(html);
+});
+
+
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
     var s = store.Current;
