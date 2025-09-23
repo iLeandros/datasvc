@@ -316,7 +316,7 @@ app.MapGet("/reset", async ctx =>
 });
 app.MapPost("/v1/auth/reset", async (HttpContext ctx, [FromServices] AuthController ctrl, CancellationToken ct) =>
 {
-    var req = await ctx.Request.ReadFromJsonAsync<ResetRequest>(cancellationToken: ct);
+    var req = await ctx.Request.ReadFromJsonAsync<DataSvc.Auth.AuthController.ResetRequest>(cancellationToken: ct);
     if (req is null) return Results.BadRequest("Missing body.");
     var result = await ctrl.ResetPassword(req, ct);
     return result switch
@@ -329,6 +329,7 @@ app.MapPost("/v1/auth/reset", async (HttpContext ctx, [FromServices] AuthControl
         _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
     };
 });
+
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
