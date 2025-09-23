@@ -230,8 +230,8 @@ app.MapGet("/reset", async ctx =>
         return;
     }
 
-    var encodedToken = System.Net.WebUtility.HtmlEncode(token);
-    var html = @$"<!DOCTYPE html>
+    var encodedToken = WebUtility.HtmlEncode(token);
+	var html = @$"<!DOCTYPE html>
 					<html>
 					<head>
 					  <meta charset=""utf-8"">
@@ -242,37 +242,58 @@ app.MapGet("/reset", async ctx =>
 					<body style=""font-family:sans-serif;max-width:480px;margin:4rem auto"">
 					  <h1>Reset password</h1>
 					
-					  <form id=""form"">
+					  <!-- hidden until token is validated -->
+					  <form id=""form"" style=""display:none"">
 					    <input type=""hidden"" id=""token"" value=""{encodedToken}"">
 					    <label>New password</label><br>
 					    <input id=""pw"" type=""password"" minlength=""8"" required style=""width:100%;padding:8px""><br><br>
 					    <button id=""btn"" type=""submit"">Reset</button>
 					  </form>
 					
-					  <p id=""msg""></p>
+					  <p id=""msg"">Validating link…</p>
 					
 					  <script>
 					    const form = document.getElementById('form');
 					    const btn  = document.getElementById('btn');
 					    const msg  = document.getElementById('msg');
+					    const token = document.getElementById('token').value;
 					
+					    // 1) validate first, then show/hide the form
+					    (async function validate() {{
+					      try {{
+					        const r = await fetch('/v1/auth/reset/validate?token=' + encodeURIComponent(token), {{
+					          method: 'GET',
+					          cache: 'no-store',
+					          credentials: 'omit'
+					        }});
+					        if (r.status === 204) {{
+					          form.style.display = 'block';
+					          msg.textContent = '';
+					        }} else {{
+					          msg.textContent = 'Reset link is invalid or expired.';
+					        }}
+					      }} catch {{
+					        msg.textContent = 'Network error while validating.';
+					      }}
+					    }})();
+					
+					    // 2) submit handler
 					    form.addEventListener('submit', async function doReset(e) {{
-					      e.preventDefault();                                // stop navigation
+					      e.preventDefault();
 					      btn.disabled = true;
-					
-					      const token = document.getElementById('token').value;
-					      const pw    = document.getElementById('pw').value;
+					      const pw = document.getElementById('pw').value;
 					
 					      try {{
 					        const r = await fetch('/v1/auth/reset', {{
 					          method: 'POST',
 					          headers: {{ 'Content-Type': 'application/json' }},
-					          body: JSON.stringify({{ token: token, newPassword: pw }})
+					          body: JSON.stringify({{ token: token, newPassword: pw }}),
+					          cache: 'no-store',
+					          credentials: 'omit'
 					        }});
-					
 					        if (r.ok) {{
 					          msg.textContent = 'Password changed. You can close this tab.';
-					          form.style.display = 'none';                   // hide the form
+					          form.style.display = 'none';
 					        }} else {{
 					          msg.textContent = 'Reset failed. The link may be invalid or expired.';
 					          btn.disabled = false;
@@ -285,9 +306,12 @@ app.MapGet("/reset", async ctx =>
 					  </script>
 					</body>
 					</html>";
+	ctx.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+	ctx.Response.Headers["Pragma"] = "no-cache";
+	ctx.Response.Headers["Expires"] = "0";
+	ctx.Response.ContentType = "text/html; charset=utf-8";
+	await ctx.Response.WriteAsync(html);
 
-    ctx.Response.ContentType = "text/html; charset=utf-8";
-    await ctx.Response.WriteAsync(html);
 });
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
