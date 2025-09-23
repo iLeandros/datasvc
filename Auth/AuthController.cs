@@ -40,7 +40,16 @@ public class AuthController : ControllerBase
     public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
     public sealed class LoginRequest    { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
     public sealed class LoginResponse   { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
-    public sealed class UserDto         { public ulong Id { get; set; } public string Email { get; set; } = ""; public string? DisplayName { get; set; } public string[]? Roles { get; set; } }
+    public sealed class UserDto
+    {
+        public ulong   Id           { get; set; }
+        public string  Email        { get; set; } = "";
+        public string? DisplayName  { get; set; }
+        public string? AvatarUrl    { get; set; }   // add
+        public string? Locale       { get; set; }   // add
+        public string? Timezone     { get; set; }   // add
+        public string[]? Roles      { get; set; }
+    }
     private sealed class UserAuthRow    { public ulong UserId { get; set; } public string Email { get; set; } = ""; public string PasswordHash { get; set; } = ""; }
     public sealed class ProfileDto
     {
@@ -764,8 +773,9 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Me(CancellationToken ct)
     {
         if (!TryGetUserId(out var userId)) return Unauthorized();
-
+    
         await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct); // <-- IMPORTANT
         var user = await LoadUserDto(conn, userId, ct);
         return Ok(new { user });
     }
@@ -781,6 +791,7 @@ public class AuthController : ControllerBase
 
         var (_, hash) = MakeToken(token); // hash existing token
         await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
         await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = hash });
 
         return NoContent();
@@ -868,7 +879,9 @@ public class AuthController : ControllerBase
             SELECT u.id AS Id,
                    ua.email AS Email,
                    up.display_name AS DisplayName,
-                   up.avatar_url  AS AvatarUrl   -- <--- add this if you want it in 'me'
+                   up.avatar_url   AS AvatarUrl,
+                   up.locale       AS Locale,
+                   up.timezone     AS Timezone
             FROM users u
             LEFT JOIN user_auth    ua ON ua.user_id = u.id
             LEFT JOIN user_profile up ON up.user_id = u.id
@@ -883,5 +896,4 @@ public class AuthController : ControllerBase
         user.Roles = roles;
         return user;
     }
-
 }
