@@ -290,6 +290,7 @@ public class AuthController : ControllerBase
         return NoContent();
     }
 
+
     [HttpGet("reset/validate")]
     [AllowAnonymous]
     public async Task<IActionResult> ValidateReset([FromQuery] string token, CancellationToken ct)
