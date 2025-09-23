@@ -333,39 +333,6 @@ app.MapGet("/reset", async ctx =>
 
 });
 
-/*
-// Program.cs
-app.MapPost("/v1/auth/reset", async (
-    HttpContext ctx,
-    [FromServices] DataSvc.Auth.AuthController ctrl,
-    CancellationToken ct) =>
-{
-	if (ctx.Request.Headers.ContainsKey("X-Debug-Bridge"))
-        return Results.Text("bridge-hit", "text/plain");
-	
-    var req = await ctx.Request.ReadFromJsonAsync<DataSvc.Auth.AuthController.ResetRequest>(cancellationToken: ct);
-    if (req is null) return Results.BadRequest("Missing body.");
-
-    var ar = await ctrl.ResetPassword(req, ct);
-
-    return ar switch
-    {
-        // Object results with bodies (e.g., ProblemDetails, BadRequest with message)
-        ObjectResult o when o.Value is not null => Results.Json(o.Value, statusCode: o.StatusCode ?? 200),
-        ObjectResult o                          => Results.StatusCode(o.StatusCode ?? 200),
-
-        // Specific results before the base type
-        OkResult            => Results.Ok(),
-        NoContentResult     => Results.NoContent(),
-        NotFoundResult      => Results.NotFound(),
-
-        // Base type last
-        StatusCodeResult s  => Results.StatusCode(s.StatusCode),
-
-        _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
-    };
-});
-*/
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
