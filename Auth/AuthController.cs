@@ -230,12 +230,16 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
             return BadRequest("Password too short.");
 
-        try
-        {
-            var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
+            
+
+        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
+            
+        try
+        {
+            
     
             var userId = await conn.QuerySingleOrDefaultAsync<ulong?>(@"
                 SELECT user_id
