@@ -220,6 +220,83 @@ public class AuthController : ControllerBase
         return NoContent();
     #endif
     }
+    
+    //Reset password
+    [HttpPost("reset")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
+    {
+        Console.WriteLine("ResetPassword: entered");
+    
+        if (req is null) return BadRequest("Missing body.");
+    
+        // 1) Basic validation
+        if (string.IsNullOrWhiteSpace(req.Token) ||
+            req.Token.Length != 64 ||
+            !System.Text.RegularExpressions.Regex.IsMatch(req.Token, "^[0-9a-fA-F]{64}$"))
+            return BadRequest("Invalid token.");
+    
+        if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
+            return BadRequest("Password too short.");
+    
+        // 2) Derive the binary id we store: UNHEX(SHA2(token,256)) => SHA256 of the token *string*
+        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token)); // 32 bytes
+    
+        await using var conn = new MySqlConnector.MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        // 3) Look up reset row (must exist, not used, not expired)
+        var row = await conn.QuerySingleOrDefaultAsync(
+            new CommandDefinition(@"
+                SELECT user_id
+                FROM password_resets
+                WHERE id = @id
+                  AND used_at IS NULL
+                  AND expires_at > UTC_TIMESTAMP(3)
+                LIMIT 1;",
+                new { id }, transaction: tx, cancellationToken: ct));
+    
+        if (row is null)
+        {
+            await tx.RollbackAsync(ct);
+            return NotFound();
+        }
+    
+        long userId = (long)row.user_id;
+    
+        // 4) Hash the new password (BCrypt) and store as bytes (UTF-8 of the 60-char hash string)
+        var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword); // e.g., "$2a$12$..."
+        var hashBytes  = Encoding.UTF8.GetBytes(hashString);
+    
+        await conn.ExecuteAsync(
+            new CommandDefinition(@"
+                UPDATE user_auth
+                   SET password_hash = @hash
+                 WHERE user_id = @uid;",
+                new { hash = hashBytes, uid = userId }, tx, cancellationToken: ct));
+    
+        // 5) Mark token used + store context info
+        byte[]? ipBytes = null;
+        if (HttpContext.Connection.RemoteIpAddress is not null)
+            ipBytes = HttpContext.Connection.RemoteIpAddress.MapToIPv6().GetAddressBytes();
+    
+        var ua = HttpContext.Request.Headers["User-Agent"].ToString();
+    
+        await conn.ExecuteAsync(
+            new CommandDefinition(@"
+                UPDATE password_resets
+                   SET used_at   = UTC_TIMESTAMP(3),
+                       ip_address = @ip,
+                       user_agent = @ua
+                 WHERE id = @id;",
+                new { id, ip = ipBytes, ua }, tx, cancellationToken: ct));
+    
+        await tx.CommitAsync(ct);
+    
+        Console.WriteLine("ResetPassword: success -> 204");
+        return NoContent();
+    }
+
 
     [HttpGet("reset/validate")]
     [AllowAnonymous]
@@ -247,6 +324,7 @@ public class AuthController : ControllerBase
     
         return NoContent(); // 204 = valid
     }
+    /*
     [HttpPost("reset")]
     public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
     {
@@ -302,7 +380,7 @@ public class AuthController : ControllerBase
                 UPDATE user_auth
                    SET password_hash = @hash
                  WHERE user_id = @uid;", new { hash = newHash, uid = userId }, tx, cancellationToken: ct));
-        */
+        //
         // 4) Hash the new password (BCrypt)
         var newHashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
         var newHashBytes  = Encoding.UTF8.GetBytes(newHashString);
@@ -319,7 +397,7 @@ public class AuthController : ControllerBase
         byte[]? ipBytes = null;
         if (HttpContext.Connection.RemoteIpAddress is not null)
             ipBytes = HttpContext.Connection.RemoteIpAddress.MapToIPv6().GetAddressBytes();
-        var ua = HttpContext.Request.Headers.User-Agent.ToString();
+        var ua = HttpContext.Request.Headers["User-Agent"].ToString();
     
         await conn.ExecuteAsync(
             new CommandDefinition(@"
@@ -334,7 +412,7 @@ public class AuthController : ControllerBase
         Console.WriteLine("ResetPassword: success -> 204");
         return NoContent();
     }
-
+    */
 
 
     /*
