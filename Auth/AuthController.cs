@@ -16,7 +16,11 @@ public sealed class AuthOptions
 {
     public string GoogleWebClientId { get; set; } = "";
 }
-
+public sealed class ResetRequest
+{
+    public string Token { get; set; } = "";
+    public string NewPassword { get; set; } = "";
+}
 [ApiController]
 [Route("v1/auth")]
 public class AuthController : ControllerBase
