@@ -190,7 +190,7 @@ public class AuthController : ControllerBase
             LIMIT 1;", new { em = email });
     
         // always behave the same
-        if (userId is null) return NoContent("User (e-mail) not found.");
+        if (userId is null) return NoContent();
     
         var (token, tokenHash) = MakeToken();                         // SHA256(UTF8(tokenHex))  :contentReference[oaicite:0]{index=0}
         var expiresAt = DateTime.UtcNow.AddMinutes(60);
@@ -258,7 +258,7 @@ public class AuthController : ControllerBase
             return NotFound(); // invalid/expired/used
         }
     
-        var userId = row.Value.UserId;
+        //var userId = row.Value.UserId;
     
         // bcrypt hash stored as bytes (to match login path)
         var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
