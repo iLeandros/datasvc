@@ -314,21 +314,32 @@ app.MapGet("/reset", async ctx =>
 	await ctx.Response.WriteAsync(html);
 
 });
-app.MapPost("/v1/auth/reset", async (HttpContext ctx, [FromServices] AuthController ctrl, CancellationToken ct) =>
+// Program.cs
+app.MapPost("/v1/auth/reset", async (
+    HttpContext ctx,
+    [FromServices] DataSvc.Auth.AuthController ctrl,
+    CancellationToken ct) =>
 {
     var req = await ctx.Request.ReadFromJsonAsync<DataSvc.Auth.AuthController.ResetRequest>(cancellationToken: ct);
     if (req is null) return Results.BadRequest("Missing body.");
-    var result = await ctrl.ResetPassword(req, ct);
-    return result switch
+
+    var ar = await ctrl.ResetPassword(req, ct);
+
+    return ar switch
     {
-        OkResult           => Results.Ok(),
-        NoContentResult    => Results.NoContent(),
-        NotFoundResult     => Results.NotFound(),
-        BadRequestObjectResult bad => Results.BadRequest(bad.Value),
-        ObjectResult obj when obj.StatusCode is int sc => Results.StatusCode(sc),
+        // 200/204/404/etc. without bodies
+        StatusCodeResult scr => Results.StatusCode(scr.StatusCode),
+        OkResult             => Results.Ok(),
+        NoContentResult      => Results.NoContent(),
+        NotFoundResult       => Results.NotFound(),
+        // Object results with bodies (e.g., ProblemDetails, BadRequest with message)
+        ObjectResult { Value: not null } obj => Results.Json(obj.Value, statusCode: obj.StatusCode ?? 200),
+        ObjectResult obj                      => Results.StatusCode(obj.StatusCode ?? 200),
+        // Fallback
         _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
     };
 });
+
 
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
