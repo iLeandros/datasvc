@@ -247,8 +247,9 @@ public class AuthController : ControllerBase
                 WHERE id = @id
                   AND used_at IS NULL
                   AND expires_at > UTC_TIMESTAMP()
-                FOR UPDATE
-                LIMIT 1;", new { id }, tx);
+                LIMIT 1
+                FOR UPDATE;", new { id }, tx);
+
     
             if (userId is null)
             {
