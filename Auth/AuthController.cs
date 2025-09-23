@@ -321,12 +321,7 @@ public class AuthController : ControllerBase
         Console.WriteLine("ResetPassword: success -> 204");
         return NoContent();
     }
-    
-    public sealed class ResetRequest
-    {
-        public string Token { get; set; } = "";
-        public string NewPassword { get; set; } = "";
-    }
+
 
 
     /*
