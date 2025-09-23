@@ -219,94 +219,85 @@ public class AuthController : ControllerBase
     #endif
     }
 
-    //Reset password
     [HttpPost("reset")]
     [AllowAnonymous]
     public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
     {
         if (req is null) return BadRequest("Missing body.");
-    
-        if (string.IsNullOrWhiteSpace(req.Token) ||
-            req.Token.Length != 64 ||
+        if (string.IsNullOrWhiteSpace(req.Token) || req.Token.Length != 64 ||
             !System.Text.RegularExpressions.Regex.IsMatch(req.Token, "^[0-9a-fA-F]{64}$"))
             return BadRequest("Invalid token.");
-    
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
             return BadRequest("Password too short.");
     
-        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));  // same hash convention  :contentReference[oaicite:2]{index=2}
+        var id = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token));
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
     
-        // lock the token row to make it single-use under concurrency
-        var userId = await conn.QuerySingleOrDefaultAsync<ulong?>(@"
-            SELECT user_id
-            FROM password_resets
-            WHERE id = @id
-              AND used_at IS NULL
-              AND expires_at > UTC_TIMESTAMP(3)
-            FOR UPDATE
-            LIMIT 1;",
-            new { id }, tx);
-        
-        if (userId is null)
-        {
-            await tx.RollbackAsync(ct);
-            return NotFound(); // invalid/expired/used
-        }
-    
-        //var userId = row.Value.UserId;
-    
-        // bcrypt hash stored as bytes (to match login path)
-        var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword);
-        var hashBytes  = Encoding.UTF8.GetBytes(hashString);
-    
-        await conn.ExecuteAsync(@"
-                                UPDATE user_auth
-                                   SET password_hash = @hash,
-                                       updated_at    = UTC_TIMESTAMP(3)
-                                 WHERE user_id = @uid;",
-                                new { hash = hashBytes, uid = userId.Value }, tx);
-
-    
-        
-
         try
         {
-            // mark token used + capture context
-                var uaRaw = Request.Headers.UserAgent.ToString();
-                var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
-                var ipBytes = GetClientIpBinary(HttpContext);
-                
-                await conn.ExecuteAsync(@"
-                    UPDATE password_resets
-                       SET used_at    = UTC_TIMESTAMP(3),
-                           ip_address = @ip,
-                           user_agent = @ua
-                     WHERE id = @id;",
-                    new { id, ip = ipBytes, ua = ua255 }, tx);
-        
-            
-                // optional but recommended: invalidate all sessions after password change
-                await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;", new { uid = userId }, tx);
-            
-                await tx.CommitAsync(ct);
-                return NoContent();
+            // 1) Lock valid token
+            var userId = await conn.QuerySingleOrDefaultAsync<ulong?>(@"
+                SELECT user_id
+                FROM password_resets
+                WHERE id = @id
+                  AND used_at IS NULL
+                  AND expires_at > UTC_TIMESTAMP(3)
+                FOR UPDATE
+                LIMIT 1;",
+                new { id }, tx);
+    
+            if (userId is null)
+            {
+                await tx.RollbackAsync(ct);
+                return NotFound("Reset link is invalid, expired, or already used.");
+            }
+    
+            // 2) Update password (bcrypt)
+            var hashString = BCrypt.Net.BCrypt.HashPassword(req.NewPassword); // 60-char bcrypt
+            var hashBytes  = Encoding.UTF8.GetBytes(hashString);              // store as VARBINARY
+            await conn.ExecuteAsync(@"
+                UPDATE user_auth
+                   SET password_hash = @hash,
+                       updated_at    = UTC_TIMESTAMP(3)
+                 WHERE user_id = @uid;",
+                new { hash = hashBytes, uid = userId.Value }, tx);
+    
+            // 3) Mark token used (cap UA to 255; IP 4/16 bytes or null)
+            var uaRaw = Request.Headers.UserAgent.ToString();
+            var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
+            var ip    = GetClientIpBinary(HttpContext);
+    
+            await conn.ExecuteAsync(@"
+                UPDATE password_resets
+                   SET used_at    = UTC_TIMESTAMP(3),
+                       ip_address = @ip,
+                       user_agent = @ua
+                 WHERE id = @id;",
+                new { id, ip, ua = ua255 }, tx);
+    
+            // 4) Invalidate sessions
+            await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id = @uid;",
+                new { uid = userId.Value }, tx);
+    
+            await tx.CommitAsync(ct);
+            return NoContent();
         }
         catch (Exception ex)
         {
-        #if DEBUG
+    #if DEBUG
             await tx.RollbackAsync(ct);
-            return Problem(detail: ex.Message); // shows in your page as "Reset failed (500). <message>"
-        #else
+            return Problem(detail: ex.Message);
+    #else
             await tx.RollbackAsync(ct);
             _log.LogError(ex, "Reset failed");
             return StatusCode(500);
-        #endif
+    #endif
         }
     }
+
 
 
     [HttpGet("reset/validate")]
