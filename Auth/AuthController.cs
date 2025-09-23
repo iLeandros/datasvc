@@ -271,16 +271,18 @@ public class AuthController : ControllerBase
                                 new { hash = hashBytes, uid = userId.Value }, tx);
     
         // mark token used + capture context
-        byte[]? ipBytes = GetClientIpBinary(HttpContext);
-        var ua = HttpContext.Request.Headers["User-Agent"].ToString();
-    
+        var uaRaw = Request.Headers.UserAgent.ToString();
+        var ua255 = uaRaw.Length > 255 ? uaRaw[..255] : uaRaw;
+        var ipBytes = GetClientIpBinary(HttpContext);
+        
         await conn.ExecuteAsync(@"
             UPDATE password_resets
-               SET used_at   = UTC_TIMESTAMP(3),
+               SET used_at    = UTC_TIMESTAMP(3),
                    ip_address = @ip,
                    user_agent = @ua
              WHERE id = @id;",
-            new { id, ip = ipBytes, ua }, tx);
+            new { id, ip = ipBytes, ua = ua255 }, tx);
+
     
         // optional but recommended: invalidate all sessions after password change
         await conn.ExecuteAsync(@"DELETE FROM sessions WHERE user_id=@uid;", new { uid = userId }, tx);
