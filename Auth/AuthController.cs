@@ -231,7 +231,7 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(token) || token.Length != 64) return NotFound();
     
         byte[] id;
-        try { id = SHA256.HashData(Convert.FromHexString(token)); }
+        try { id = SHA256.HashData(Encoding.UTF8.GetBytes(token)); }
         catch { return NotFound(); }
     
         await using var conn = new MySqlConnection(_connString);
@@ -261,7 +261,7 @@ public class AuthController : ControllerBase
             return BadRequest("Password must be at least 8 characters.");
     
         byte[] tokenHash;
-        try { tokenHash = SHA256.HashData(Convert.FromHexString(req.Token)); }
+        try { tokenHash = SHA256.HashData(Encoding.UTF8.GetBytes(req.Token)); }
         catch { return BadRequest("Invalid token format."); }
     
         await using var conn = new MySqlConnection(_connString);
@@ -634,12 +634,12 @@ public class AuthController : ControllerBase
 
     private static (string token, byte[] hash) MakeToken()
     {
-        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-        var hash = SHA256.HashData(Convert.FromHexString(token));
+        var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(32)); // keep as-is (uppercase is fine)
+        var hash  = SHA256.HashData(Encoding.UTF8.GetBytes(token));
         return (token, hash);
     }
     private static (string token, byte[] hash) MakeToken(string existingToken)
-        => (existingToken, SHA256.HashData(Convert.FromHexString(existingToken)));
+        => (existingToken, SHA256.HashData(Encoding.UTF8.GetBytes(existingToken)));
 
     private static string? GetBearerToken(HttpRequest req)
     {
