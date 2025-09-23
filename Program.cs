@@ -300,7 +300,7 @@ app.MapGet("/reset", async ctx =>
 					          btn.disabled = false;
 					        }}
 					      }} catch {{
-					        msg.textContent = `Reset failed (${r.status}). ${bodyText || 'The link may be invalid or expired.'}`;
+					        msg.textContent = 'Reset failed (' + r.status + '). ' + (bodyText || 'The link may be invalid or expired.');
 					        btn.disabled = false;
 					      }}
 					    }});
