@@ -15,6 +15,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.AspNetCore.Http.Metadata;
+using System.Security.Claims;
+using System.Security.Cryptography;
+using System.Text;
+using MySqlConnector;
+using Dapper;
 using System.Linq;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
@@ -101,6 +106,8 @@ app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+var connStr = builder.Configuration.GetConnectionString("Default");
 
 app.Use(async (ctx, next) =>
 {
