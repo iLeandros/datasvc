@@ -282,8 +282,13 @@ public class AuthController : ControllerBase
         }
         catch (Exception ex)
         {
-            // DEBUG: surface the exact cause so we can fix it quickly
-            return StatusCode(500, ex.Message);
+            await tx.RollbackAsync(ct);
+            // Return full details so we can see the DB error in curl/browser
+            return Problem(
+                title: "Password reset failed",
+                detail: ex.ToString(),              // includes message + stack + inner exceptions
+                statusCode: StatusCodes.Status500InternalServerError
+            );
         }
     }
 
