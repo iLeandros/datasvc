@@ -12,6 +12,9 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.AspNetCore.Routing.Patterns;
+using Microsoft.AspNetCore.Http.Metadata;
 using System.Linq;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
@@ -186,6 +189,19 @@ app.MapGet("/webhooks/trade/recent",
     return Results.Json(store.Last(take));
 });
 app.MapGet("/", () => Results.Redirect("/data/status"));
+
+app.MapGet("/__routes", (IEnumerable<EndpointDataSource> sources) =>
+{
+    var lines = new List<string>();
+    foreach (var s in sources)
+    foreach (var e in s.Endpoints.OfType<RouteEndpoint>())
+    {
+        var methods = e.Metadata.OfType<HttpMethodMetadata>().FirstOrDefault()?.HttpMethods
+                      ?? new[] { "(any)" };
+        lines.Add($"{string.Join(",", methods)} {e.RoutePattern.RawText}");
+    }
+    return Results.Text(string.Join("\n", lines), "text/plain");
+});
 
 app.MapGet("/reset", async ctx =>
 {
