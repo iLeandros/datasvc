@@ -214,80 +214,94 @@ public class AuthController : ControllerBase
     #endif
     }
     
+    // ====== Password reset ======
+    public sealed class ResetRequest
+    {
+        public string Token { get; set; } = "";
+        public string NewPassword { get; set; } = "";
+    }
+    
     [HttpGet("reset/validate")]
     [AllowAnonymous]
     public async Task<IActionResult> ValidateReset([FromQuery] string token, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(_connString)) return Problem("Missing ConnectionStrings:Default.");
-        if (string.IsNullOrWhiteSpace(token) || token.Length != 64) return NotFound();
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (string.IsNullOrWhiteSpace(token) || token.Length != 64)
+            return NotFound();
     
         byte[] tokenHash;
         try { tokenHash = SHA256.HashData(Convert.FromHexString(token)); }
         catch { return NotFound(); }
     
         await using var conn = new MySqlConnection(_connString);
-        var row = await conn.QuerySingleOrDefaultAsync<(DateTime ExpiresAt, DateTime? UsedAt)?>(@"
-            SELECT expires_at, used_at FROM password_resets WHERE id = @id LIMIT 1;",
-            new { id = tokenHash });
+        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt, DateTime? UsedAt)?>(@"
+            SELECT user_id, expires_at, used_at
+            FROM password_resets
+            WHERE id = @id
+            LIMIT 1;", new { id = tokenHash });
     
-        if (row is null || row.Value.UsedAt is not null || row.Value.ExpiresAt <= DateTime.UtcNow) return NotFound();
-        return NoContent();
+        if (row is null || row.Value.UsedAt is not null || row.Value.ExpiresAt <= DateTime.UtcNow)
+            return NotFound();
+    
+        return NoContent(); // 204 = valid
     }
-
-    // ====== RESET PASSWORD ======
+    
     [HttpPost("reset")]
     [AllowAnonymous]
-    public async Task<IActionResult> Reset([FromBody] ResetPasswordRequest req, CancellationToken ct)
+    public async Task<IActionResult> ResetPassword([FromBody] ResetRequest req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
     
-        var tokenHex = (req.Token ?? "").Trim();
-        if (tokenHex.Length != 64) return BadRequest(new { error = "Invalid token." });
+        if (string.IsNullOrWhiteSpace(req.Token) || req.Token.Length != 64)
+            return BadRequest("Invalid token.");
         if (string.IsNullOrWhiteSpace(req.NewPassword) || req.NewPassword.Length < 8)
-            return BadRequest(new { error = "Password must be at least 8 characters." });
+            return BadRequest("Password must be at least 8 characters.");
     
-        // hash provided token (same as how SessionAuthHandler checks sessions) :contentReference[oaicite:3]{index=3}
-        var (_, tokenHash) = MakeToken(tokenHex); // :contentReference[oaicite:4]{index=4}
+        byte[] tokenHash;
+        try { tokenHash = SHA256.HashData(Convert.FromHexString(req.Token)); }
+        catch { return BadRequest("Invalid token format."); }
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
     
-        // 1) fetch reset row (valid & unused)
-        var row = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt, DateTime? UsedAt)?>(@"
+        // 1) Load and validate the reset row
+        var r = await conn.QuerySingleOrDefaultAsync<(ulong UserId, DateTime ExpiresAt, DateTime? UsedAt)?>(@"
             SELECT user_id, expires_at, used_at
             FROM password_resets
             WHERE id = @id
+            FOR UPDATE
             LIMIT 1;", new { id = tokenHash }, tx);
     
-        if (row is null) { await tx.RollbackAsync(ct); return NotFound(new { error = "Token not found." }); }
-        if (row.Value.UsedAt is not null) { await tx.RollbackAsync(ct); return BadRequest(new { error = "Token already used." }); }
-        if (row.Value.ExpiresAt <= DateTime.UtcNow) { await tx.RollbackAsync(ct); return BadRequest(new { error = "Token expired." }); }
+        if (r is null || r.Value.UsedAt is not null || r.Value.ExpiresAt <= DateTime.UtcNow)
+            return NotFound();
     
-        var userId = row.Value.UserId;
-    
-        // 2) update password (store bcrypt string as bytes, like register/login do) :contentReference[oaicite:5]{index=5}
-        var hashStr = BCrypt.Net.BCrypt.HashPassword(req.NewPassword, workFactor: 12);
+        // 2) Update password hash for that user (BCrypt hash stored as bytes like your login code)
+        var hashStr   = BCrypt.Net.BCrypt.HashPassword(req.NewPassword, workFactor: 12);
         var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
     
         await conn.ExecuteAsync(@"
             UPDATE user_auth
             SET password_hash = @hash
-            WHERE user_id = @uid;", new { uid = userId, hash = hashBytes }, tx);
+            WHERE user_id = @uid;", new { uid = r.Value.UserId, hash = hashBytes }, tx);
     
-        // 3) mark token used
+        // 3) Mark token as used and purge any other outstanding reset tokens for that user
         await conn.ExecuteAsync(@"
             UPDATE password_resets
-            SET used_at = CURRENT_TIMESTAMP(3)
+            SET used_at = UTC_TIMESTAMP(3)
             WHERE id = @id;", new { id = tokenHash }, tx);
     
-        // 4) revoke all sessions for that user (force re-login everywhere)  :contentReference[oaicite:6]{index=6}
-        await conn.ExecuteAsync("DELETE FROM sessions WHERE user_id = @uid;", new { uid = userId }, tx);
+        await conn.ExecuteAsync(@"
+            DELETE FROM password_resets
+            WHERE user_id = @uid AND id <> @id;", new { uid = r.Value.UserId, id = tokenHash }, tx);
     
         await tx.CommitAsync(ct);
+    
         return NoContent();
     }
+
     
     // ====== DELETE ACCOUNT ======
     [HttpDelete("account")]
