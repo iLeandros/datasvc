@@ -314,6 +314,7 @@ app.MapGet("/reset", async ctx =>
 	await ctx.Response.WriteAsync(html);
 
 });
+
 // Program.cs
 app.MapPost("/v1/auth/reset", async (
     HttpContext ctx,
@@ -327,19 +328,21 @@ app.MapPost("/v1/auth/reset", async (
 
     return ar switch
     {
-        // 200/204/404/etc. without bodies
-        StatusCodeResult scr => Results.StatusCode(scr.StatusCode),
-        OkResult             => Results.Ok(),
-        NoContentResult      => Results.NoContent(),
-        NotFoundResult       => Results.NotFound(),
         // Object results with bodies (e.g., ProblemDetails, BadRequest with message)
-        ObjectResult { Value: not null } obj => Results.Json(obj.Value, statusCode: obj.StatusCode ?? 200),
-        ObjectResult obj                      => Results.StatusCode(obj.StatusCode ?? 200),
-        // Fallback
+        ObjectResult o when o.Value is not null => Results.Json(o.Value, statusCode: o.StatusCode ?? 200),
+        ObjectResult o                          => Results.StatusCode(o.StatusCode ?? 200),
+
+        // Specific results before the base type
+        OkResult            => Results.Ok(),
+        NoContentResult     => Results.NoContent(),
+        NotFoundResult      => Results.NotFound(),
+
+        // Base type last
+        StatusCodeResult s  => Results.StatusCode(s.StatusCode),
+
         _ => Results.StatusCode(StatusCodes.Status500InternalServerError)
     };
 });
-
 
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
