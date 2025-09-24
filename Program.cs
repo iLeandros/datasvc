@@ -335,35 +335,37 @@ app.MapGet("/reset", async ctx =>
 });
 
 // ---- Public legal pages (HTML) ----
-app.MapGet("/legal/{docKey:regex(^(terms|privacy)$)}", (
-    [FromRoute] string docKey,
-    [FromQuery] string? lang,
+app.MapGet("/legal/{docKey:regex(^(terms|privacy)$)}", async (
+    HttpContext ctx,
+    string docKey,
+    string? lang,
     IConfiguration cfg,
     IWebHostEnvironment env) =>
 {
     string language = string.IsNullOrWhiteSpace(lang) ? "en" : lang;
+
     var section = cfg.GetSection($"Legal:{docKey}");
     var version = section.GetValue<int>("Version", 1);
     var fileRel = section.GetValue<string>("Path", $"Legal/{docKey}_{language}.html");
     var full = Path.Combine(env.ContentRootPath, fileRel);
 
     if (!System.IO.File.Exists(full))
-        return Results.NotFound(new { message = $"Legal doc not found: {fileRel}" });
+    {
+        ctx.Response.StatusCode = StatusCodes.Status404NotFound;
+        await ctx.Response.WriteAsJsonAsync(new { message = $"Legal doc not found: {fileRel}" });
+        return;
+    }
 
     var html = System.IO.File.ReadAllText(full);
 
-    // Helpful headers; optional
-    var result = Results.Text(html, "text/html; charset=utf-8");
-    result.ExecuteAsync = async ctx =>
-    {
-        ctx.Response.ContentType = "text/html; charset=utf-8";
-        ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
-        ctx.Response.Headers["X-Legal-DocKey"] = docKey;
-        ctx.Response.Headers["X-Legal-Version"] = version.ToString();
-        await ctx.Response.WriteAsync(html);
-    };
-    return result;
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
+    ctx.Response.Headers["X-Legal-DocKey"] = docKey;
+    ctx.Response.Headers["X-Legal-Version"] = version.ToString();
+
+    await ctx.Response.WriteAsync(html);
 });
+
 
 
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
