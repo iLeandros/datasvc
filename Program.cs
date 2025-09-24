@@ -123,7 +123,8 @@ app.Use(async (ctx, next) =>
         var path = ctx.Request.Path.Value ?? "";
 
         // Allow reset page + APIs through to the app
-        if (path.StartsWith("/reset") || path.StartsWith("/v1/auth/reset"))
+        if (path.StartsWith("/reset") || path.StartsWith("/v1/auth/reset")
+			|| path.StartsWith("/legal") || path.StartsWith("/v1/legal")) // <— add this line
         {
             await next();
             return;
@@ -331,6 +332,37 @@ app.MapGet("/reset", async ctx =>
 	ctx.Response.ContentType = "text/html; charset=utf-8";
 	await ctx.Response.WriteAsync(html);
 
+});
+
+// ---- Public legal pages (HTML) ----
+app.MapGet("/legal/{docKey:regex(^(terms|privacy)$)}", (
+    [FromRoute] string docKey,
+    [FromQuery] string? lang,
+    IConfiguration cfg,
+    IWebHostEnvironment env) =>
+{
+    string language = string.IsNullOrWhiteSpace(lang) ? "en" : lang;
+    var section = cfg.GetSection($"Legal:{docKey}");
+    var version = section.GetValue<int>("Version", 1);
+    var fileRel = section.GetValue<string>("Path", $"Legal/{docKey}_{language}.html");
+    var full = Path.Combine(env.ContentRootPath, fileRel);
+
+    if (!System.IO.File.Exists(full))
+        return Results.NotFound(new { message = $"Legal doc not found: {fileRel}" });
+
+    var html = System.IO.File.ReadAllText(full);
+
+    // Helpful headers; optional
+    var result = Results.Text(html, "text/html; charset=utf-8");
+    result.ExecuteAsync = async ctx =>
+    {
+        ctx.Response.ContentType = "text/html; charset=utf-8";
+        ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
+        ctx.Response.Headers["X-Legal-DocKey"] = docKey;
+        ctx.Response.Headers["X-Legal-Version"] = version.ToString();
+        await ctx.Response.WriteAsync(html);
+    };
+    return result;
 });
 
 
