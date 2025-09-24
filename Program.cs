@@ -124,7 +124,9 @@ app.Use(async (ctx, next) =>
 
         // Allow reset page + APIs through to the app
         if (path.StartsWith("/reset") || path.StartsWith("/v1/auth/reset")
-			|| path.StartsWith("/legal") || path.StartsWith("/v1/legal")) // <— add this line
+            || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
+            || path.StartsWith("/account/delete")     // allow HTML confirm page
+            || path.StartsWith("/v1/auth/account"))   // allow the DELETE API
         {
             await next();
             return;
@@ -233,6 +235,75 @@ app.MapGet("/__routes", (IEnumerable<EndpointDataSource> sources) =>
     }
     return Results.Text(string.Join("\n", lines), "text/plain");
 });
+
+app.MapGet("/account/delete", async ctx =>
+{
+    var token = ctx.Request.Query["token"].ToString(); // optional
+    var html = @$"<!DOCTYPE html>
+					<html>
+					<head>
+					  <meta charset=""utf-8"">
+					  <title>Delete Account</title>
+					  <meta name=""referrer"" content=""no-referrer"">
+					  <meta name=""viewport"" content=""width=device-width, initial-scale=1"">
+					</head>
+					<body style=""font-family:sans-serif;max-width:520px;margin:4rem auto"">
+					  <h1>Delete your account</h1>
+					  <p>This permanently removes your account, sessions, identities and profile. This cannot be undone.</p>
+					
+					  <form id=""form"">
+					    <label>Password (leave blank if you signed up with Google only)</label><br>
+					    <input id=""pw"" type=""password"" style=""width:100%;padding:8px""><br><br>
+					    <button id=""btn"" type=""submit"">Delete my account</button>
+					  </form>
+					
+					  <p id=""msg"" style=""margin-top:1rem;color:#b00""></p>
+					
+					  <script>
+					    const form  = document.getElementById('form');
+					    const btn   = document.getElementById('btn');
+					    const msg   = document.getElementById('msg');
+					    const token = {System.Text.Json.JsonSerializer.Serialize(token)};
+					
+					    form.addEventListener('submit', async (e) => {{
+					      e.preventDefault();
+					      btn.disabled = true;
+					      msg.textContent = '';
+					      const pw = document.getElementById('pw').value;
+					
+					      const headers = {{ 'Content-Type': 'application/json' }};
+					      if (token) headers['Authorization'] = 'Bearer ' + token;
+					
+					      try {{
+					        const r = await fetch('/v1/auth/account', {{
+					          method: 'DELETE',
+					          headers,
+					          body: JSON.stringify({{ password: pw }})
+					        }});
+					        if (r.status === 204) {{
+					          msg.style.color = '#070';
+					          msg.textContent = 'Your account has been deleted.';
+					          form.style.display = 'none';
+					          return;
+					        }}
+					        const body = await r.text();
+					        msg.textContent = 'Delete failed (' + r.status + '). ' + (body || 'Please check your password or token.');
+					      }} catch (err) {{
+					        msg.textContent = 'Network error. Please try again.';
+					      }} finally {{
+					        btn.disabled = false;
+					      }}
+					    }});
+					  </script>
+					</body>
+					</html>";
+    ctx.Response.Headers["Cache-Control"] = "no-store, no-cache, must-revalidate";
+    ctx.Response.Headers["Pragma"]        = "no-cache";
+    ctx.Response.Headers["Expires"]       = "0";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(html);
+});
+
 
 app.MapGet("/reset", async ctx =>
 {
