@@ -471,7 +471,71 @@ public class AuthController : ControllerBase
         return NoContent();
     }
     */
+    // ====== DELETE ACCOUNT ======
+    [HttpDelete("account")]
+    [Authorize]
+    public async Task<IActionResult> DeleteAccount([FromBody] DeleteAccountRequest? req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var uid)) return Unauthorized();
     
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        // Detect whether the user actually has a local password
+        var row = await conn.QuerySingleOrDefaultAsync<(string? Hash, int Len)>(@"
+            SELECT
+              CAST(password_hash AS CHAR(100) CHARACTER SET utf8mb4) AS Hash,
+              OCTET_LENGTH(password_hash) AS Len
+            FROM user_auth
+            WHERE user_id = @uid
+            LIMIT 1;",
+            new { uid }, tx);
+    
+        // Consider it a "real" local password only if it has meaningful bytes and looks like BCrypt
+        var hasLocalPassword =
+            row != default &&
+            row.Len >= 20 &&
+            !string.IsNullOrWhiteSpace(row.Hash) &&
+            row.Hash.StartsWith("$2", StringComparison.Ordinal); // $2a/$2b/$2y...
+    
+        if (hasLocalPassword)
+        {
+            var supplied = req?.Password ?? "";
+            if (string.IsNullOrWhiteSpace(supplied) || !BCrypt.Net.BCrypt.Verify(supplied, row.Hash))
+            {
+                await tx.RollbackAsync(ct);
+                return Unauthorized(new { error = "Password required to delete account." });
+            }
+        }
+    
+        // Delete child rows first to satisfy FKs
+        await conn.ExecuteAsync("DELETE FROM sessions         WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_identities  WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_roles       WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_profile     WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM user_auth        WHERE user_id = @uid;", new { uid }, tx);
+        await conn.ExecuteAsync("DELETE FROM password_resets  WHERE user_id = @uid;", new { uid }, tx);
+    
+        // Finally the user row
+        await conn.ExecuteAsync("DELETE FROM users WHERE id = @uid;", new { uid }, tx);
+    
+        await tx.CommitAsync(ct);
+    
+        // best-effort: also remove current bearer session if sent
+        var tok = GetBearerToken(Request);
+        if (!string.IsNullOrEmpty(tok))
+        {
+            var (_, h) = MakeToken(tok); // hash existing token
+            await conn.ExecuteAsync("DELETE FROM sessions WHERE id = @id;", new { id = h });
+        }
+    
+        return NoContent();
+    }
+
+    /*
     // ====== DELETE ACCOUNT ======
     [HttpDelete("account")]
     [Authorize]
@@ -524,7 +588,7 @@ public class AuthController : ControllerBase
     
         return NoContent();
     }
-
+    */
     
     // GET profile
     [HttpGet("get")]
