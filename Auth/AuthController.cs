@@ -109,7 +109,6 @@ public class AuthController : ControllerBase
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
     
         // 1) Find identity → user
         var userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
@@ -146,7 +145,7 @@ public class AuthController : ControllerBase
                     new { uid = userId, name = payload.Name, pic = payload.Picture, loc = "en" });
                     
                 // ✅ Ensure default role "user"
-                var rid = await EnsureRole(conn, tx: null, roleName: "user");
+                var rid = await EnsureRole(conn, tx: null, "user");
                 await conn.ExecuteAsync(new CommandDefinition(
                     "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
                     new { uid = userId.Value, rid }, cancellationToken: ct));
