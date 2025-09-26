@@ -109,6 +109,7 @@ public class AuthController : ControllerBase
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
     
         // 1) Find identity → user
         var userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
@@ -125,7 +126,7 @@ public class AuthController : ControllerBase
     
             if (userId is null)
             {
-                await using var tx = await conn.BeginTransactionAsync(ct);
+                
                 if (!req.AllowCreate)
                 {
                     return NotFound("Account not found for this Google identity.");
