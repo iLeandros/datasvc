@@ -142,6 +142,12 @@ public class AuthController : ControllerBase
                     @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
                       VALUES (@uid, @name, @pic, @loc)",
                     new { uid = userId, name = payload.Name, pic = payload.Picture, loc = "en" });
+                    
+                // assign default "user" role (same as Register)
+                var roleId = await EnsureRole(conn, tx, "user");
+                await conn.ExecuteAsync(
+                    "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
+                    new { uid = userId, rid = roleId }, tx);
             }
     
             await conn.ExecuteAsync(
