@@ -125,6 +125,7 @@ public class AuthController : ControllerBase
     
             if (userId is null)
             {
+                await using var tx = await conn.BeginTransactionAsync(ct);
                 if (!req.AllowCreate)
                 {
                     return NotFound("Account not found for this Google identity.");
