@@ -715,12 +715,14 @@ public class AuthController : ControllerBase
                 VALUES (@uid, @email, @hash, NULL, NULL);",
                 new { uid = userId, email, hash = hashBytes }, tx);
 
-            //await conn.ExecuteAsync("INSERT INTO user_profile (user_id) VALUES (@uid);", new { uid = userId }, tx);
+            await conn.ExecuteAsync("INSERT INTO user_profile (user_id) VALUES (@uid);", new { uid = userId }, tx);
+            /*
             await conn.ExecuteAsync(
                     @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
                       VALUES (@uid, @name, @pic, @loc)",
                     new { uid = userId, name = payload.Name, 
                     pic = @"https://cdn0.iconfinder.com/data/icons/cryptocurrency-137/128/1_profile_user_avatar_account_person-132-64.png", loc = "en" });
+            */
 
             var roleId = await EnsureRole(conn, tx, "user");
             await conn.ExecuteAsync("INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
