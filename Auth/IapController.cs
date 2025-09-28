@@ -26,14 +26,15 @@ public sealed class IapController : ControllerBase
     }
     public sealed class EntitlementDto
     {
-        public ulong   User_Id       { get; set; }
-        public string  Feature       { get; set; } = "";
-        public string  Source_Platform { get; set; } = "";
-        public string  Product_Id    { get; set; } = "";
-        public DateTime Starts_At    { get; set; }
-        public DateTime? Expires_At  { get; set; }
-        public string  Status        { get; set; } = "";
+        public ulong     UserId         { get; set; }
+        public string    Feature        { get; set; } = "";
+        public string    SourcePlatform { get; set; } = "";
+        public string    ProductId      { get; set; } = "";
+        public DateTime  StartsAt       { get; set; }
+        public DateTime? ExpiresAt      { get; set; }
+        public string    Status         { get; set; } = "";
     }
+
     // --- DTO for the new route ---
     public sealed class RecordReq
     {
