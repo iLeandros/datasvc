@@ -158,6 +158,7 @@ public sealed class IapController : ControllerBase
     }
     */
 
+    // POST /v1/iap/google/verify-consumable
     [HttpPost("google/verify-consumable")]
     [Authorize]
     public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, CancellationToken ct)
@@ -168,60 +169,52 @@ public sealed class IapController : ControllerBase
             return Unauthorized();
         if (string.IsNullOrWhiteSpace(req.ProductId) || string.IsNullOrWhiteSpace(req.PurchaseToken))
             return BadRequest("Missing productId or purchaseToken.");
-    
+
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
-    
+
         try
         {
-            // Lookup duration + store product id (mapping alias->store SKU)
-            var row = await conn.QuerySingleOrDefaultAsync<(int DurationDays, string StoreProductId)>(@"
-                SELECT duration_days AS DurationDays, store_product_id AS StoreProductId
-                FROM products
-                WHERE platform='google' AND product_id=@pid
-                LIMIT 1;", new { pid = req.ProductId }, tx);
-    
-            if (row.DurationDays <= 0 || string.IsNullOrWhiteSpace(row.StoreProductId))
-                return BadRequest("Unknown product or missing store_product_id mapping.");
-            /*
-            // Verify with Google Play
-            var product = await gp.GetProductAsync(row.StoreProductId, req.PurchaseToken, ct);
-            if (product.PurchaseState != 0) // 0=purchased, 1=canceled
-                return BadRequest("Purchase not in 'purchased' state.");
-            */
-            // Ledger insert/touch (idempotent on unique (platform, purchase_token))
+            // 0) Verify with Google first (purchases.products.get) — call your adapter here.
+            // var gp = await GooglePlay.VerifyAsync(req.ProductId, req.PurchaseToken, ct);
+            // if (!gp.IsPurchased) return BadRequest("Not purchased");
+
+            // 1) Look up duration for this product
+            var durationDays = await conn.ExecuteScalarAsync<int>(
+                @"SELECT duration_days FROM products
+                  WHERE platform='google' AND product_id=@pid LIMIT 1;",
+                new { pid = req.ProductId }, tx);
+            if (durationDays <= 0)
+                return BadRequest("Unknown product.");
+
+            // 2) Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
                                         INSERT INTO purchases (
                                           user_id, platform, product_id, order_id, purchase_token, state, purchased_at, provider_payload
                                         ) VALUES (
-                                          @userId, 'google', @alias, @orderId, @token, 'purchased', UTC_TIMESTAMP(3), @payload
+                                          @userId, 'google', @productId, @orderId, @purchaseToken, 'purchased', UTC_TIMESTAMP(3), JSON_OBJECT('src','server')
                                         )
                                         AS new
                                         ON DUPLICATE KEY UPDATE
                                           last_checked_at = UTC_TIMESTAMP(3),
                                           state = IF(purchases.state <> new.state, new.state, purchases.state);";
-    
-            await conn.ExecuteAsync(ledgerSql, new
-                {
-                    userId,
-                    alias = req.ProductId,
-                    orderId = req.OrderId,
-                    token = req.PurchaseToken,
-                    // ← product is gone, so persist a small client-side payload
-                    payload = Newtonsoft.Json.JsonConvert.SerializeObject(new
-                    {
-                        source = "client",
-                        productId = req.ProductId,
-                        purchaseToken = req.PurchaseToken,
-                        orderId = req.OrderId
-                    })
-                }, tx);
-    
-            // Entitlement stacking
+
+            await conn.ExecuteAsync(ledgerSql, new {
+                userId, productId = req.ProductId, orderId = req.OrderId, purchaseToken = req.PurchaseToken
+            }, tx);
+
+            // 3) Entitlement stacking (NOW or existing expiry) + durationDays
             const string entSql = @"
-                                    INSERT INTO entitlements (user_id, feature, source_platform, product_id, starts_at, expires_at, status)
-                                    VALUES (@userId, 'vip', 'google', @alias, UTC_TIMESTAMP(3), DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY), 'active')
+                                    INSERT INTO entitlements (
+                                      user_id, feature, source_platform, product_id, starts_at, expires_at, status
+                                    )
+                                    VALUES (
+                                      @userId, 'vip', 'google', @productId,
+                                      UTC_TIMESTAMP(3),
+                                      DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
+                                      'active'
+                                    )
                                     ON DUPLICATE KEY UPDATE
                                       expires_at = DATE_ADD(
                                         CASE
@@ -234,22 +227,25 @@ public sealed class IapController : ControllerBase
                                       status = 'active',
                                       product_id = VALUES(product_id),
                                       source_platform = VALUES(source_platform);";
-    
-            await conn.ExecuteAsync(entSql, new { userId, alias = req.ProductId, days = row.DurationDays }, tx);
-    
-            // Return snapshot
+
+            await conn.ExecuteAsync(entSql, new { userId, productId = req.ProductId, days = durationDays }, tx);
+
+            // 4) Consume (server-side) so user can buy again
+            // await GooglePlay.ConsumeAsync(req.ProductId, req.PurchaseToken, ct);
+
+            // 5) Return snapshot
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-                                                                    SELECT user_id   AS UserId,
+                                                                    SELECT user_id   AS User_Id,
                                                                            feature   AS Feature,
-                                                                           source_platform AS SourcePlatform,
-                                                                           product_id AS ProductId,
-                                                                           starts_at  AS StartsAt,
-                                                                           expires_at AS ExpiresAt,
+                                                                           source_platform AS Source_Platform,
+                                                                           product_id AS Product_Id,
+                                                                           starts_at  AS Starts_At,
+                                                                           expires_at AS Expires_At,
                                                                            status     AS Status
                                                                     FROM entitlements
                                                                     WHERE user_id = @userId AND feature = 'vip'
                                                                     LIMIT 1;", new { userId }, tx);
-    
+
             await tx.CommitAsync(ct);
             return Ok(ent);
         }
