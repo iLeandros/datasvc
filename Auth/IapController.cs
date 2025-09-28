@@ -202,13 +202,21 @@ public sealed class IapController : ControllerBase
                                           last_checked_at = UTC_TIMESTAMP(3),
                                           state = IF(purchases.state <> new.state, new.state, purchases.state);";
     
-            await conn.ExecuteAsync(ledgerSql, new {
-                userId,
-                alias = req.ProductId,
-                orderId = req.OrderId,
-                token = req.PurchaseToken,
-                payload = Newtonsoft.Json.JsonConvert.SerializeObject(product)
-            }, tx);
+            await conn.ExecuteAsync(ledgerSql, new
+                {
+                    userId,
+                    alias = req.ProductId,
+                    orderId = req.OrderId,
+                    token = req.PurchaseToken,
+                    // ← product is gone, so persist a small client-side payload
+                    payload = Newtonsoft.Json.JsonConvert.SerializeObject(new
+                    {
+                        source = "client",
+                        productId = req.ProductId,
+                        purchaseToken = req.PurchaseToken,
+                        orderId = req.OrderId
+                    })
+                }, tx);
     
             // Entitlement stacking
             const string entSql = @"
