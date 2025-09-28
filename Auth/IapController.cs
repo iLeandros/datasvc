@@ -63,6 +63,7 @@ public sealed class IapController : ControllerBase
         }
         return false;
     }
+    /*
     [HttpPost("record-consumable")]
     [Authorize]
     public async Task<IActionResult> RecordConsumable([FromBody] RecordReq req, CancellationToken ct)
@@ -155,10 +156,8 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
+    */
 
-
-
-    /*
     [HttpPost("google/verify-consumable")]
     [Authorize]
     public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, [FromServices] GooglePlayClient gp, CancellationToken ct)
@@ -190,7 +189,7 @@ public sealed class IapController : ControllerBase
             var product = await gp.GetProductAsync(row.StoreProductId, req.PurchaseToken, ct);
             if (product.PurchaseState != 0) // 0=purchased, 1=canceled
                 return BadRequest("Purchase not in 'purchased' state.");
-            //
+            */
             // Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
     INSERT INTO purchases (
@@ -252,7 +251,7 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
-    */
+    
     [HttpPost("google/mark-consumed")]
     [Authorize]
     public async Task<IActionResult> MarkConsumed([FromBody] dynamic body, CancellationToken ct)
