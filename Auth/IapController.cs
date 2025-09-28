@@ -160,7 +160,7 @@ public sealed class IapController : ControllerBase
 
     [HttpPost("google/verify-consumable")]
     [Authorize]
-    public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, [FromServices] GooglePlayClient gp, CancellationToken ct)
+    public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
@@ -192,15 +192,15 @@ public sealed class IapController : ControllerBase
             */
             // Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
-    INSERT INTO purchases (
-      user_id, platform, product_id, order_id, purchase_token, state, purchased_at, provider_payload
-    ) VALUES (
-      @userId, 'google', @alias, @orderId, @token, 'purchased', UTC_TIMESTAMP(3), @payload
-    )
-    AS new
-    ON DUPLICATE KEY UPDATE
-      last_checked_at = UTC_TIMESTAMP(3),
-      state = IF(purchases.state <> new.state, new.state, purchases.state);";
+                                        INSERT INTO purchases (
+                                          user_id, platform, product_id, order_id, purchase_token, state, purchased_at, provider_payload
+                                        ) VALUES (
+                                          @userId, 'google', @alias, @orderId, @token, 'purchased', UTC_TIMESTAMP(3), @payload
+                                        )
+                                        AS new
+                                        ON DUPLICATE KEY UPDATE
+                                          last_checked_at = UTC_TIMESTAMP(3),
+                                          state = IF(purchases.state <> new.state, new.state, purchases.state);";
     
             await conn.ExecuteAsync(ledgerSql, new {
                 userId,
@@ -212,35 +212,35 @@ public sealed class IapController : ControllerBase
     
             // Entitlement stacking
             const string entSql = @"
-    INSERT INTO entitlements (user_id, feature, source_platform, product_id, starts_at, expires_at, status)
-    VALUES (@userId, 'vip', 'google', @alias, UTC_TIMESTAMP(3), DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY), 'active')
-    ON DUPLICATE KEY UPDATE
-      expires_at = DATE_ADD(
-        CASE
-          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
-            THEN UTC_TIMESTAMP(3)
-          ELSE entitlements.expires_at
-        END,
-        INTERVAL @days DAY
-      ),
-      status = 'active',
-      product_id = VALUES(product_id),
-      source_platform = VALUES(source_platform);";
+                                    INSERT INTO entitlements (user_id, feature, source_platform, product_id, starts_at, expires_at, status)
+                                    VALUES (@userId, 'vip', 'google', @alias, UTC_TIMESTAMP(3), DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY), 'active')
+                                    ON DUPLICATE KEY UPDATE
+                                      expires_at = DATE_ADD(
+                                        CASE
+                                          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
+                                            THEN UTC_TIMESTAMP(3)
+                                          ELSE entitlements.expires_at
+                                        END,
+                                        INTERVAL @days DAY
+                                      ),
+                                      status = 'active',
+                                      product_id = VALUES(product_id),
+                                      source_platform = VALUES(source_platform);";
     
             await conn.ExecuteAsync(entSql, new { userId, alias = req.ProductId, days = row.DurationDays }, tx);
     
             // Return snapshot
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-    SELECT user_id   AS UserId,
-           feature   AS Feature,
-           source_platform AS SourcePlatform,
-           product_id AS ProductId,
-           starts_at  AS StartsAt,
-           expires_at AS ExpiresAt,
-           status     AS Status
-    FROM entitlements
-    WHERE user_id = @userId AND feature = 'vip'
-    LIMIT 1;", new { userId }, tx);
+                                                                    SELECT user_id   AS UserId,
+                                                                           feature   AS Feature,
+                                                                           source_platform AS SourcePlatform,
+                                                                           product_id AS ProductId,
+                                                                           starts_at  AS StartsAt,
+                                                                           expires_at AS ExpiresAt,
+                                                                           status     AS Status
+                                                                    FROM entitlements
+                                                                    WHERE user_id = @userId AND feature = 'vip'
+                                                                    LIMIT 1;", new { userId }, tx);
     
             await tx.CommitAsync(ct);
             return Ok(ent);
