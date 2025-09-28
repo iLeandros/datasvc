@@ -34,6 +34,14 @@ public sealed class IapController : ControllerBase
         public DateTime? Expires_At  { get; set; }
         public string  Status        { get; set; } = "";
     }
+    // --- DTO for the new route ---
+    public sealed class RecordReq
+    {
+        public string Platform { get; set; } = "";     // "google" | "apple"
+        public string ProductId { get; set; } = "";    // alias e.g. "discount.month"
+        public string PurchaseToken { get; set; } = "";
+        public string? OrderId { get; set; }
+    }
 
     // You already do this in AuthController: copy the same logic to read the uid
     // (claims first, then HttpContext.Items["user_id"]). :contentReference[oaicite:1]{index=1}
@@ -55,7 +63,102 @@ public sealed class IapController : ControllerBase
         }
         return false;
     }
+    [HttpPost("record-consumable")]
+    [Authorize]
+    public async Task<IActionResult> RecordConsumable([FromBody] RecordReq req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+    
+        if (!TryGetUserId(out var userId))
+            return Unauthorized();
+    
+        if (string.IsNullOrWhiteSpace(req.Platform) ||
+            string.IsNullOrWhiteSpace(req.ProductId) ||
+            string.IsNullOrWhiteSpace(req.PurchaseToken))
+            return BadRequest("platform, productId, and purchaseToken are required.");
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        try
+        {
+            // 1) Lookup duration by (platform, alias)
+            var days = await conn.ExecuteScalarAsync<int?>(@"
+                SELECT duration_days FROM products
+                WHERE platform = @platform AND product_id = @pid
+                LIMIT 1;", new { platform = req.Platform, pid = req.ProductId }, tx) ?? 0;
+    
+            if (days <= 0)
+                return BadRequest("Unknown product or non-positive duration.");
+    
+            // 2) Upsert into purchases as CONSUMED (idempotent on unique (platform, purchase_token))
+            const string ledgerSql = @"
+    INSERT INTO purchases (
+      user_id, platform, product_id, order_id, purchase_token, state, purchased_at, acknowledged, last_checked_at, provider_payload
+    ) VALUES (
+      @userId, @platform, @alias, @orderId, @token, 'consumed', UTC_TIMESTAMP(3), 1, UTC_TIMESTAMP(3), JSON_OBJECT('source','client')
+    )
+    AS new
+    ON DUPLICATE KEY UPDATE
+      state = 'consumed',
+      acknowledged = 1,
+      last_checked_at = UTC_TIMESTAMP(3);";
+    
+            await conn.ExecuteAsync(ledgerSql, new {
+                userId,
+                platform = req.Platform,
+                alias = req.ProductId,   // alias like "discount.month"
+                orderId = req.OrderId,
+                token = req.PurchaseToken
+            }, tx);
+    
+            // 3) Stack entitlement for VIP
+            const string entSql = @"
+    INSERT INTO entitlements (user_id, feature, source_platform, product_id, starts_at, expires_at, status)
+    VALUES (@userId, 'vip', @platform, @alias, UTC_TIMESTAMP(3), DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY), 'active')
+    ON DUPLICATE KEY UPDATE
+      expires_at = DATE_ADD(
+        CASE
+          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
+            THEN UTC_TIMESTAMP(3)
+          ELSE entitlements.expires_at
+        END,
+        INTERVAL @days DAY
+      ),
+      status = 'active',
+      product_id = VALUES(product_id),
+      source_platform = VALUES(source_platform);";
+    
+            await conn.ExecuteAsync(entSql, new { userId, platform = req.Platform, alias = req.ProductId, days }, tx);
+    
+            // 4) Return snapshot
+            var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
+    SELECT user_id       AS User_Id,
+           feature       AS Feature,
+           source_platform AS Source_Platform,
+           product_id    AS Product_Id,
+           starts_at     AS Starts_At,
+           expires_at    AS Expires_At,
+           status        AS Status
+    FROM entitlements
+    WHERE user_id = @userId AND feature = 'vip'
+    LIMIT 1;", new { userId }, tx);
+    
+            await tx.CommitAsync(ct);
+            return Ok(ent);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
 
+
+
+    /*
     [HttpPost("google/verify-consumable")]
     [Authorize]
     public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, [FromServices] GooglePlayClient gp, CancellationToken ct)
@@ -87,7 +190,7 @@ public sealed class IapController : ControllerBase
             var product = await gp.GetProductAsync(row.StoreProductId, req.PurchaseToken, ct);
             if (product.PurchaseState != 0) // 0=purchased, 1=canceled
                 return BadRequest("Purchase not in 'purchased' state.");
-            */
+            //
             // Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
     INSERT INTO purchases (
@@ -149,7 +252,7 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
-
+    */
     [HttpPost("google/mark-consumed")]
     [Authorize]
     public async Task<IActionResult> MarkConsumed([FromBody] dynamic body, CancellationToken ct)
