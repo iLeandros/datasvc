@@ -179,7 +179,6 @@ else
 }
 
 // ---------- API ----------
-
 // -------- Trade Signal Webhook --------
 // Receives alerts like:
 // {"symbol":"{{ticker}}","side":"{{strategy.order.action}}","qty":"{{strategy.order.contracts}}",
