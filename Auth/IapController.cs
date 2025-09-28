@@ -236,16 +236,18 @@ public sealed class IapController : ControllerBase
 
             // 5) Return snapshot
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-                                                                    SELECT user_id   AS UserId,
-                                                                           feature   AS Feature,
-                                                                           source_platform AS SourcePlatform,
-                                                                           product_id AS ProductId,
-                                                                           starts_at  AS StartsAt,
-                                                                           expires_at AS ExpiresAt,
-                                                                           status     AS Status
+                                                                    SELECT
+                                                                      user_id         AS UserId,
+                                                                      feature         AS Feature,
+                                                                      source_platform AS SourcePlatform,
+                                                                      product_id      AS ProductId,
+                                                                      starts_at       AS StartsAt,
+                                                                      expires_at      AS ExpiresAt,
+                                                                      status          AS Status
                                                                     FROM entitlements
                                                                     WHERE user_id = @userId AND feature = 'vip'
-                                                                    LIMIT 1;", new { userId }, tx);
+                                                                    LIMIT 1;", 
+                                                                    new { userId }, tx);
 
             await tx.CommitAsync(ct);
             return Ok(ent);
