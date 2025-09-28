@@ -179,21 +179,6 @@ else
 }
 
 // ---------- API ----------
-app.MapPost("/v1/iap/google/verify", async (VerifyReq req, HttpContext ctx, IConfiguration cfg) =>
-{
-    // 1) Auth user from your existing session handler
-    var userId = (ulong)ctx.Items["user_id"]!; // you already set this in auth
-
-    // 2) Call Google Play API with req.PurchaseToken + req.ProductId
-    var gp = await GooglePlay.VerifyAsync(req.PurchaseToken, req.ProductId, cfg); // pseudo
-
-    // 3) Upsert purchases + entitlements
-    await IapRepo.RecordGooglePurchaseAsync(userId, gp);
-
-    // 4) Return current entitlements
-    var ent = await IapRepo.GetEntitlementsAsync(userId);
-    return Results.Ok(ent);
-});
 
 // -------- Trade Signal Webhook --------
 // Receives alerts like:
