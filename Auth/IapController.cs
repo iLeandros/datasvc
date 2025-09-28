@@ -88,15 +88,15 @@ public sealed class IapController : ControllerBase
 
             // 2) Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
-INSERT INTO purchases (
-  user_id, platform, product_id, order_id, purchase_token, state, purchased_at, provider_payload
-) VALUES (
-  @userId, 'google', @productId, @orderId, @purchaseToken, 'purchased', UTC_TIMESTAMP(3), JSON_OBJECT('src','server')
-)
-AS new
-ON DUPLICATE KEY UPDATE
-  last_checked_at = UTC_TIMESTAMP(3),
-  state = IF(purchases.state <> new.state, new.state, purchases.state);";
+                                        INSERT INTO purchases (
+                                          user_id, platform, product_id, order_id, purchase_token, state, purchased_at, provider_payload
+                                        ) VALUES (
+                                          @userId, 'google', @productId, @orderId, @purchaseToken, 'purchased', UTC_TIMESTAMP(3), JSON_OBJECT('src','server')
+                                        )
+                                        AS new
+                                        ON DUPLICATE KEY UPDATE
+                                          last_checked_at = UTC_TIMESTAMP(3),
+                                          state = IF(purchases.state <> new.state, new.state, purchases.state);";
 
             await conn.ExecuteAsync(ledgerSql, new {
                 userId, productId = req.ProductId, orderId = req.OrderId, purchaseToken = req.PurchaseToken
@@ -104,27 +104,27 @@ ON DUPLICATE KEY UPDATE
 
             // 3) Entitlement stacking (NOW or existing expiry) + durationDays
             const string entSql = @"
-INSERT INTO entitlements (
-  user_id, feature, source_platform, product_id, starts_at, expires_at, status
-)
-VALUES (
-  @userId, 'vip', 'google', @productId,
-  UTC_TIMESTAMP(3),
-  DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
-  'active'
-)
-ON DUPLICATE KEY UPDATE
-  expires_at = DATE_ADD(
-    CASE
-      WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
-        THEN UTC_TIMESTAMP(3)
-      ELSE entitlements.expires_at
-    END,
-    INTERVAL @days DAY
-  ),
-  status = 'active',
-  product_id = VALUES(product_id),
-  source_platform = VALUES(source_platform);";
+                                    INSERT INTO entitlements (
+                                      user_id, feature, source_platform, product_id, starts_at, expires_at, status
+                                    )
+                                    VALUES (
+                                      @userId, 'vip', 'google', @productId,
+                                      UTC_TIMESTAMP(3),
+                                      DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
+                                      'active'
+                                    )
+                                    ON DUPLICATE KEY UPDATE
+                                      expires_at = DATE_ADD(
+                                        CASE
+                                          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
+                                            THEN UTC_TIMESTAMP(3)
+                                          ELSE entitlements.expires_at
+                                        END,
+                                        INTERVAL @days DAY
+                                      ),
+                                      status = 'active',
+                                      product_id = VALUES(product_id),
+                                      source_platform = VALUES(source_platform);";
 
             await conn.ExecuteAsync(entSql, new { userId, productId = req.ProductId, days = durationDays }, tx);
 
@@ -133,16 +133,16 @@ ON DUPLICATE KEY UPDATE
 
             // 5) Return snapshot
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-SELECT user_id   AS User_Id,
-       feature   AS Feature,
-       source_platform AS Source_Platform,
-       product_id AS Product_Id,
-       starts_at  AS Starts_At,
-       expires_at AS Expires_At,
-       status     AS Status
-FROM entitlements
-WHERE user_id = @userId AND feature = 'vip'
-LIMIT 1;", new { userId }, tx);
+                                                                    SELECT user_id   AS User_Id,
+                                                                           feature   AS Feature,
+                                                                           source_platform AS Source_Platform,
+                                                                           product_id AS Product_Id,
+                                                                           starts_at  AS Starts_At,
+                                                                           expires_at AS Expires_At,
+                                                                           status     AS Status
+                                                                    FROM entitlements
+                                                                    WHERE user_id = @userId AND feature = 'vip'
+                                                                    LIMIT 1;", new { userId }, tx);
 
             await tx.CommitAsync(ct);
             return Ok(ent);
@@ -166,16 +166,16 @@ LIMIT 1;", new { userId }, tx);
 
         await using var conn = new MySqlConnection(_connString);
         var ent = await conn.QuerySingleOrDefaultAsync<EntitlementDto>(@"
-SELECT user_id   AS User_Id,
-       feature   AS Feature,
-       source_platform AS Source_Platform,
-       product_id AS Product_Id,
-       starts_at  AS Starts_At,
-       expires_at AS Expires_At,
-       status     AS Status
-FROM entitlements
-WHERE user_id = @userId AND feature = 'vip'
-LIMIT 1;", new { userId });
+                                                                        SELECT user_id   AS User_Id,
+                                                                               feature   AS Feature,
+                                                                               source_platform AS Source_Platform,
+                                                                               product_id AS Product_Id,
+                                                                               starts_at  AS Starts_At,
+                                                                               expires_at AS Expires_At,
+                                                                               status     AS Status
+                                                                        FROM entitlements
+                                                                        WHERE user_id = @userId AND feature = 'vip'
+                                                                        LIMIT 1;", new { userId });
 
         if (ent is null) return NotFound(new { message = "No entitlement" });
         return Ok(ent);
