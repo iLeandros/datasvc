@@ -27,6 +27,7 @@ using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using MySqlConnector;
 using Google.Apis.Auth;
 
+Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
 
 var builder = WebApplication.CreateBuilder(args);
 
