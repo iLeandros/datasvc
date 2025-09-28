@@ -235,12 +235,12 @@ public sealed class IapController : ControllerBase
 
             // 5) Return snapshot
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-                                                                    SELECT user_id   AS User_Id,
+                                                                    SELECT user_id   AS UserId,
                                                                            feature   AS Feature,
-                                                                           source_platform AS Source_Platform,
-                                                                           product_id AS Product_Id,
-                                                                           starts_at  AS Starts_At,
-                                                                           expires_at AS Expires_At,
+                                                                           source_platform AS SourcePlatform,
+                                                                           product_id AS ProductId,
+                                                                           starts_at  AS StartsAt,
+                                                                           expires_at AS ExpiresAt,
                                                                            status     AS Status
                                                                     FROM entitlements
                                                                     WHERE user_id = @userId AND feature = 'vip'
@@ -285,16 +285,19 @@ public sealed class IapController : ControllerBase
 
         await using var conn = new MySqlConnection(_connString);
         var ent = await conn.QuerySingleOrDefaultAsync<EntitlementDto>(@"
-                                                                        SELECT user_id   AS User_Id,
-                                                                               feature   AS Feature,
-                                                                               source_platform AS Source_Platform,
-                                                                               product_id AS Product_Id,
-                                                                               starts_at  AS Starts_At,
-                                                                               expires_at AS Expires_At,
-                                                                               status     AS Status
+                                                                        SELECT
+                                                                          user_id         AS UserId,
+                                                                          feature         AS Feature,
+                                                                          source_platform AS SourcePlatform,
+                                                                          product_id      AS ProductId,
+                                                                          starts_at       AS StartsAt,
+                                                                          expires_at      AS ExpiresAt,
+                                                                          status          AS Status
                                                                         FROM entitlements
                                                                         WHERE user_id = @userId AND feature = 'vip'
-                                                                        LIMIT 1;", new { userId });
+                                                                        LIMIT 1;",
+                                                                        new { userId });
+
 
         if (ent is null) return NotFound(new { message = "No entitlement" });
         return Ok(ent);
