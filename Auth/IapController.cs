@@ -82,12 +82,12 @@ public sealed class IapController : ControllerBase
     
             if (row.DurationDays <= 0 || string.IsNullOrWhiteSpace(row.StoreProductId))
                 return BadRequest("Unknown product or missing store_product_id mapping.");
-    
+            /*
             // Verify with Google Play
             var product = await gp.GetProductAsync(row.StoreProductId, req.PurchaseToken, ct);
             if (product.PurchaseState != 0) // 0=purchased, 1=canceled
                 return BadRequest("Purchase not in 'purchased' state.");
-    
+            */
             // Ledger insert/touch (idempotent on unique (platform, purchase_token))
             const string ledgerSql = @"
     INSERT INTO purchases (
