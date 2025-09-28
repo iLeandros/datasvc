@@ -153,6 +153,22 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
+    [HttpPost("google/mark-consumed")]
+    [Authorize]
+    public async Task<IActionResult> MarkConsumed([FromBody] dynamic body, CancellationToken ct)
+    {
+        string token = (string)body?.purchaseToken ?? "";
+        if (string.IsNullOrWhiteSpace(token)) return BadRequest();
+    
+        await using var conn = new MySqlConnection(_connString);
+        var rows = await conn.ExecuteAsync(@"
+            UPDATE purchases
+            SET acknowledged = 1,
+                state = 'consumed',
+                last_checked_at = UTC_TIMESTAMP(3)
+            WHERE platform='google' AND purchase_token=@token;", new { token });
+        return rows > 0 ? Ok() : NotFound();
+    }
 
     // GET /v1/iap/entitlements/me  (client uses this on app start / restore)
     [HttpGet("entitlements/me")]
