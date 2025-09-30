@@ -18,6 +18,20 @@ public sealed class IapController : ControllerBase
     }
 
     // --- DTOs ---
+    public sealed class PurchaseDto
+    {
+        public ulong     Id             { get; set; }
+        public ulong     UserId         { get; set; }
+        public string    Platform       { get; set; } = "";
+        public string    ProductId      { get; set; } = "";
+        public string?   OrderId        { get; set; }
+        public string    PurchaseToken  { get; set; } = "";
+        public string    State          { get; set; } = "";
+        public DateTime  PurchasedAt    { get; set; }
+        public DateTime? ExpiresAt      { get; set; }
+        public bool      Acknowledged   { get; set; }
+        public DateTime? LastCheckedAt  { get; set; }
+    }
     public sealed class VerifyReq
     {
         public string ProductId { get; set; } = "";
@@ -275,7 +289,44 @@ public sealed class IapController : ControllerBase
             WHERE platform='google' AND purchase_token=@token;", new { token });
         return rows > 0 ? Ok() : NotFound();
     }
-
+    
+    // GET /v1/iap/purchases/me?limit=100&offset=0
+    [HttpGet("purchases/me")]
+    [Authorize]
+    public async Task<IActionResult> GetMyPurchases([FromQuery] int limit = 100, [FromQuery] int offset = 0, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var userId))
+            return Unauthorized();
+    
+        // Clamp to sensible bounds
+        limit = Math.Clamp(limit, 1, 500);
+        offset = Math.Max(0, offset);
+    
+        await using var conn = new MySqlConnector.MySqlConnection(_connString);
+        var rows = await conn.QueryAsync<PurchaseDto>(@"
+            SELECT
+                id             AS Id,
+                user_id        AS UserId,
+                platform       AS Platform,
+                product_id     AS ProductId,
+                order_id       AS OrderId,
+                purchase_token AS PurchaseToken,
+                state          AS State,
+                purchased_at   AS PurchasedAt,
+                expires_at     AS ExpiresAt,
+                acknowledged   AS Acknowledged,
+                last_checked_at AS LastCheckedAt
+            FROM purchases
+            WHERE user_id = @userId
+            ORDER BY purchased_at DESC, id DESC
+            LIMIT @limit OFFSET @offset;",
+            new { userId, limit, offset });
+    
+        return Ok(rows);
+    }
+    
     // GET /v1/iap/entitlements/me  (client uses this on app start / restore)
     [HttpGet("entitlements/me")]
     [Authorize]
