@@ -116,6 +116,8 @@ var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
 
+var center = ScraperConfig.TodayLocal();
+await DetailsBulk.RefreshWindowAsync(perDateStore, detailsPerDateStore, center, 3, 3, ct);
 
 app.UseResponseCompression();
 app.UseCors();
@@ -1053,28 +1055,30 @@ app.MapGet("/data/details/allhrefs",
     });
 });
 // GET /data/details/allhrefs/date/{date}
-app.MapGet("/data/details/allhrefs/date/{date}",
-    ([FromServices] SnapshotPerDateStore perDateStore,
-     [FromServices] DetailsStore store,
-     string date) =>
+// GET /data/details/date/{yyyy-MM-dd}
+app.MapGet("/data/details/date/{date}",
+    ([FromServices] DetailsPerDateStore detailsPerDate, string date) =>
 {
     var d = DateOnly.Parse(date);
-    if (!perDateStore.TryGet(d, out var snap) || snap.Payload is null)
-        return Results.NotFound(new { error = "parsed snapshot not found for date", date });
-
-    var dateHrefs = snap.Payload.TableDataGroup
-        .SelectMany(g => g.Items)
-        .Select(i => DetailsStore.Normalize(i.Href))
-        .Where(h => !string.IsNullOrWhiteSpace(h))
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-    var dict = store.Export().items
-        .Where(r => dateHrefs.Contains(r.Href))
-        .OrderByDescending(r => r.LastUpdatedUtc)
-        .ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
-
-    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = dict.Count, items = dict });
+    if (!detailsPerDate.TryGet(d, out var store))
+        return Results.NotFound(new { error = "details not found for date", date });
+    var (items, generatedUtc) = store.Export();
+    var dict = items.ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
+    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = dict.Count, generatedUtc, items = dict });
 });
+
+// GET /data/details/allhrefs/date/{yyyy-MM-dd}
+app.MapGet("/data/details/allhrefs/date/{date}",
+    ([FromServices] DetailsPerDateStore detailsPerDate, string date) =>
+{
+    var d = DateOnly.Parse(date);
+    if (!detailsPerDate.TryGet(d, out var store))
+        return Results.NotFound(new { error = "details not found for date", date });
+    var (items, _) = store.Export();
+    var hrefs = items.Select(i => i.Href).ToArray();
+    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = hrefs.Length, hrefs });
+});
+
 
 // GET /data/details/item?href=...
 app.MapGet("/data/details/item",
@@ -2005,6 +2009,98 @@ public static class BulkRefresh
         if (snap is null) return false;
         store.Set(date, snap);
         return true;
+    }
+}
+
+public static class DetailsBulk
+{
+    // Refresh one date based on that date’s parsed snapshot
+    public static async Task<int> RefreshOneDateAsync(
+        DateOnly d,
+        SnapshotPerDateStore perDate,
+        DetailsPerDateStore detailsPerDate,
+        CancellationToken ct = default)
+    {
+        // 1) get parsed snapshot for this date (RAM or disk)
+        if (!perDate.TryGet(d, out var snap))
+        {
+            BulkRefresh.TryLoadFromDisk(perDate, d);
+            perDate.TryGet(d, out snap);
+        }
+        var groups = snap?.Payload?.TableDataGroup;
+        if (groups is null) return 0;
+
+        var hrefs = groups.SelectMany(g => g.Items)
+                          .Select(i => i.Href)
+                          .Where(h => !string.IsNullOrWhiteSpace(h))
+                          .Select(DetailsStore.Normalize)
+                          .Distinct(StringComparer.OrdinalIgnoreCase)
+                          .ToList();
+
+        // 2) build a temp DetailsStore just for this date
+        var temp = new DetailsStore(); // same type you already use
+        int refreshed = 0;
+        var now = DateTimeOffset.UtcNow;
+
+        using var sem = new SemaphoreSlim(
+            int.TryParse(Environment.GetEnvironmentVariable("DETAILS_PARALLEL"), out var p) ? Math.Max(1,p) : 16);
+
+        var ttlMin = int.TryParse(Environment.GetEnvironmentVariable("DETAILS_TTL_MINUTES"), out var t) ? t : 30;
+        var ttl = TimeSpan.FromMinutes(ttlMin);
+
+        await Task.WhenAll(hrefs.Select(async href =>
+        {
+            await sem.WaitAsync(ct);
+            try
+            {
+                // fetch (your existing fetch) — no reuse since this is a per-day store
+                var rec = await DetailsScraperService.FetchOneStaticAsync(href, ct); // see note below
+                if (rec is not null) { temp.Set(rec); Interlocked.Increment(ref refreshed); }
+            }
+            catch { /* collect/log if desired */ }
+            finally { sem.Release(); }
+        }));
+
+        // 3) persist to disk (non-fatal)
+        var path = ScraperConfig.DetailsPath(d);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        try
+        {
+            await File.WriteAllTextAsync(path, temp.ToJson(), ct); // use your existing serialize
+        }
+        catch (Exception ex) { Console.WriteLine($"[warn] write {path}: {ex.Message}"); }
+
+        // 4) publish to RAM
+        detailsPerDate.Set(d, temp);
+        return refreshed;
+    }
+
+    // Refresh rolling window and prune memory+disk
+    public static async Task RefreshWindowAsync(
+        SnapshotPerDateStore perDate,
+        DetailsPerDateStore detailsPerDate,
+        DateOnly center, int back, int ahead, CancellationToken ct = default)
+    {
+        var dates = ScraperConfig.DateWindow(center, back, ahead).ToArray();
+        foreach (var d in dates)
+            await RefreshOneDateAsync(d, perDate, detailsPerDate, ct);
+
+        // prune RAM
+        var keep = dates.ToHashSet();
+        detailsPerDate.PruneTo(keep);
+
+        // prune DISK
+        var dir = Path.Combine(ScraperConfig.DataDir, "details");
+        Directory.CreateDirectory(dir);
+        foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
+        {
+            var name = Path.GetFileNameWithoutExtension(f); // yyyy-MM-dd
+            if (!DateOnly.TryParseExact(name, "yyyy-MM-dd", out var fileDate)) continue;
+            if (!keep.Contains(fileDate))
+                TryDelete(f);
+        }
+
+        static void TryDelete(string f) { try { File.Delete(f); } catch { } }
     }
 }
 
