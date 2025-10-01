@@ -1434,6 +1434,30 @@ public sealed class SnapshotPerDateStore
     }
 }
 
+public sealed class DetailsPerDateStore
+{
+    readonly object _gate = new();
+    readonly Dictionary<DateOnly, DetailsStore> _byDate = new();
+
+    public bool TryGet(DateOnly d, out DetailsStore store)
+    { lock (_gate) return _byDate.TryGetValue(d, out store!); }
+
+    public void Set(DateOnly d, DetailsStore store)
+    { lock (_gate) _byDate[d] = store; }
+
+    public IReadOnlyCollection<DateOnly> Dates()
+    { lock (_gate) return _byDate.Keys.OrderBy(x => x).ToArray(); }
+
+    public void PruneTo(HashSet<DateOnly> keep)
+    {
+        lock (_gate)
+        {
+            var remove = _byDate.Keys.Where(d => !keep.Contains(d)).ToList();
+            foreach (var d in remove) _byDate.Remove(d);
+        }
+    }
+}
+
 
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
 
