@@ -96,6 +96,9 @@ builder.Services.AddHostedService<TipsRefreshJob>();
 builder.Services.AddSingleton<Top10Store>();
 builder.Services.AddSingleton<Top10ScraperService>();
 builder.Services.AddHostedService<Top10RefreshJob>();
+
+builder.Services.AddSingleton<SnapshotPerDateStore>();
+
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
