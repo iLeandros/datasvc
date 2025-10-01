@@ -1052,6 +1052,30 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+// GET /data/details/allhrefs/date/{date}
+app.MapGet("/data/details/allhrefs/date/{date}",
+    ([FromServices] SnapshotPerDateStore perDateStore,
+     [FromServices] DetailsStore store,
+     string date) =>
+{
+    var d = DateOnly.Parse(date);
+    if (!perDateStore.TryGet(d, out var snap) || snap.Payload is null)
+        return Results.NotFound(new { error = "parsed snapshot not found for date", date });
+
+    var dateHrefs = snap.Payload.TableDataGroup
+        .SelectMany(g => g.Items)
+        .Select(i => DetailsStore.Normalize(i.Href))
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    var dict = store.Export().items
+        .Where(r => dateHrefs.Contains(r.Href))
+        .OrderByDescending(r => r.LastUpdatedUtc)
+        .ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
+
+    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = dict.Count, items = dict });
+});
+
 // GET /data/details/item?href=...
 app.MapGet("/data/details/item",
 (
