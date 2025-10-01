@@ -194,13 +194,14 @@ else
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
 
+/*
 // Warm from disk for D-3..D+3 on boot (best-effort)
 {
     var center = ScraperConfig.TodayLocal();
     foreach (var d in ScraperConfig.DateWindow(center))
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
-
+*/
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
 app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
