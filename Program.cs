@@ -73,7 +73,6 @@ builder.Services.AddResponseCompression(o =>
 
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
-builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
 builder.Services.AddHostedService<LiveScoresRefreshJob>();
 
@@ -104,6 +103,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+
+var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
+
 app.UseResponseCompression();
 app.UseCors();
 
