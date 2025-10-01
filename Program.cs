@@ -782,13 +782,27 @@ app.MapPost("/data/details/cleanup",
 
     if (pruneFromParsed)
     {
-        var hrefs = root.Current?.Payload?.TableDataGroup?
-            .SelectMany(g => g.Items)
-            .Select(i => i.Href)
-            .Where(h => !string.IsNullOrWhiteSpace(h))
-            .Select(DetailsStore.Normalize)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var center = ScraperConfig.TodayLocal();
+        var dates = ScraperConfig.DateWindow(center, 3, 3).ToArray();
+
+        var hrefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in dates)
+        {
+            // prefer RAM, fall back to disk
+            if (!perDate.TryGet(d, out var snap))
+            {
+                BulkRefresh.TryLoadFromDisk(perDate, d);
+                perDate.TryGet(d, out snap);
+            }
+
+            var groups = snap?.Payload?.TableDataGroup;
+            if (groups is null) continue;
+
+            foreach (var h in groups.SelectMany(g => g.Items)
+                                    .Select(i => i.Href)
+                                    .Where(h => !string.IsNullOrWhiteSpace(h)))
+                hrefs.Add(DetailsStore.Normalize(h));
+        }
 
         kept = kept.Where(i => hrefs.Contains(i.Href));
     }
@@ -1182,31 +1196,16 @@ async (
     return Results.Json(new { total = dict.Count, items = dict });
 });
 
-// Optional: refresh then return the aggregated payload in one call
+// POST /data/details/refresh-and-get
 app.MapPost("/data/details/refresh-and-get",
     async ([FromServices] DetailsScraperService svc,
            [FromServices] DetailsStore store) =>
 {
-    await svc.RefreshAllFromCurrentAsync();
+    await svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3);
 
     var (items, generatedUtc) = store.Export();
-
-    var byHref = items.ToDictionary(
-        i => i.Href,
-        i => new
-        {
-            href                   = i.Href,  // include href in each object
-            lastUpdatedUtc         = i.LastUpdatedUtc,
-            teamsInfoHtml          = i.Payload.TeamsInfoHtml,
-            matchBetweenHtml       = i.Payload.MatchBetweenHtml,
-            lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
-            teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
-            teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
-        },
-        StringComparer.OrdinalIgnoreCase
-    );
-
-    return Results.Json(new { total = byHref.Count, generatedUtc, items = byHref });
+    var dict = items.ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
+    return Results.Json(new { total = dict.Count, generatedUtc, items = dict });
 });
 
 app.MapGet("/data/details/has", ([FromServices] DetailsStore store, [FromQuery] string href) =>
@@ -1229,10 +1228,10 @@ app.MapGet("/data/details/debug/keys", ([FromServices] DetailsStore store) =>
     return Results.Json(keys);
 });
 
-// Manual refresh (details for all current items)
+// POST /data/details/refresh
 app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService svc) =>
 {
-    var result = await svc.RefreshAllFromCurrentAsync();
+    var result = await svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3);
     return Results.Json(new { refreshed = result.Refreshed, skipped = result.Skipped, errors = result.Errors.Count, result.LastUpdatedUtc });
 });
 // Returns the first href currently in memory so we can copy/paste it
@@ -2597,14 +2596,15 @@ public static class DetailsFiles
 public sealed class DetailsScraperService
 {
     private readonly ResultStore _root;
+    private readonly SnapshotPerDateStore _perDate;   // <— NEW
     private readonly DetailsStore _store;
-	
-	static int GetEnvInt(string name, int def)
-    => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
 
-	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
-	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
-	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1)); // 3h default
+    static int GetEnvInt(string name, int def)
+        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
+
+    readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);
+    readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10);
+    readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1));
 
     static readonly SocketsHttpHandler _handler = new()
 	{
@@ -2616,9 +2616,10 @@ public sealed class DetailsScraperService
 	};
 	static readonly HttpClient http = new(_handler);
 
-    public DetailsScraperService(ResultStore root, DetailsStore store)
+    public DetailsScraperService(ResultStore root, SnapshotPerDateStore perDate, DetailsStore store) // <— UPDATED
     {
         _root = root;
+        _perDate = perDate;  // <— NEW
         _store = store;
     }
 
@@ -2630,6 +2631,77 @@ public sealed class DetailsScraperService
 									    DateTimeOffset LastUpdatedUtc
 									);
 
+	// NEW: refresh details for the union of hrefs across (center ± back/ahead)
+    public async Task<RefreshSummary> RefreshFromPerDateWindowAsync(
+        DateOnly? center = null, int back = 3, int ahead = 3, CancellationToken ct = default)
+    {
+        var c = center ?? ScraperConfig.TodayLocal();
+        var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
+
+        // Collect unique hrefs from snapshots (prefer in-memory; fall back to disk)
+        var hrefSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in dates)
+        {
+            if (!_perDate.TryGet(d, out var snap))
+            {
+                // try warm from disk (non-fatal)
+                BulkRefresh.TryLoadFromDisk(_perDate, d);
+                _perDate.TryGet(d, out snap);
+            }
+
+            var groups = snap?.Payload?.TableDataGroup;
+            if (groups is null) continue;
+
+            foreach (var h in groups.SelectMany(g => g.Items)
+                                    .Select(i => i.Href)
+                                    .Where(h => !string.IsNullOrWhiteSpace(h)))
+                hrefSet.Add(DetailsStore.Normalize(h));
+        }
+
+        var hrefs = hrefSet.ToList(); // stable snapshot
+        int refreshed = 0, skipped = 0;
+        var errors = new List<string>();
+        var sem = new SemaphoreSlim(_maxParallel);
+        var now = DateTimeOffset.UtcNow;
+
+        var tasks = hrefs.Select(async href =>
+        {
+            await sem.WaitAsync(ct);
+            try
+            {
+                var existing = _store.Get(href);
+                if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
+                {
+                    Interlocked.Increment(ref skipped);
+                    return;
+                }
+
+                var rec = await FetchOneAsync(href, ct);
+                _store.Set(rec);
+                Interlocked.Increment(ref refreshed);
+            }
+            catch (Exception ex)
+            {
+                lock (errors) errors.Add($"{href}: {ex.Message}");
+            }
+            finally { sem.Release(); }
+        });
+
+        await Task.WhenAll(tasks);
+
+        // Watchdog/prune: keep only hrefs from the active window
+        var deleted = _store.ShrinkTo(hrefs);
+
+        // Don’t persist an empty file (avoid wiping a previous good cache)
+        if (_store.Index().Count == 0)
+        {
+            errors.Add("Store empty after refresh — not saving empty details.json.");
+            return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
+        }
+
+        await DetailsFiles.SaveAsync(_store);
+        return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
+    }
 
     public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
 	{
@@ -2928,7 +3000,7 @@ public sealed class DetailsRefreshJob : BackgroundService
         if (!await _gate.WaitAsync(0, ct)) return;
         try
         {
-            var r = await _svc.RefreshAllFromCurrentAsync(ct);
+            var r = await _svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3, ct);
             Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
         }
         catch (Exception ex)
