@@ -1344,9 +1344,13 @@ public sealed class SnapshotPerDateStore
         lock (_gate) return _byDate.TryGetValue(date, out snap!);
     }
 
-    public IReadOnlyDictionary<DateOnly, DataSnapshot> Export()
+    public void PruneTo(HashSet<DateOnly> keep)
     {
-        lock (_gate) return new Dictionary<DateOnly, DataSnapshot>(_byDate);
+        lock (_gate)
+        {
+            var toRemove = _byDate.Keys.Where(d => !keep.Contains(d)).ToList();
+            foreach (var d in toRemove) _byDate.Remove(d);
+        }
     }
 }
 
