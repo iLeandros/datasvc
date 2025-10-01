@@ -98,6 +98,7 @@ builder.Services.AddSingleton<Top10ScraperService>();
 builder.Services.AddHostedService<Top10RefreshJob>();
 
 builder.Services.AddSingleton<SnapshotPerDateStore>();
+builder.Services.AddHostedService<PerDateRefreshJob>();
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -109,6 +110,12 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 var app = builder.Build();
 
 var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
+{
+    var center = ScraperConfig.TodayLocal();
+    foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+        BulkRefresh.TryLoadFromDisk(perDateStore, d);
+}
+
 
 app.UseResponseCompression();
 app.UseCors();
@@ -1782,6 +1789,55 @@ public sealed class LiveScoresRefreshJob : BackgroundService
     }
 }
 
+public sealed class PerDateRefreshJob : IHostedService, IDisposable
+{
+    private readonly SnapshotPerDateStore _store;
+    private readonly ILogger<PerDateRefreshJob> _log;
+    private Timer? _timer;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public PerDateRefreshJob(SnapshotPerDateStore store, ILogger<PerDateRefreshJob> log)
+    {
+        _store = store;
+        _log = log;
+    }
+
+    public Task StartAsync(CancellationToken ct)
+    {
+        // Initial run shortly after startup
+        _timer = new Timer(async _ => await TickAsync(), null, TimeSpan.FromSeconds(3), TimeSpan.FromMinutes(5));
+        return Task.CompletedTask;
+    }
+
+    private async Task TickAsync()
+    {
+        if (!await _gate.WaitAsync(0)) return;
+        try
+        {
+            var center = ScraperConfig.TodayLocal();
+            await BulkRefresh.RefreshWindowAsync(_store, center, 3, 3);
+            // After refresh, enforce retention on disk + memory
+            BulkRefresh.CleanupRetention(_store, center, 3, 3);
+        }
+        catch (Exception ex)
+        {
+            _log.LogError(ex, "PerDate refresh tick failed");
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    public Task StopAsync(CancellationToken ct)
+    {
+        _timer?.Change(Timeout.Infinite, 0);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _timer?.Dispose();
+}
+
 public static class BulkRefresh
 {
     public static async Task RefreshWindowAsync(
@@ -1801,7 +1857,25 @@ public static class BulkRefresh
 
         await Task.WhenAll(tasks);
     }
+	
+	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
+    {
+        var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
+        // In-memory prune
+        store.PruneTo(keep);
 
+        // On-disk prune
+        var dir = Path.GetDirectoryName(ScraperConfig.SnapshotPath(center))!;
+        if (!Directory.Exists(dir)) return;
+        foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
+        {
+            var name = Path.GetFileNameWithoutExtension(file); // yyyy-MM-dd
+            if (DateOnly.TryParseExact(name, "yyyy-MM-dd", out var d) && !keep.Contains(d))
+            {
+                try { File.Delete(file); } catch { /* ignore */ }
+            }
+        }
+    }
     public static bool TryLoadFromDisk(SnapshotPerDateStore store, DateOnly date)
     {
         var path = ScraperConfig.SnapshotPath(date);
