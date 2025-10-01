@@ -219,13 +219,16 @@ app.MapGet("/data/refresh-window", async (string? date, int? daysBack, int? days
     var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
     var back = daysBack ?? 3;
     var ahead = daysAhead ?? 3;
-    await BulkRefresh.RefreshWindowAsync(perDateStore, center, back, ahead, ct);
-    // Also persist/prune on disk to keep things tidy for future boots
+
+    var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(perDateStore, center, back, ahead, ct);
     BulkRefresh.CleanupRetention(perDateStore, center, back, ahead);
+
     return Results.Ok(new {
         center = center.ToString("yyyy-MM-dd"),
         back, ahead,
-        refreshed = ScraperConfig.DateWindow(center, back, ahead).Select(d => d.ToString("yyyy-MM-dd"))
+        refreshed,
+        errors,                     // <-- see which dates failed instead of 500
+        ok = errors.Count == 0
     });
 });
 // GET /data/parsed/date/{date}
@@ -263,16 +266,19 @@ app.MapGet("/data/snapshot/date/{date}", (string date) =>
 // GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01)
 app.MapGet("/data/refresh-date/{date}", async (string date, CancellationToken ct) =>
 {
-    var d = DateOnly.Parse(date);
-    var snap = await ScraperService.FetchOneDateAsync(d, ct);
-    perDateStore.Set(d, snap);
-    // keep only this date in memory if you want; comment out if you prefer to keep others:
-    // BulkRefresh.CleanupRetention(perDateStore, d, 0, 0);
-    return Results.Ok(new {
-        date = d.ToString("yyyy-MM-dd"),
-        lastUpdatedUtc = snap.LastUpdatedUtc
-    });
+    try
+    {
+        var d = DateOnly.Parse(date);
+        var snap = await ScraperService.FetchOneDateAsync(d, ct);
+        perDateStore.Set(d, snap);
+        return Results.Ok(new { date = d.ToString("yyyy-MM-dd"), lastUpdatedUtc = snap.LastUpdatedUtc });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(title: "Fetch failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+    }
 });
+
 
 
 // Back-compat: current-day shortcuts (resolve to Brussels today)
@@ -1894,22 +1900,33 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
 
 public static class BulkRefresh
 {
-    public static async Task RefreshWindowAsync(
-        SnapshotPerDateStore store,
-        DateOnly? center = null,
-        int back = 3,
-        int ahead = 3,
-        CancellationToken ct = default)
+    public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
+        RefreshWindowAsync(
+            SnapshotPerDateStore store,
+            DateOnly? center = null, int back = 3, int ahead = 3, CancellationToken ct = default)
     {
         var c = center ?? ScraperConfig.TodayLocal();
-        var tasks = ScraperConfig.DateWindow(c, back, ahead)
-            .Select(async d =>
+        var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
+
+        var refreshed = new List<string>(dates.Length);
+        var errors = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var d in dates)
+        {
+            try
             {
+                ct.ThrowIfCancellationRequested();
                 var snap = await ScraperService.FetchOneDateAsync(d, ct);
                 store.Set(d, snap);
-            });
+                refreshed.Add(d.ToString("yyyy-MM-dd"));
+            }
+            catch (Exception ex)
+            {
+                errors[d.ToString("yyyy-MM-dd")] = ex.Message;
+            }
+        }
 
-        await Task.WhenAll(tasks);
+        return (refreshed, errors);
     }
 	
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
