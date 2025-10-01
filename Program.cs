@@ -595,6 +595,7 @@ app.MapGet("/data/titles", ([FromServices] ResultStore store) =>
     return Results.Json(s.Payload.TitlesAndHrefs);
 });
 
+/*
 // /data/parsed -> groups with metadata + items (DTO)
 app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
 {
@@ -605,7 +606,7 @@ app.MapGet("/data/parsed", ([FromServices] ResultStore store) =>
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups); // no projection needed
 });
-
+*/
 
 // /data/tips -> groups with metadata + items (store-backed, same as /data/parsed)
 app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
