@@ -753,6 +753,7 @@ app.MapPost("/data/parsed/cleanup",
 });
 app.MapPost("/data/details/cleanup",
     async ([FromServices] ResultStore root,
+		   [FromServices] SnapshotPerDateStore perDateStore,   // <-- add this
            [FromServices] DetailsStore store,
            [FromQuery] bool clear = false,
            [FromQuery] bool pruneFromParsed = false,
