@@ -23,6 +23,10 @@ static class ScraperConfig
             yield return center.AddDays(d);
     }
 
+    public static string DetailsPath(DateOnly date)
+        => Path.Combine(DataDir, "details", $"{date:yyyy-MM-dd}.json");
+
+    
     public static string SnapshotPath(DateOnly date) =>
         Path.Combine(DataDir, "snapshots", $"{date:yyyy-MM-dd}.json");
 
