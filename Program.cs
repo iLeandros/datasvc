@@ -1240,6 +1240,29 @@ public sealed class ResultStore
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
 }
 
+// Stores one snapshot per date
+public sealed class SnapshotPerDateStore
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<DateOnly, DataSnapshot> _byDate = new();
+
+    public void Set(DateOnly date, DataSnapshot snap)
+    {
+        lock (_gate) _byDate[date] = snap;
+    }
+
+    public bool TryGet(DateOnly date, out DataSnapshot snap)
+    {
+        lock (_gate) return _byDate.TryGetValue(date, out snap!);
+    }
+
+    public IReadOnlyDictionary<DateOnly, DataSnapshot> Export()
+    {
+        lock (_gate) return new Dictionary<DateOnly, DataSnapshot>(_byDate);
+    }
+}
+
+
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
 
 public record DataPayload(
