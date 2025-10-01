@@ -1849,7 +1849,8 @@ public sealed class ScraperService
 	public static async Task<DataSnapshot> FetchOneDateAsync(DateOnly date, CancellationToken ct = default)
 	{
 	    var url  = ScraperConfig.UrlFor(date);
-	    var html = await _http.GetStringAsync(url, ct);
+	    //var html = await _http.GetStringAsync(url, ct);
+		var html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
 	
 	    var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
 	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
