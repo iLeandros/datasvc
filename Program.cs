@@ -99,7 +99,6 @@ builder.Services.AddHostedService<Top10RefreshJob>();
 
 builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddHostedService<PerDateRefreshJob>();
-builder.Services.AddSingleton<DetailsPerDateStore>();   // <-- add this
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -116,10 +115,6 @@ var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
     foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
-
-var detailsPerDateStore = app.Services.GetRequiredService<DetailsPerDateStore>();  // <-- get from DI
-var centerInit = ScraperConfig.TodayLocal();                                       // <-- avoid name clash
-await DetailsBulk.RefreshWindowAsync(perDateStore, detailsPerDateStore, centerInit, 3, 3, CancellationToken.None);
 
 
 app.UseResponseCompression();
@@ -756,10 +751,8 @@ app.MapPost("/data/parsed/cleanup",
         deletedFiles
     });
 });
-
 app.MapPost("/data/details/cleanup",
     async ([FromServices] ResultStore root,
-           [FromServices] SnapshotPerDateStore perDateStore,   // <-- add this
            [FromServices] DetailsStore store,
            [FromQuery] bool clear = false,
            [FromQuery] bool pruneFromParsed = false,
@@ -789,27 +782,13 @@ app.MapPost("/data/details/cleanup",
 
     if (pruneFromParsed)
     {
-        var center = ScraperConfig.TodayLocal();
-        var dates = ScraperConfig.DateWindow(center, 3, 3).ToArray();
-
-        var hrefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in dates)
-        {
-            // prefer RAM, fall back to disk
-            if (!perDateStore.TryGet(d, out var snap))                         // <-- use perDateStore
-            {
-                BulkRefresh.TryLoadFromDisk(perDateStore, d);                  // <-- use perDateStore
-                perDateStore.TryGet(d, out snap);                              // <-- use perDateStore
-            }
-
-            var groups = snap?.Payload?.TableDataGroup;
-            if (groups is null) continue;
-
-            foreach (var h in groups.SelectMany(g => g.Items)
-                                    .Select(i => i.Href)
-                                    .Where(h => !string.IsNullOrWhiteSpace(h)))
-                hrefs.Add(DetailsStore.Normalize(h));
-        }
+        var hrefs = root.Current?.Payload?.TableDataGroup?
+            .SelectMany(g => g.Items)
+            .Select(i => i.Href)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Select(DetailsStore.Normalize)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         kept = kept.Where(i => hrefs.Contains(i.Href));
     }
@@ -1057,32 +1036,6 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
-// GET /data/details/allhrefs/date/{date}
-// GET /data/details/date/{yyyy-MM-dd}
-app.MapGet("/data/details/date/{date}",
-    ([FromServices] DetailsPerDateStore detailsPerDate, string date) =>
-{
-    var d = DateOnly.Parse(date);
-    if (!detailsPerDate.TryGet(d, out var store))
-        return Results.NotFound(new { error = "details not found for date", date });
-    var (items, generatedUtc) = store.Export();
-    var dict = items.ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
-    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = dict.Count, generatedUtc, items = dict });
-});
-
-// GET /data/details/allhrefs/date/{yyyy-MM-dd}
-app.MapGet("/data/details/allhrefs/date/{date}",
-    ([FromServices] DetailsPerDateStore detailsPerDate, string date) =>
-{
-    var d = DateOnly.Parse(date);
-    if (!detailsPerDate.TryGet(d, out var store))
-        return Results.NotFound(new { error = "details not found for date", date });
-    var (items, _) = store.Export();
-    var hrefs = items.Select(i => i.Href).ToArray();
-    return Results.Json(new { date = d.ToString("yyyy-MM-dd"), total = hrefs.Length, hrefs });
-});
-
-
 // GET /data/details/item?href=...
 app.MapGet("/data/details/item",
 (
@@ -1229,16 +1182,31 @@ async (
     return Results.Json(new { total = dict.Count, items = dict });
 });
 
-// POST /data/details/refresh-and-get
+// Optional: refresh then return the aggregated payload in one call
 app.MapPost("/data/details/refresh-and-get",
     async ([FromServices] DetailsScraperService svc,
            [FromServices] DetailsStore store) =>
 {
-    await svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3);
+    await svc.RefreshAllFromCurrentAsync();
 
     var (items, generatedUtc) = store.Export();
-    var dict = items.ToDictionary(r => r.Href, r => r.Payload, StringComparer.OrdinalIgnoreCase);
-    return Results.Json(new { total = dict.Count, generatedUtc, items = dict });
+
+    var byHref = items.ToDictionary(
+        i => i.Href,
+        i => new
+        {
+            href                   = i.Href,  // include href in each object
+            lastUpdatedUtc         = i.LastUpdatedUtc,
+            teamsInfoHtml          = i.Payload.TeamsInfoHtml,
+            matchBetweenHtml       = i.Payload.MatchBetweenHtml,
+            lastTeamsMatchesHtml   = i.Payload.LastTeamsMatchesHtml,
+            teamsStatisticsHtml    = i.Payload.TeamsStatisticsHtml,
+            teamsBetStatisticsHtml = i.Payload.TeamsBetStatisticsHtml
+        },
+        StringComparer.OrdinalIgnoreCase
+    );
+
+    return Results.Json(new { total = byHref.Count, generatedUtc, items = byHref });
 });
 
 app.MapGet("/data/details/has", ([FromServices] DetailsStore store, [FromQuery] string href) =>
@@ -1261,10 +1229,10 @@ app.MapGet("/data/details/debug/keys", ([FromServices] DetailsStore store) =>
     return Results.Json(keys);
 });
 
-// POST /data/details/refresh
+// Manual refresh (details for all current items)
 app.MapPost("/data/details/refresh", async ([FromServices] DetailsScraperService svc) =>
 {
-    var result = await svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3);
+    var result = await svc.RefreshAllFromCurrentAsync();
     return Results.Json(new { refreshed = result.Refreshed, skipped = result.Skipped, errors = result.Errors.Count, result.LastUpdatedUtc });
 });
 // Returns the first href currently in memory so we can copy/paste it
@@ -1437,30 +1405,6 @@ public sealed class SnapshotPerDateStore
         {
             var toRemove = _byDate.Keys.Where(d => !keep.Contains(d)).ToList();
             foreach (var d in toRemove) _byDate.Remove(d);
-        }
-    }
-}
-
-public sealed class DetailsPerDateStore
-{
-    readonly object _gate = new();
-    readonly Dictionary<DateOnly, DetailsStore> _byDate = new();
-
-    public bool TryGet(DateOnly d, out DetailsStore store)
-    { lock (_gate) return _byDate.TryGetValue(d, out store!); }
-
-    public void Set(DateOnly d, DetailsStore store)
-    { lock (_gate) _byDate[d] = store; }
-
-    public IReadOnlyCollection<DateOnly> Dates()
-    { lock (_gate) return _byDate.Keys.OrderBy(x => x).ToArray(); }
-
-    public void PruneTo(HashSet<DateOnly> keep)
-    {
-        lock (_gate)
-        {
-            var remove = _byDate.Keys.Where(d => !keep.Contains(d)).ToList();
-            foreach (var d in remove) _byDate.Remove(d);
         }
     }
 }
@@ -2012,98 +1956,6 @@ public static class BulkRefresh
         if (snap is null) return false;
         store.Set(date, snap);
         return true;
-    }
-}
-
-public static class DetailsBulk
-{
-    // Refresh one date based on that date’s parsed snapshot
-    public static async Task<int> RefreshOneDateAsync(
-        DateOnly d,
-        SnapshotPerDateStore perDate,
-        DetailsPerDateStore detailsPerDate,
-        CancellationToken ct = default)
-    {
-        // 1) get parsed snapshot for this date (RAM or disk)
-        if (!perDate.TryGet(d, out var snap))
-        {
-            BulkRefresh.TryLoadFromDisk(perDate, d);
-            perDate.TryGet(d, out snap);
-        }
-        var groups = snap?.Payload?.TableDataGroup;
-        if (groups is null) return 0;
-
-        var hrefs = groups.SelectMany(g => g.Items)
-                          .Select(i => i.Href)
-                          .Where(h => !string.IsNullOrWhiteSpace(h))
-                          .Select(DetailsStore.Normalize)
-                          .Distinct(StringComparer.OrdinalIgnoreCase)
-                          .ToList();
-
-        // 2) build a temp DetailsStore just for this date
-        var temp = new DetailsStore(); // same type you already use
-        int refreshed = 0;
-        var now = DateTimeOffset.UtcNow;
-
-        using var sem = new SemaphoreSlim(
-            int.TryParse(Environment.GetEnvironmentVariable("DETAILS_PARALLEL"), out var p) ? Math.Max(1,p) : 16);
-
-        var ttlMin = int.TryParse(Environment.GetEnvironmentVariable("DETAILS_TTL_MINUTES"), out var t) ? t : 30;
-        var ttl = TimeSpan.FromMinutes(ttlMin);
-
-        await Task.WhenAll(hrefs.Select(async href =>
-        {
-            await sem.WaitAsync(ct);
-            try
-            {
-                // fetch (your existing fetch) — no reuse since this is a per-day store
-                var rec = await DetailsScraperService.FetchOneStaticAsync(href, ct); // see note below
-                if (rec is not null) { temp.Set(rec); Interlocked.Increment(ref refreshed); }
-            }
-            catch { /* collect/log if desired */ }
-            finally { sem.Release(); }
-        }));
-
-        // 3) persist to disk (non-fatal)
-        var path = ScraperConfig.DetailsPath(d);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        try
-        {
-            await File.WriteAllTextAsync(path, temp.ToJson(), ct); // use your existing serialize
-        }
-        catch (Exception ex) { Console.WriteLine($"[warn] write {path}: {ex.Message}"); }
-
-        // 4) publish to RAM
-        detailsPerDate.Set(d, temp);
-        return refreshed;
-    }
-
-    // Refresh rolling window and prune memory+disk
-    public static async Task RefreshWindowAsync(
-        SnapshotPerDateStore perDate,
-        DetailsPerDateStore detailsPerDate,
-        DateOnly center, int back, int ahead, CancellationToken ct = default)
-    {
-        var dates = ScraperConfig.DateWindow(center, back, ahead).ToArray();
-        foreach (var d in dates)
-            await RefreshOneDateAsync(d, perDate, detailsPerDate, ct);
-
-        // prune RAM
-        var keep = dates.ToHashSet();
-        detailsPerDate.PruneTo(keep);
-
-        // prune DISK
-        var dir = Path.Combine(ScraperConfig.DataDir, "details");
-        Directory.CreateDirectory(dir);
-        foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
-        {
-            var name = Path.GetFileNameWithoutExtension(f); // yyyy-MM-dd
-            if (!DateOnly.TryParseExact(name, "yyyy-MM-dd", out var fileDate)) continue;
-            if (!keep.Contains(fileDate))
-                TryDelete(f);
-        }
-
-        static void TryDelete(string f) { try { File.Delete(f); } catch { } }
     }
 }
 
@@ -2745,15 +2597,14 @@ public static class DetailsFiles
 public sealed class DetailsScraperService
 {
     private readonly ResultStore _root;
-    private readonly SnapshotPerDateStore _perDate;   // <— NEW
     private readonly DetailsStore _store;
+	
+	static int GetEnvInt(string name, int def)
+    => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
 
-    static int GetEnvInt(string name, int def)
-        => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
-
-    readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);
-    readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10);
-    readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1));
+	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
+	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
+	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1)); // 3h default
 
     static readonly SocketsHttpHandler _handler = new()
 	{
@@ -2765,10 +2616,9 @@ public sealed class DetailsScraperService
 	};
 	static readonly HttpClient http = new(_handler);
 
-    public DetailsScraperService(ResultStore root, SnapshotPerDateStore perDate, DetailsStore store) // <— UPDATED
+    public DetailsScraperService(ResultStore root, DetailsStore store)
     {
         _root = root;
-        _perDate = perDate;  // <— NEW
         _store = store;
     }
 
@@ -2780,77 +2630,6 @@ public sealed class DetailsScraperService
 									    DateTimeOffset LastUpdatedUtc
 									);
 
-	// NEW: refresh details for the union of hrefs across (center ± back/ahead)
-    public async Task<RefreshSummary> RefreshFromPerDateWindowAsync(
-        DateOnly? center = null, int back = 3, int ahead = 3, CancellationToken ct = default)
-    {
-        var c = center ?? ScraperConfig.TodayLocal();
-        var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
-
-        // Collect unique hrefs from snapshots (prefer in-memory; fall back to disk)
-        var hrefSet = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var d in dates)
-        {
-            if (!_perDate.TryGet(d, out var snap))
-            {
-                // try warm from disk (non-fatal)
-                BulkRefresh.TryLoadFromDisk(_perDate, d);
-                _perDate.TryGet(d, out snap);
-            }
-
-            var groups = snap?.Payload?.TableDataGroup;
-            if (groups is null) continue;
-
-            foreach (var h in groups.SelectMany(g => g.Items)
-                                    .Select(i => i.Href)
-                                    .Where(h => !string.IsNullOrWhiteSpace(h)))
-                hrefSet.Add(DetailsStore.Normalize(h));
-        }
-
-        var hrefs = hrefSet.ToList(); // stable snapshot
-        int refreshed = 0, skipped = 0;
-        var errors = new List<string>();
-        var sem = new SemaphoreSlim(_maxParallel);
-        var now = DateTimeOffset.UtcNow;
-
-        var tasks = hrefs.Select(async href =>
-        {
-            await sem.WaitAsync(ct);
-            try
-            {
-                var existing = _store.Get(href);
-                if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
-                {
-                    Interlocked.Increment(ref skipped);
-                    return;
-                }
-
-                var rec = await FetchOneAsync(href, ct);
-                _store.Set(rec);
-                Interlocked.Increment(ref refreshed);
-            }
-            catch (Exception ex)
-            {
-                lock (errors) errors.Add($"{href}: {ex.Message}");
-            }
-            finally { sem.Release(); }
-        });
-
-        await Task.WhenAll(tasks);
-
-        // Watchdog/prune: keep only hrefs from the active window
-        var deleted = _store.ShrinkTo(hrefs);
-
-        // Don’t persist an empty file (avoid wiping a previous good cache)
-        if (_store.Index().Count == 0)
-        {
-            errors.Add("Store empty after refresh — not saving empty details.json.");
-            return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
-        }
-
-        await DetailsFiles.SaveAsync(_store);
-        return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
-    }
 
     public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
 	{
@@ -3149,7 +2928,7 @@ public sealed class DetailsRefreshJob : BackgroundService
         if (!await _gate.WaitAsync(0, ct)) return;
         try
         {
-            var r = await _svc.RefreshFromPerDateWindowAsync(ScraperConfig.TodayLocal(), 3, 3, ct);
+            var r = await _svc.RefreshAllFromCurrentAsync(ct);
             Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
         }
         catch (Exception ex)
