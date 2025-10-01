@@ -213,6 +213,21 @@ app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? day
     return Results.Ok(new { center, back, ahead, refreshed = ScraperConfig.DateWindow(center, back, ahead).Select(d => d.ToString("yyyy-MM-dd")) });
 });
 
+// GET /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
+app.MapGet("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
+{
+    var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
+    var back = daysBack ?? 3;
+    var ahead = daysAhead ?? 3;
+    await BulkRefresh.RefreshWindowAsync(perDateStore, center, back, ahead, ct);
+    // Also persist/prune on disk to keep things tidy for future boots
+    BulkRefresh.CleanupRetention(perDateStore, center, back, ahead);
+    return Results.Ok(new {
+        center = center.ToString("yyyy-MM-dd"),
+        back, ahead,
+        refreshed = ScraperConfig.DateWindow(center, back, ahead).Select(d => d.ToString("yyyy-MM-dd"))
+    });
+});
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
@@ -245,6 +260,20 @@ app.MapGet("/data/snapshot/date/{date}", (string date) =>
         titlesAndHrefs = snap.Payload.TitlesAndHrefs
     });
 });
+// GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01)
+app.MapGet("/data/refresh-date/{date}", async (string date, CancellationToken ct) =>
+{
+    var d = DateOnly.Parse(date);
+    var snap = await ScraperService.FetchOneDateAsync(d, ct);
+    perDateStore.Set(d, snap);
+    // keep only this date in memory if you want; comment out if you prefer to keep others:
+    // BulkRefresh.CleanupRetention(perDateStore, d, 0, 0);
+    return Results.Ok(new {
+        date = d.ToString("yyyy-MM-dd"),
+        lastUpdatedUtc = snap.LastUpdatedUtc
+    });
+});
+
 
 // Back-compat: current-day shortcuts (resolve to Brussels today)
 app.MapGet("/data/parsed", () =>
