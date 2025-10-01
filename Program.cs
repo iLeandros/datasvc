@@ -25,7 +25,6 @@ using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using DataSvc.MainHelpers; // MainHelpers
-using MySqlConnector;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -56,11 +55,13 @@ builder.Services.Configure<GzipCompressionProviderOptions>(p =>
 {
     p.Level = System.IO.Compression.CompressionLevel.Fastest;
 });
+/*
 builder.Services.AddResponseCompression(o =>
 {
     o.EnableForHttps = true;
     o.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[] { "application/json" });
 });
+*/
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 // add next to your existing ResponseCompression config
@@ -191,8 +192,8 @@ else
 }
 
 ///New bulk endpoints added
-// POST /data/refresh?date=YYYY-MM-DD&daysBack=3&daysAhead=3
-app.MapPost("/data/refresh", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
+// POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
+app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
 {
     var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
     var back = daysBack ?? 3;
@@ -205,27 +206,33 @@ app.MapPost("/data/refresh", async (string? date, int? daysBack, int? daysAhead,
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
     var d = DateOnly.Parse(date);
-    if (!perDateStore.TryGet(d, out var snap))
-        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
-    return Results.Ok(snap.TableDataGroup);
+    return perDateStore.TryGet(d, out var snap) && snap.Payload is not null
+        ? Results.Ok(snap.Payload.TableDataGroup)
+        : Results.NotFound(new { error = "snapshot not found; refresh first", date });
 });
 
 // GET /data/html/date/{date}
 app.MapGet("/data/html/date/{date}", (string date) =>
 {
     var d = DateOnly.Parse(date);
-    if (!perDateStore.TryGet(d, out var snap))
-        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
-    return Results.Text(snap.Html ?? "", "text/html");
+    return perDateStore.TryGet(d, out var snap) && snap.Payload is not null
+        ? Results.Text(snap.Payload.HtmlContent ?? "", "text/html")
+        : Results.NotFound(new { error = "snapshot not found; refresh first", date });
 });
 
 // GET /data/snapshot/date/{date}
 app.MapGet("/data/snapshot/date/{date}", (string date) =>
 {
     var d = DateOnly.Parse(date);
-    if (!perDateStore.TryGet(d, out var snap))
+    if (!perDateStore.TryGet(d, out var snap) || snap.Payload is null)
         return Results.NotFound(new { error = "snapshot not found; refresh first", date });
-    return Results.Ok(new { date = d.ToString("yyyy-MM-dd"), snap.SourceUrl, snap.GeneratedUtc, snap.TableDataGroup, snap.TitlesAndHrefs });
+
+    return Results.Ok(new {
+        date = d.ToString("yyyy-MM-dd"),
+        lastUpdatedUtc = snap.LastUpdatedUtc,
+        tableDataGroup = snap.Payload.TableDataGroup,
+        titlesAndHrefs = snap.Payload.TitlesAndHrefs
+    });
 });
 
 // Back-compat: current-day shortcuts (resolve to Brussels today)
@@ -291,7 +298,7 @@ app.MapGet("/webhooks/trade/recent",
     take = Math.Clamp(take, 1, 200);
     return Results.Json(store.Last(take));
 });
-app.MapGet("/", () => Results.Redirect("/data/status"));
+//app.MapGet("/", () => Results.Redirect("/data/status"));
 
 app.MapGet("/__routes", (IEnumerable<EndpointDataSource> sources) =>
 {
@@ -508,14 +515,14 @@ app.MapGet("/legal/{docKey:regex(^(terms|privacy)$)}", async (
 });
 
 
-
+/*
 app.MapGet("/data/status", ([FromServices] ResultStore store) =>
 {
     var s = store.Current;
     if (s is null) return Results.Json(new { ready = false, message = "No data yet. Initial refresh pending." });
     return Results.Json(new { ready = s.Ready, s.LastUpdatedUtc, s.Error });
 });
-
+*/
 app.MapGet("/debug/auth", (HttpContext ctx) =>
 {
     var uidClaim = ctx.User?.FindFirst("uid")?.Value;
@@ -591,7 +598,7 @@ app.MapGet("/data/top10", ([FromServices] Top10Store store) =>
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups);
 });
-
+/*
 // Raw HTML snapshot of the main page
 app.MapGet("/data/html", ([FromServices] ResultStore store) =>
 {
@@ -599,9 +606,9 @@ app.MapGet("/data/html", ([FromServices] ResultStore store) =>
     if (s is null || s.Payload is null) return Results.NotFound(new { message = "No data yet" });
     return Results.Text(s.Payload.HtmlContent ?? "", "text/html; charset=utf-8");
 });
-
+*/
 // Saved JSON snapshot (full)
-app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
+//app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
 
 // Manual refresh (main page)
 app.MapPost("/data/refresh", async ([FromServices] ScraperService svc) =>
@@ -1837,30 +1844,25 @@ public sealed class ScraperService
     }
 
 	public static async Task<DataSnapshot> FetchOneDateAsync(DateOnly date, CancellationToken ct = default)
-    {
-        var url = ScraperConfig.UrlFor(date);
-        var html = await _http.GetStringAsync(url, ct);
+	{
+	    var url  = ScraperConfig.UrlFor(date);
+	    var html = await _http.GetStringAsync(url, ct);
+	
+	    var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+	
+	    var payload = new DataPayload(html, titles, table);
+	    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+	
+	    // Persist to disk
+	    var path = ScraperConfig.SnapshotPath(date);
+	    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+	    await File.WriteAllTextAsync(path,
+	        JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false }), ct);
+	
+	    return snap;
+	}
 
-        // Your existing HTML → TableDataGroup parser:
-        var table = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
-
-        var snapshot = new DataSnapshot
-        {
-            GeneratedUtc = DateTime.UtcNow,
-            SourceUrl = url,
-            Html = html,
-            TableDataGroup = table,
-            TitlesAndHrefs = table?.Groups?.SelectMany(g => g.Items).Select(i => i.Href).Distinct().ToList() ?? new()
-        };
-
-        // Persist to disk
-        var path = ScraperConfig.SnapshotPath(date);
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(snapshot,
-            new System.Text.Json.JsonSerializerOptions { WriteIndented = false }), ct);
-
-        return snapshot;
-    }
 }
 
 public sealed class RefreshJob : BackgroundService
