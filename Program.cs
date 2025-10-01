@@ -24,6 +24,7 @@ using System.Linq;
 using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+using DataSvc.MainHelpers; // MainHelpers
 using MySqlConnector;
 using Google.Apis.Auth;
 
@@ -72,6 +73,7 @@ builder.Services.AddResponseCompression(o =>
 
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
+builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
 builder.Services.AddHostedService<LiveScoresRefreshJob>();
 
@@ -178,6 +180,72 @@ else
     app.UseExceptionHandler("/error");
     app.MapGet("/error", () => Results.Problem("An error occurred."));
 }
+
+// Warm from disk for D-3..D+3 on boot (best-effort)
+{
+    var center = ScraperConfig.TodayLocal();
+    foreach (var d in ScraperConfig.DateWindow(center))
+        BulkRefresh.TryLoadFromDisk(perDateStore, d);
+}
+
+///New bulk endpoints added
+// POST /data/refresh?date=YYYY-MM-DD&daysBack=3&daysAhead=3
+app.MapPost("/data/refresh", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
+{
+    var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
+    var back = daysBack ?? 3;
+    var ahead = daysAhead ?? 3;
+    await BulkRefresh.RefreshWindowAsync(perDateStore, center, back, ahead, ct);
+    return Results.Ok(new { center, back, ahead, refreshed = ScraperConfig.DateWindow(center, back, ahead).Select(d => d.ToString("yyyy-MM-dd")) });
+});
+
+// GET /data/parsed/date/{date}
+app.MapGet("/data/parsed/date/{date}", (string date) =>
+{
+    var d = DateOnly.Parse(date);
+    if (!perDateStore.TryGet(d, out var snap))
+        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
+    return Results.Ok(snap.TableDataGroup);
+});
+
+// GET /data/html/date/{date}
+app.MapGet("/data/html/date/{date}", (string date) =>
+{
+    var d = DateOnly.Parse(date);
+    if (!perDateStore.TryGet(d, out var snap))
+        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
+    return Results.Text(snap.Html ?? "", "text/html");
+});
+
+// GET /data/snapshot/date/{date}
+app.MapGet("/data/snapshot/date/{date}", (string date) =>
+{
+    var d = DateOnly.Parse(date);
+    if (!perDateStore.TryGet(d, out var snap))
+        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
+    return Results.Ok(new { date = d.ToString("yyyy-MM-dd"), snap.SourceUrl, snap.GeneratedUtc, snap.TableDataGroup, snap.TitlesAndHrefs });
+});
+
+// Back-compat: current-day shortcuts (resolve to Brussels today)
+app.MapGet("/data/parsed", () =>
+{
+    var d = ScraperConfig.TodayLocal();
+    return Results.Redirect($"/data/parsed/date/{d:yyyy-MM-dd}");
+});
+app.MapGet("/data/html", () =>
+{
+    var d = ScraperConfig.TodayLocal();
+    return Results.Redirect($"/data/html/date/{d:yyyy-MM-dd}");
+});
+app.MapGet("/data/snapshot", () =>
+{
+    var d = ScraperConfig.TodayLocal();
+    return Results.Redirect($"/data/snapshot/date/{d:yyyy-MM-dd}");
+});
+
+
+
+
 
 // ---------- API ----------
 // -------- Trade Signal Webhook --------
@@ -1702,12 +1770,45 @@ public sealed class LiveScoresRefreshJob : BackgroundService
     }
 }
 
+public static class BulkRefresh
+{
+    public static async Task RefreshWindowAsync(
+        SnapshotPerDateStore store,
+        DateOnly? center = null,
+        int back = 3,
+        int ahead = 3,
+        CancellationToken ct = default)
+    {
+        var c = center ?? ScraperConfig.TodayLocal();
+        var tasks = ScraperConfig.DateWindow(c, back, ahead)
+            .Select(async d =>
+            {
+                var snap = await ScraperService.FetchOneDateAsync(d, ct);
+                store.Set(d, snap);
+            });
+
+        await Task.WhenAll(tasks);
+    }
+
+    public static bool TryLoadFromDisk(SnapshotPerDateStore store, DateOnly date)
+    {
+        var path = ScraperConfig.SnapshotPath(date);
+        if (!File.Exists(path)) return false;
+        var json = File.ReadAllText(path);
+        var snap = System.Text.Json.JsonSerializer.Deserialize<DataSnapshot>(json);
+        if (snap is null) return false;
+        store.Set(date, snap);
+        return true;
+    }
+}
+
 
 // ---------- Background job ----------
 public sealed class ScraperService
 {
     private readonly ResultStore _store;
     public ScraperService( [FromServices] ResultStore store ) => _store = store;
+	private static readonly HttpClient _http = new HttpClient();
 
     public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
     {
@@ -1731,6 +1832,32 @@ public sealed class ScraperService
             await DataFiles.SaveAsync(snap);
             return snap;
         }
+    }
+
+	public static async Task<DataSnapshot> FetchOneDateAsync(DateOnly date, CancellationToken ct = default)
+    {
+        var url = ScraperConfig.UrlFor(date);
+        var html = await _http.GetStringAsync(url, ct);
+
+        // Your existing HTML → TableDataGroup parser:
+        var table = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+
+        var snapshot = new DataSnapshot
+        {
+            GeneratedUtc = DateTime.UtcNow,
+            SourceUrl = url,
+            Html = html,
+            TableDataGroup = table,
+            TitlesAndHrefs = table?.Groups?.SelectMany(g => g.Items).Select(i => i.Href).Distinct().ToList() ?? new()
+        };
+
+        // Persist to disk
+        var path = ScraperConfig.SnapshotPath(date);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path, System.Text.Json.JsonSerializer.Serialize(snapshot,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = false }), ct);
+
+        return snapshot;
     }
 }
 
