@@ -264,7 +264,26 @@ app.MapGet("/data/snapshot", () =>
 });
 
 
+app.MapGet("/data/perdate/status", () =>
+{
+    var center = ScraperConfig.TodayLocal();
+    var dir = Path.GetDirectoryName(ScraperConfig.SnapshotPath(center))!;
+    var files = Directory.Exists(dir)
+        ? Directory.EnumerateFiles(dir, "*.json").Select(Path.GetFileNameWithoutExtension).OrderBy(x => x).ToList()
+        : new List<string>();
 
+    // If your store doesn’t have Keys(), use TryGet in a loop over files; otherwise:
+    var memDates = new List<string>();
+    foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+        if (perDateStore.TryGet(d, out _)) memDates.Add(d.ToString("yyyy-MM-dd"));
+
+    return Results.Ok(new {
+        tz = ScraperConfig.TimeZone,
+        center = center.ToString("yyyy-MM-dd"),
+        memoryDates = memDates,     // what the app has in RAM
+        diskFiles = files           // what exists on disk
+    });
+});
 
 
 // ---------- API ----------
