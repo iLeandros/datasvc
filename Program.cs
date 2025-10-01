@@ -99,6 +99,7 @@ builder.Services.AddHostedService<Top10RefreshJob>();
 
 builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddHostedService<PerDateRefreshJob>();
+builder.Services.AddSingleton<DetailsPerDateStore>();   // <-- add this
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -116,8 +117,10 @@ var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
 
-var center = ScraperConfig.TodayLocal();
-await DetailsBulk.RefreshWindowAsync(perDateStore, detailsPerDateStore, center, 3, 3, ct);
+var detailsPerDateStore = app.Services.GetRequiredService<DetailsPerDateStore>();  // <-- get from DI
+var centerInit = ScraperConfig.TodayLocal();                                       // <-- avoid name clash
+await DetailsBulk.RefreshWindowAsync(perDateStore, detailsPerDateStore, centerInit, 3, 3, CancellationToken.None);
+
 
 app.UseResponseCompression();
 app.UseCors();
