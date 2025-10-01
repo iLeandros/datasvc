@@ -751,9 +751,10 @@ app.MapPost("/data/parsed/cleanup",
         deletedFiles
     });
 });
+
 app.MapPost("/data/details/cleanup",
     async ([FromServices] ResultStore root,
-		   [FromServices] SnapshotPerDateStore perDateStore,   // <-- add this
+           [FromServices] SnapshotPerDateStore perDateStore,   // <-- add this
            [FromServices] DetailsStore store,
            [FromQuery] bool clear = false,
            [FromQuery] bool pruneFromParsed = false,
@@ -790,10 +791,10 @@ app.MapPost("/data/details/cleanup",
         foreach (var d in dates)
         {
             // prefer RAM, fall back to disk
-            if (!perDate.TryGet(d, out var snap))
+            if (!perDateStore.TryGet(d, out var snap))                         // <-- use perDateStore
             {
-                BulkRefresh.TryLoadFromDisk(perDate, d);
-                perDate.TryGet(d, out snap);
+                BulkRefresh.TryLoadFromDisk(perDateStore, d);                  // <-- use perDateStore
+                perDateStore.TryGet(d, out snap);                              // <-- use perDateStore
             }
 
             var groups = snap?.Payload?.TableDataGroup;
