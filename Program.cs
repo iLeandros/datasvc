@@ -1089,7 +1089,7 @@ app.MapGet("/data/details/allhrefs/date/{date}",
     // 4) Build the same shape as /data/details/allhrefs
     var byHref = records.ToDictionary(
         i => i.Href,
-        i => MapDetailsRecordToAllhrefsItem(
+        i => AllhrefsMapper.Map(
                 i,
                 preferTeamsInfoHtml,
                 preferMatchBetweenHtml,
@@ -1147,7 +1147,7 @@ app.MapGet("/data/details/item",
     bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
     bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
 
-    var item = MapDetailsRecordToAllhrefsItem(
+    var item = AllhrefsMapper.Map(
         rec,
         preferTeamsInfoHtml,
         preferMatchBetweenHtml,
@@ -1196,7 +1196,7 @@ app.MapGet("/data/details/item-by-index",
     bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
     bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
 
-    var item = MapDetailsRecordToAllhrefsItem(
+    var item = AllhrefsMapper.Map(
         rec,
         preferTeamsInfoHtml,
         preferMatchBetweenHtml,
@@ -1246,7 +1246,7 @@ async (
 
     var dict = list.ToDictionary(
         r => r.Href,
-        r => MapDetailsRecordToAllhrefsItem(
+        r => AllhrefsMapper.Map(
                 r,
                 preferTeamsInfoHtml,
                 preferMatchBetweenHtml,
