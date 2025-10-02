@@ -299,7 +299,68 @@ app.MapGet("/data/snapshot", () =>
     return Results.Redirect($"/data/snapshot/date/{d:yyyy-MM-dd}");
 });
 
+app.MapGet("/data/perdate/status", (
+    SnapshotPerDateStore perDateStore,
+    DetailsStore detailsStore
+) =>
+{
+    var center = ScraperConfig.TodayLocal();
 
+    // disk files present
+    var dir = Path.GetDirectoryName(ScraperConfig.SnapshotPath(center))!;
+    var files = Directory.Exists(dir)
+        ? Directory.EnumerateFiles(dir, "*.json")
+            .Select(Path.GetFileNameWithoutExtension)
+            .OrderBy(x => x)
+            .ToList()
+        : new List<string>();
+
+    // dates in memory (today±3)
+    var memDates = new List<string>();
+    foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+        if (perDateStore.TryGet(d, out _))
+            memDates.Add(d.ToString("yyyy-MM-dd"));
+
+    // per-date stats (parsed vs details, + file presence)
+    var stats = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+    {
+        var key = d.ToString("yyyy-MM-dd");
+
+        int parsedCount = 0;
+        int detailsCount = 0;
+        bool file = files.Contains(key, StringComparer.OrdinalIgnoreCase);
+
+        if (perDateStore.TryGet(d, out var snap) && snap.Payload?.TableDataGroup is not null)
+        {
+            // IMPORTANT: use the SAME rule as allhrefs (first group only)
+            var firstGroup = snap.Payload.TableDataGroup.FirstOrDefault();
+            var hrefs = (firstGroup?.Items ?? new ObservableCollection<TableDataItem>())
+                .Select(i => i.Href)
+                .Where(h => !string.IsNullOrWhiteSpace(h))
+                .Select(DetailsStore.Normalize)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            parsedCount = hrefs.Length;
+            detailsCount = hrefs.Count(h => detailsStore.Get(h) is not null);
+        }
+
+        stats[key] = new { parsed = parsedCount, details = detailsCount, file };
+    }
+
+    return Results.Ok(new
+    {
+        tz = ScraperConfig.TimeZone,
+        center = center.ToString("yyyy-MM-dd"),
+        memoryDates = memDates, // in RAM
+        diskFiles = files,      // on disk
+        stats                   // NEW
+    });
+});
+
+/*
 app.MapGet("/data/perdate/status", () =>
 {
     var center = ScraperConfig.TodayLocal();
@@ -320,7 +381,7 @@ app.MapGet("/data/perdate/status", () =>
         diskFiles = files           // what exists on disk
     });
 });
-
+*/
 
 // ---------- API ----------
 // -------- Trade Signal Webhook --------
