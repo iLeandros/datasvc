@@ -2827,12 +2827,12 @@ public sealed class DetailsRefreshService
     {
         if (!_perDateStore.TryGet(date, out var snap) || snap.Payload?.TableDataGroup is null) return;
 
-        var hrefs = snap.Payload.TableDataGroup
-            .SelectMany(g => g.Items)
-            .Select(i => DetailsStore.Normalize(i.Href))
-            .Where(h => !string.IsNullOrWhiteSpace(h))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
+        var firstGroup = snap.Payload!.TableDataGroup.FirstOrDefault();
+		var hrefs = (firstGroup?.Items ?? Array.Empty<TableDataItem>())
+		    .Select(i => i.Href)
+		    .Where(h => !string.IsNullOrWhiteSpace(h))
+		    .Distinct(StringComparer.OrdinalIgnoreCase)
+		    .ToArray();
 
         var records = hrefs
             .Select(h => _details.Get(h))
