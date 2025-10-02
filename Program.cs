@@ -76,6 +76,7 @@ builder.Services.AddResponseCompression(o =>
 builder.Services.AddSingleton<LiveScoresStore>();
 builder.Services.AddSingleton<LiveScoresScraperService>();
 builder.Services.AddHostedService<LiveScoresRefreshJob>();
+builder.Services.AddSingleton<DetailsRefreshService>();
 
 // Trade Signal Webhook DI
 builder.Services.AddSingleton<TradeSignalStore>();
@@ -3197,7 +3198,8 @@ public sealed class DetailsRefreshJob : BackgroundService
         if (!await _gate.WaitAsync(0, ct)) return;
         try
         {
-            var r = await _svc.RefreshAllFromCurrentAsync(ct);
+            //var r = await _svc.RefreshAllFromCurrentAsync(ct);
+			await _refresher.RefreshAllFromParsedWindowAsync(back: 3, ahead: 3, maxConcurrency: 8, ct: ct);
             Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
         }
         catch (Exception ex)
