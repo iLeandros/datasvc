@@ -894,54 +894,42 @@ app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
     var center = ScraperConfig.TodayLocal();
     var tz = ScraperConfig.TimeZone;
 
-    // 1) Collect dates the store currently has (normalized to yyyy-MM-dd)
-    var dates = (store.Dates() ?? Enumerable.Empty<DateOnly>())
-        .OrderBy(d => d)
-        .Select(d => d.ToString("yyyy-MM-dd"))
+    // Dates in the store (strings like "yyyy-MM-dd")
+    var dates = (store.Dates() ?? Array.Empty<string>())
+        .OrderBy(s => s, StringComparer.Ordinal) // ascending; use Descending if you prefer
         .ToList();
 
-    // 2) Build stats per date
     var stats = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
 
     foreach (var dateStr in dates)
     {
-        var d = DateOnly.Parse(dateStr);
+        var day = store.Get(dateStr); // <- matches your store signature
         int total = 0, live = 0, finished = 0, scheduled = 0, other = 0;
 
-        // Try to read the day from the store; adjust field names to your actual shape
-        if (store.TryGet(d, out var day) && day is not null)
+        if (day is not null)
         {
-            // Assumptions:
-            // - day.Items (or Matches) is an IEnumerable of matches
-            // - each has a Status/State string like "live", "finished", "scheduled"/"upcoming"
-            var items =
-                (day.Items as IEnumerable<object>) ??
-                (day.Matches as IEnumerable<object>) ??
-                Enumerable.Empty<object>();
+            // Items collection could be named Items / Matches / Games
+            var items = GetEnumerable(day, "Items", "Matches", "Games");
 
-            foreach (var item in items)
+            if (items is not null)
             {
-                total++;
+                foreach (var item in items)
+                {
+                    total++;
 
-                // Pull a status string in a defensive way
-                string? status = null;
+                    // Status could be Status / State / Phase
+                    var status = GetString(item, "Status", "State", "Phase");
+                    var st = (status ?? "").Trim().ToLowerInvariant();
 
-                // dynamic-ish access without 'dynamic'
-                var t = item.GetType();
-                var sProp = t.GetProperty("Status") ?? t.GetProperty("State") ?? t.GetProperty("Phase");
-                if (sProp != null)
-                    status = sProp.GetValue(item)?.ToString();
-
-                var st = (status ?? "").Trim().ToLowerInvariant();
-
-                if (st is "live" or "inplay" or "in_play" or "playing")
-                    live++;
-                else if (st is "finished" or "ended" or "ft" or "fulltime" or "full_time")
-                    finished++;
-                else if (st is "scheduled" or "upcoming" or "not_started" or "ns" or "pre")
-                    scheduled++;
-                else
-                    other++;
+                    if (st is "live" or "inplay" or "in_play" or "playing")
+                        live++;
+                    else if (st is "finished" or "ended" or "ft" or "fulltime" or "full_time")
+                        finished++;
+                    else if (st is "scheduled" or "upcoming" or "not_started" or "ns" or "pre")
+                        scheduled++;
+                    else
+                        other++;
+                }
             }
         }
 
@@ -953,9 +941,35 @@ app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
         tz,
         center = center.ToString("yyyy-MM-dd"),
         dates,
-        stats
+        stats,
+        lastSavedUtc = store.LastSavedUtc
     });
+
+    // ---- local helpers (non-public, simple reflection) ----
+    static System.Collections.IEnumerable? GetEnumerable(object obj, params string[] propNames)
+    {
+        var t = obj.GetType();
+        foreach (var name in propNames)
+        {
+            var p = t.GetProperty(name);
+            if (p?.GetValue(obj) is System.Collections.IEnumerable e) return e;
+        }
+        return null;
+    }
+
+    static string? GetString(object obj, params string[] propNames)
+    {
+        var t = obj.GetType();
+        foreach (var name in propNames)
+        {
+            var p = t.GetProperty(name);
+            var v = p?.GetValue(obj)?.ToString();
+            if (!string.IsNullOrWhiteSpace(v)) return v;
+        }
+        return null;
+    }
 });
+
 
 app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
 {
