@@ -895,7 +895,7 @@ app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
     var tz = ScraperConfig.TimeZone;
 
     // 1) Collect dates the store currently has (normalized to yyyy-MM-dd)
-    var dates = (store.Dates() ?? new List<DateOnly>())
+    var dates = (store.Dates() ?? Enumerable.Empty<DateOnly>())
         .OrderBy(d => d)
         .Select(d => d.ToString("yyyy-MM-dd"))
         .ToList();
