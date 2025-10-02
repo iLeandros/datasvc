@@ -883,10 +883,78 @@ app.MapGet("/data/livescores/status", ([FromServices] LiveScoresStore store) =>
     var dates = store.Dates();
     return Results.Json(new { totalDates = dates.Count, dates, lastSavedUtc = store.LastSavedUtc });
 });
-
+/*
 app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
 {
     return Results.Json(store.Dates());
+});
+*/
+app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
+{
+    var center = ScraperConfig.TodayLocal();
+    var tz = ScraperConfig.TimeZone;
+
+    // 1) Collect dates the store currently has (normalized to yyyy-MM-dd)
+    var dates = (store.Dates() ?? Enumerable.Empty<DateOnly>())
+        .OrderBy(d => d)
+        .Select(d => d.ToString("yyyy-MM-dd"))
+        .ToList();
+
+    // 2) Build stats per date
+    var stats = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+    foreach (var dateStr in dates)
+    {
+        var d = DateOnly.Parse(dateStr);
+        int total = 0, live = 0, finished = 0, scheduled = 0, other = 0;
+
+        // Try to read the day from the store; adjust field names to your actual shape
+        if (store.TryGet(d, out var day) && day is not null)
+        {
+            // Assumptions:
+            // - day.Items (or Matches) is an IEnumerable of matches
+            // - each has a Status/State string like "live", "finished", "scheduled"/"upcoming"
+            var items =
+                (day.Items as IEnumerable<object>) ??
+                (day.Matches as IEnumerable<object>) ??
+                Enumerable.Empty<object>();
+
+            foreach (var item in items)
+            {
+                total++;
+
+                // Pull a status string in a defensive way
+                string? status = null;
+
+                // dynamic-ish access without 'dynamic'
+                var t = item.GetType();
+                var sProp = t.GetProperty("Status") ?? t.GetProperty("State") ?? t.GetProperty("Phase");
+                if (sProp != null)
+                    status = sProp.GetValue(item)?.ToString();
+
+                var st = (status ?? "").Trim().ToLowerInvariant();
+
+                if (st is "live" or "inplay" or "in_play" or "playing")
+                    live++;
+                else if (st is "finished" or "ended" or "ft" or "fulltime" or "full_time")
+                    finished++;
+                else if (st is "scheduled" or "upcoming" or "not_started" or "ns" or "pre")
+                    scheduled++;
+                else
+                    other++;
+            }
+        }
+
+        stats[dateStr] = new { total, live, finished, scheduled, other };
+    }
+
+    return Results.Ok(new
+    {
+        tz,
+        center = center.ToString("yyyy-MM-dd"),
+        dates,
+        stats
+    });
 });
 
 app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
