@@ -1,7 +1,7 @@
 // AllhrefsMapper.cs
 using System.Linq;
 
-namespace ;
+namespace DataSvc.MainHelpers;
 
 public static class AllhrefsMapper
 {
