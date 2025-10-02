@@ -2788,8 +2788,10 @@ public sealed class DetailsRefreshService
             await throttler.WaitAsync(ct);
             try
             {
-                //await _scraper.FetchOneAsync(h, ct);
-				await DetailsScraperService.FetchOneAsync(h, ct);
+                //var rec = await _scraper.FetchOneAsync(h, ct);   // prefer the injected instance
+				//_details.Set(rec);
+				var rec = await DetailsScraperService.FetchOneAsync(h, ct);
+				_details.Set(rec);
             }
             catch (Exception ex)
             {
