@@ -1,6 +1,6 @@
 // AllhrefsMapper.cs
 using System.Linq;
-using DataSvc;
+using DataSvc.ModelHelperCalls;
 
 namespace DataSvc.MainHelpers;
 
@@ -17,7 +17,16 @@ public static class AllhrefsMapper
         bool preferTeamsStatisticsHtml,
         bool preferTeamStandingsHtml)
     {
-        var p = i.Payload ?? new DetailsPayload();
+        var p = i.Payload ?? new DetailsPayload(
+                null, // TeamsInfoHtml
+                null, // MatchBetweenHtml
+                null, // TeamMatchesSeparateHtml
+                null, // TeamsBetStatisticsHtml
+                null, // FactsHtml
+                null, // LastTeamsMatchesHtml
+                null, // TeamsStatisticsHtml
+                null  // TeamStandingsHtml
+            );
 
         var parsedTeamsInfo = preferTeamsInfoHtml ? null
             : TeamsInfoParser.Parse(p.TeamsInfoHtml);
