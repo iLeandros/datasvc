@@ -3124,11 +3124,13 @@ public sealed class DetailsRefreshJob : BackgroundService
     private readonly DetailsStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeZoneInfo _tz;
+	private readonly DetailsRefreshService _refresher; // <— add
 
     public DetailsRefreshJob(DetailsScraperService svc, DetailsStore store)
     {
         _svc = svc; 
         _store = store;
+		_refresher = refresher; // <— add
         // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
         var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
         _tz = !string.IsNullOrWhiteSpace(tzId)
@@ -3198,9 +3200,13 @@ public sealed class DetailsRefreshJob : BackgroundService
         if (!await _gate.WaitAsync(0, ct)) return;
         try
         {
-            //var r = await _svc.RefreshAllFromCurrentAsync(ct);
-			await _refresher.RefreshAllFromParsedWindowAsync(back: 3, ahead: 3, maxConcurrency: 8, ct: ct);
-            Debug.WriteLine($"[details] {reason} refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+            // Keep the fast “current day” details refresh…
+            var r = await _svc.RefreshAllFromCurrentAsync(ct);
+            Debug.WriteLine($"[details] {reason} current refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+
+            // …and then refresh details for all hrefs that appear across parsed D±3:
+            await _refresher.RefreshAllFromParsedWindowAsync(back: 3, ahead: 3, maxConcurrency: 8, ct: ct);
+            Debug.WriteLine($"[details] {reason} window D±3 refresh completed.");
         }
         catch (Exception ex)
         {
