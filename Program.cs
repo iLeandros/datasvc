@@ -2727,6 +2727,140 @@ public static class DetailsPerDateFiles
     }
 }
 
+public sealed class DetailsRefreshService
+{
+    private readonly SnapshotPerDateStore _perDateStore;
+    private readonly DetailsStore _details;
+    private readonly DetailsScraperService _scraper;
+    private readonly ILogger<DetailsRefreshService> _log;
+
+    public DetailsRefreshService(
+        SnapshotPerDateStore perDateStore,
+        DetailsStore details,
+        DetailsScraperService scraper,
+        ILogger<DetailsRefreshService> log)
+    {
+        _perDateStore = perDateStore;
+        _details = details;
+        _scraper = scraper;
+        _log = log;
+    }
+
+    // NEW: refresh details for all hrefs that appear in parsed today±3
+    public async Task RefreshAllFromParsedWindowAsync(int back = 3, int ahead = 3, int maxConcurrency = 8, CancellationToken ct = default)
+    {
+        var center = ScraperConfig.TodayLocal();
+        var dates = ScraperConfig.DateWindow(center, back, ahead);
+
+        // 1) collect hrefs from every date that has a parsed snapshot
+        var allHrefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var d in dates)
+        {
+            if (!_perDateStore.TryGet(d, out var snap) || snap.Payload?.TableDataGroup is null) continue;
+
+            foreach (var href in snap.Payload.TableDataGroup.SelectMany(g => g.Items).Select(i => i.Href))
+            {
+                if (string.IsNullOrWhiteSpace(href)) continue;
+                allHrefs.Add(DetailsStore.Normalize(href));
+            }
+        }
+
+        if (allHrefs.Count == 0)
+        {
+            _log.LogInformation("DetailsRefresh: No hrefs found in parsed window {Center}±({Back},{Ahead})", center, back, ahead);
+            return;
+        }
+
+        _log.LogInformation("DetailsRefresh: {Count} distinct hrefs in parsed window", allHrefs.Count);
+
+        // 2) fetch any missing or stale details
+        var targets = allHrefs
+            .Where(h => NeedsFetch(_details.Get(h)))
+            .ToList();
+
+        _log.LogInformation("DetailsRefresh: fetching {Count} hrefs (missing/stale)", targets.Count);
+
+        var throttler = new SemaphoreSlim(maxConcurrency);
+        var tasks = targets.Select(async h =>
+        {
+            await throttler.WaitAsync(ct);
+            try
+            {
+                await _scraper.FetchOneAsync(h, ct);
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Fetch failed for {Href}", h);
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+
+        // 3) optional: materialize & save per-date aggregates after refresh
+        foreach (var d in dates)
+        {
+            await GenerateAndSavePerDateAsync(d);
+        }
+
+        // 4) enforce on-disk retention for details per-date artifacts
+        DetailsPerDateFiles.CleanupRetention(center, back, ahead);
+    }
+
+    private static bool NeedsFetch(DetailsRecord? rec)
+    {
+        if (rec is null) return true;
+        // keep your existing TTL logic; example:
+        return (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > TimeSpan.FromHours(6);
+    }
+
+    // Reuse the same mapping the endpoint does, but as a helper so we can write files post-refresh
+    private async Task GenerateAndSavePerDateAsync(DateOnly date)
+    {
+        if (!_perDateStore.TryGet(date, out var snap) || snap.Payload?.TableDataGroup is null) return;
+
+        var hrefs = snap.Payload.TableDataGroup
+            .SelectMany(g => g.Items)
+            .Select(i => DetailsStore.Normalize(i.Href))
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var records = hrefs
+            .Select(h => _details.Get(h))
+            .Where(r => r is not null)
+            .Cast<DetailsRecord>()
+            .OrderByDescending(r => r.LastUpdatedUtc)
+            .ToList();
+
+        var byHref = records.ToDictionary(
+            r => r.Href,
+            r => MapDetailsRecordToAllhrefsItem(
+                    r,
+                    preferTeamsInfoHtml:       false,
+                    preferMatchBetweenHtml:    false,
+                    preferSeparateMatchesHtml: false,
+                    preferBetStatsHtml:        false,
+                    preferFactsHtml:           false,
+                    preferLastTeamsHtml:       false,
+                    preferTeamsStatisticsHtml: false,
+                    preferTeamStandingsHtml:   false),
+            StringComparer.OrdinalIgnoreCase);
+
+        var envelope = new
+        {
+            date = date.ToString("yyyy-MM-dd"),
+            total = byHref.Count,
+            generatedUtc = DateTimeOffset.UtcNow,
+            items = byHref
+        };
+
+        await DetailsPerDateFiles.SaveAsync(date, envelope);
+    }
+}
 
 
 public sealed class DetailsScraperService
