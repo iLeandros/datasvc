@@ -1036,6 +1036,85 @@ app.MapGet("/data/details/allhrefs",
         items        = byHref
     });
 });
+
+// GET /data/details/allhrefs/date/{date}  -> matches parsed per-date behavior
+app.MapGet("/data/details/allhrefs/date/{date}",
+(
+    string date,
+    [FromServices] SnapshotPerDateStore perDateStore,
+    [FromServices] DetailsStore store,
+    [FromQuery] string? teamsInfo,
+    [FromQuery] string? matchBetween,
+    [FromQuery] string? separateMatches,
+    [FromQuery] string? betStats,
+    [FromQuery] string? facts,
+    [FromQuery] string? lastTeamsMatches,
+    [FromQuery] string? teamsStatistics,
+    [FromQuery] string? teamStandings
+) =>
+{
+    // 1) Resolve the date and fetch the parsed snapshot for that day
+    var d = DateOnly.Parse(date);
+    if (!perDateStore.TryGet(d, out var snap) || snap.Payload is null)
+        return Results.NotFound(new { message = "No parsed snapshot for date (refresh first)", date });
+
+    // 2) Collect hrefs from the per-date TableDataGroup
+    var hrefs = snap.Payload.TableDataGroup?
+        .SelectMany(g => g.Items)
+        .Select(i => i.Href)
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .Select(DetailsStore.Normalize)
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList() ?? new List<string>();
+
+    // 3) Pull only the requested hrefs from DetailsStore
+    var records = hrefs
+        .Select(h => store.Get(h))
+        .Where(r => r is not null)
+        .Cast<DetailsRecord>()
+        .OrderByDescending(r => r.LastUpdatedUtc) // stable ordering like the non-date endpoint
+        .ToList();
+
+    // Toggles (same behavior as the existing allhrefs endpoint)
+    bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferMatchBetweenHtml    = string.Equals(matchBetween, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferSeparateMatchesHtml = string.Equals(separateMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferBetStatsHtml        = string.Equals(betStats, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferFactsHtml           = string.Equals(facts, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferLastTeamsHtml       = string.Equals(lastTeamsMatches, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamsStatisticsHtml = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase);
+    bool preferTeamStandingsHtml   = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase);
+
+    // 4) Build the same shape as /data/details/allhrefs
+    var byHref = records.ToDictionary(
+        i => i.Href,
+        i => MapDetailsRecordToAllhrefsItem(
+                i,
+                preferTeamsInfoHtml,
+                preferMatchBetweenHtml,
+                preferSeparateMatchesHtml,
+                preferBetStatsHtml,
+                preferFactsHtml,
+                preferLastTeamsHtml,
+                preferTeamsStatisticsHtml,
+                preferTeamStandingsHtml),
+        StringComparer.OrdinalIgnoreCase);
+
+    var envelope = new
+    {
+        date = d.ToString("yyyy-MM-dd"),
+        total = byHref.Count,
+        generatedUtc = DateTimeOffset.UtcNow,
+        items = byHref
+    };
+
+    // 5) Persist the per-date aggregate to disk (and .gz)
+    _ = DetailsPerDateFiles.SaveAsync(d, envelope);
+
+    return Results.Json(envelope);
+});
+
+
 // GET /data/details/item?href=...
 app.MapGet("/data/details/item",
 (
@@ -2593,6 +2672,62 @@ public static class DetailsFiles
         catch { return Array.Empty<DetailsRecord>(); }
     }
 }
+
+public static class DetailsPerDateFiles
+{
+    public static string Dir  => "/var/lib/datasvc/details";
+    public static string PathFor(DateOnly date) => System.IO.Path.Combine(Dir, $"{date:yyyy-MM-dd}.json");
+
+    public static async Task SaveAsync(DateOnly date, object envelope)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(envelope, new JsonSerializerOptions { WriteIndented = false });
+        var path = PathFor(date);
+        var tmp  = path + ".tmp";
+        await System.IO.File.WriteAllTextAsync(tmp, json);
+        System.IO.File.Move(tmp, path, overwrite: true);
+
+        // best-effort gzip, like elsewhere
+        try
+        {
+            using var input = File.OpenRead(path);
+            using var output = File.Create(path + ".gz");
+            using var gz = new GZipStream(output, CompressionLevel.Fastest);
+            await input.CopyToAsync(gz);
+        }
+        catch { /* non-fatal */ }
+
+        // Enforce rolling window D±3 (7 files total), same pattern as parsed
+        CleanupRetention(ScraperConfig.TodayLocal(), 3, 3); // mirrors parsed’s call site
+    }
+
+    public static void CleanupRetention(DateOnly center, int back, int ahead)
+    {
+        // Build keep set identical to parsed
+        var keep = new HashSet<string>(
+            ScraperConfig.DateWindow(center, back, ahead).Select(d => d.ToString("yyyy-MM-dd")),
+            StringComparer.OrdinalIgnoreCase);
+
+        if (!Directory.Exists(Dir)) return;
+
+        foreach (var file in Directory.EnumerateFiles(Dir, "*.json"))
+        {
+            var stem = Path.GetFileNameWithoutExtension(file); // yyyy-MM-dd
+            if (!keep.Contains(stem))
+            {
+                try
+                {
+                    File.Delete(file);
+                    var gz = file + ".gz";
+                    if (File.Exists(gz)) File.Delete(gz);
+                }
+                catch { /* ignore */ }
+            }
+        }
+    }
+}
+
+
 
 public sealed class DetailsScraperService
 {
