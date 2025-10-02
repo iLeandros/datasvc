@@ -1353,7 +1353,7 @@ app.MapControllers();
 app.Run();
 
 
-
+/*
 // Helper to produce the SAME shape as /data/details/allhrefs items[]
 static object MapDetailsRecordToAllhrefsItem(
     DetailsRecord i,
@@ -1446,6 +1446,7 @@ static object MapDetailsRecordToAllhrefsItem(
         teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
     };
 }
+*/
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -2840,7 +2841,7 @@ public sealed class DetailsRefreshService
 
         var byHref = records.ToDictionary(
             r => r.Href,
-            r => MapDetailsRecordToAllhrefsItem(
+            r => AllhrefsMapper.MapDetailsRecordToAllhrefsItem(
                     r,
                     preferTeamsInfoHtml:       false,
                     preferMatchBetweenHtml:    false,
