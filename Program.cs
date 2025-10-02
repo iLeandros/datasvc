@@ -2826,7 +2826,15 @@ public sealed class DetailsRefreshService
     private async Task GenerateAndSavePerDateAsync(DateOnly date)
     {
         if (!_perDateStore.TryGet(date, out var snap) || snap.Payload?.TableDataGroup is null) return;
-
+		/*
+		// BEFORE (collects from all groups)
+		var hrefs = snap.Payload!.TableDataGroup
+		    .SelectMany(g => g.Items)
+		    .Select(i => i.Href)
+		    .Where(h => !string.IsNullOrWhiteSpace(h))
+		    .Distinct(StringComparer.OrdinalIgnoreCase)
+		    .ToArray();
+		*/
         var firstGroup = snap.Payload!.TableDataGroup.FirstOrDefault();
 		var hrefs = (firstGroup?.Items ?? new ObservableCollection<TableDataItem>())
 		    .Select(i => i.Href)
