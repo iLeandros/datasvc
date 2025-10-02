@@ -334,14 +334,12 @@ app.MapGet("/data/perdate/status", (
 
         if (perDateStore.TryGet(d, out var snap) && snap.Payload?.TableDataGroup is not null)
         {
-            // IMPORTANT: use the SAME rule as allhrefs (first group only)
-            var firstGroup = snap.Payload.TableDataGroup.FirstOrDefault();
-            var hrefs = (firstGroup?.Items ?? new ObservableCollection<TableDataItem>())
-                .Select(i => i.Href)
-                .Where(h => !string.IsNullOrWhiteSpace(h))
-                .Select(DetailsStore.Normalize)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
+            var hrefs = snap.Payload!.TableDataGroup
+		    .SelectMany(g => g.Items)
+		    .Select(i => i.Href)
+		    .Where(h => !string.IsNullOrWhiteSpace(h))
+		    .Distinct(StringComparer.OrdinalIgnoreCase)
+		    .ToArray();
 
             parsedCount = hrefs.Length;
             detailsCount = hrefs.Count(h => detailsStore.Get(h) is not null);
