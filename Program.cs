@@ -3126,7 +3126,7 @@ public sealed class DetailsRefreshJob : BackgroundService
     private readonly TimeZoneInfo _tz;
 	private readonly DetailsRefreshService _refresher; // <— add
 
-    public DetailsRefreshJob(DetailsScraperService svc, DetailsStore store)
+    public DetailsRefreshJob(DetailsScraperService svc, DetailsStore store, DetailsRefreshService refresher)
     {
         _svc = svc; 
         _store = store;
