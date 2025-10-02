@@ -2828,7 +2828,7 @@ public sealed class DetailsRefreshService
         if (!_perDateStore.TryGet(date, out var snap) || snap.Payload?.TableDataGroup is null) return;
 
         var firstGroup = snap.Payload!.TableDataGroup.FirstOrDefault();
-		var hrefs = (firstGroup?.Items ?? new List<TableDataItem>())
+		var hrefs = (firstGroup?.Items ?? new ObservableCollection<TableDataItem>())
 		    .Select(i => i.Href)
 		    .Where(h => !string.IsNullOrWhiteSpace(h))
 		    .Distinct(StringComparer.OrdinalIgnoreCase)
