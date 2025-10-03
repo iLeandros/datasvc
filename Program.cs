@@ -1866,7 +1866,7 @@ public sealed class Top10ScraperService
             // Explicitly fetch the top10 page
             var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
             var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, 0);
+            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
 
             var payload = new DataPayload(html, titles, table);
             var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
