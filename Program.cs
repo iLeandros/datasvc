@@ -2223,7 +2223,9 @@ public sealed class ScraperService
 		var html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
 	
 	    var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+
+		var whenUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, whenUtc);
 	
 	    var payload = new DataPayload(html, titles, table);
 	    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
@@ -2511,9 +2513,11 @@ public static class GetStartupMainTableDataGroup2024
 							// after you've extracted host/guest team display names:
 							var hostName = teamone ?? "A";
 							var guestName = teamtwo ?? "B";
+
+							var whenUtc = date.ToDateTime(TimeOnly.FromDateTime(DateTime.UtcNow), DateTimeKind.Utc);
 							
 							// compute server-side
-							var computed = LikesCalculator.Compute(likesRaw, hostName, guestName, date);
+							var computed = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
 							var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
                             if (likesandvotes != null && likesandvotes.Count >= 11)
