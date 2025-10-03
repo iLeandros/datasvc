@@ -25,6 +25,7 @@ using System.IO.Compression;
 using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using DataSvc.MainHelpers; // MainHelpers
+using DataSvc.Likes; // MainHelpers
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
