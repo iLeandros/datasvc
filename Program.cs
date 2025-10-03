@@ -2400,7 +2400,7 @@ public static class GetStartupMainTitlesAndHrefs2024
 
 public static class GetStartupMainTableDataGroup2024
 {
-    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, DateTime date, int contrainerSkip = 1) // 0 for Top10
+    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, DateTime date = DateTime.UtcNow, int contrainerSkip = 1) // 0 for Top10
     {
         try
         {
@@ -2513,7 +2513,7 @@ public static class GetStartupMainTableDataGroup2024
 							var guestName = teamtwo ?? "B";
 							
 							// compute server-side
-							var computed = LikesCalculator.Compute(likesRaw, hostName, guestName, DateTime.UtcNow);
+							var computed = LikesCalculator.Compute(likesRaw, hostName, guestName, date);
 							var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
                             if (likesandvotes != null && likesandvotes.Count >= 11)
