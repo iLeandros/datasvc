@@ -2504,6 +2504,14 @@ public static class GetStartupMainTableDataGroup2024
                                 .FirstChild?
                                 .Elements("div")
                                 .Where(a => a.GetAttributeValue("class", "").Contains("coefbox")).ToList();
+							var likesRaw = likepositive ?? "1";
+							// after you've extracted host/guest team display names:
+							var hostName = teamone ?? "A";
+							var guestName = teamtwo ?? "B";
+							
+							// compute server-side
+							var computed = LikesCalculator.Compute(likesRaw, hostName, guestName, DateTime.UtcNow);
+							var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
@@ -2520,6 +2528,8 @@ public static class GetStartupMainTableDataGroup2024
                                     dislikebuttonimage,
                                     likepositive,
                                     likenegative,
+									computed,
+									computedFmt,
                                     likesandvotes[0].InnerText,
                                     likesandvotes[1].InnerText,
                                     likesandvotes[2].InnerText,
