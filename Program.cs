@@ -2400,7 +2400,7 @@ public static class GetStartupMainTitlesAndHrefs2024
 
 public static class GetStartupMainTableDataGroup2024
 {
-    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, int contrainerSkip = 1) // 0 for Top10
+    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, DateTime date, int contrainerSkip = 1) // 0 for Top10
     {
         try
         {
