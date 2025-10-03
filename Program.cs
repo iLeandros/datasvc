@@ -28,6 +28,7 @@ using Microsoft.AspNetCore.Authentication;
 using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using DataSvc.MainHelpers; // MainHelpers
 using DataSvc.Likes; // MainHelpers
+using DataSvc.Services; // Services
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -74,6 +75,8 @@ builder.Services.AddResponseCompression(o =>
     o.MimeTypes = ResponseCompressionDefaults.MimeTypes
         .Concat(new[] { "application/json", "application/x-ndjson", "text/event-stream" });
 });
+
+builder.Services.AddHostedService<LikesRefreshJob>();
 
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
@@ -206,6 +209,18 @@ else
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
 */
+
+app.MapPost("/data/likes/recompute", async (
+    [FromServices] ILogger<LikesRefreshJob> log,
+    [FromServices] ResultStore root,
+    [FromServices] SnapshotPerDateStore perDateStore) =>
+{
+    var job = new LikesRefreshJob(log, root, perDateStore);
+    // run one pass synchronously
+    await job.StartAsync(CancellationToken.None);
+    await job.StopAsync(CancellationToken.None);
+    return Results.Ok(new { ok = true, message = "likes recomputed" });
+});
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
 app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
