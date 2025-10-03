@@ -2224,7 +2224,7 @@ public sealed class ScraperService
 	
 	    var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
 
-		var whenUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+		var whenUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc); // or use current UTC hour if you prefer
 	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, whenUtc);
 	
 	    var payload = new DataPayload(html, titles, table);
@@ -2402,10 +2402,14 @@ public static class GetStartupMainTitlesAndHrefs2024
 
 public static class GetStartupMainTableDataGroup2024
 {
-    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, DateTime date = DateTime.UtcNow, int contrainerSkip = 1) // 0 for Top10
+    public static ObservableCollection<TableDataGroup> GetStartupMainTableDataGroup(string htmlContent, DateTime? date = null, int contrainerSkip = 1) // 0 for Top10
     {
         try
         {
+			// ---- pick the effective UTC moment for the scrape ----
+	        DateTime whenUtc = date ?? DateTime.UtcNow;                 // fallback to now if null
+	        if (whenUtc.Kind != DateTimeKind.Utc) whenUtc = whenUtc.ToUniversalTime();
+			
             var website = new HtmlDocument();
             website.LoadHtml(htmlContent);
 
@@ -2514,11 +2518,9 @@ public static class GetStartupMainTableDataGroup2024
 							var hostName = teamone ?? "A";
 							var guestName = teamtwo ?? "B";
 
-							var whenUtc = date.ToDateTime(TimeOnly.FromDateTime(DateTime.UtcNow), DateTimeKind.Utc);
-							
-							// compute server-side
-							var computed = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
-							var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
+							// compute server-side using the chosen UTC moment
+	                        var computed    = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
+	                        var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
