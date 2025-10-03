@@ -4,6 +4,8 @@ using DataSvc.Likes;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
+namespace DataSvc.Services;
+
 public sealed class LikesRefreshJob : BackgroundService
 {
     private readonly ILogger<LikesRefreshJob> _log;
