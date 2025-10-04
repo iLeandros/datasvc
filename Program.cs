@@ -436,12 +436,15 @@ app.MapGet("/data/snapshot/date/{date}", (string date) =>
     });
 });
 // GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01)
-app.MapGet("/data/refresh-date/{date}", async (string date, CancellationToken ct) =>
+app.MapGet("/data/refresh-date/{date}", async (
+    string date,
+    [FromServices] IConfiguration cfg,
+    CancellationToken ct) =>
 {
     try
     {
         var d = DateOnly.Parse(date);
-        var snap = await ScraperService.FetchOneDateAsync(d, ct);
+        var snap = await ScraperService.FetchOneDateAsync(d, cfg, ct);
         perDateStore.Set(d, snap);
         return Results.Ok(new { date = d.ToString("yyyy-MM-dd"), lastUpdatedUtc = snap.LastUpdatedUtc });
     }
@@ -2310,7 +2313,8 @@ public static class BulkRefresh
             try
             {
                 ct.ThrowIfCancellationRequested();
-                var snap = await ScraperService.FetchOneDateAsync(d, ct);
+                //var snap = await ScraperService.FetchOneDateAsync(d, ct);
+				var snap = await ScraperService.FetchOneDateAsync(d, _cfg, ct);
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
@@ -2385,7 +2389,10 @@ public sealed class ScraperService
         }
     }
 
-	public static async Task<DataSnapshot> FetchOneDateAsync(DateOnly date, CancellationToken ct = default)
+	public static async Task<DataSnapshot> FetchOneDateAsync(
+	    DateOnly date,
+	    IConfiguration cfg,
+	    CancellationToken ct = default)
 	{
 	    var url  = ScraperConfig.UrlFor(date);
 	    //var html = await _http.GetStringAsync(url, ct);
@@ -2427,13 +2434,15 @@ public sealed class RefreshJob : BackgroundService
 {
     private readonly ScraperService _svc;
     private readonly ResultStore _store;
+	private readonly IConfiguration _cfg;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeZoneInfo _tz;
 
-    public RefreshJob(ScraperService svc, ResultStore store)
+    public RefreshJob(ScraperService svc, ResultStore store, IConfiguration cfg) // <-- inject cfg
     {
         _svc = svc; 
         _store = store;
+		_cfg = cfg;
         // Use local server timezone by default; allow override via env var TOP_OF_HOUR_TZ (e.g., "Europe/Brussels")
         var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
         _tz = !string.IsNullOrWhiteSpace(tzId)
