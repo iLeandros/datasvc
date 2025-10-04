@@ -2286,18 +2286,23 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
 {
     private readonly SnapshotPerDateStore _store;
     private readonly ILogger<PerDateRefreshJob> _log;
+    private readonly IConfiguration _cfg;          // <-- inject cfg
     private Timer? _timer;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public PerDateRefreshJob(SnapshotPerDateStore store, ILogger<PerDateRefreshJob> log)
+    public PerDateRefreshJob(
+        SnapshotPerDateStore store,
+        ILogger<PerDateRefreshJob> log,
+        IConfiguration cfg)                       // <-- DI will supply this
     {
         _store = store;
         _log = log;
+        _cfg = cfg;
     }
 
     public Task StartAsync(CancellationToken ct)
     {
-        // Initial run shortly after startup
+        // Initial run shortly after startup; then every 5 minutes
         _timer = new Timer(async _ => await TickAsync(), null, TimeSpan.FromSeconds(3), TimeSpan.FromMinutes(5));
         return Task.CompletedTask;
     }
@@ -2308,8 +2313,19 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
         try
         {
             var center = ScraperConfig.TodayLocal();
-            await BulkRefresh.RefreshWindowAsync(_store, center, 3, 3);
-            // After refresh, enforce retention on disk + memory
+
+            // *** pass cfg as 2nd arg, keep parameter order (or use named args) ***
+            var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
+                store: _store,
+                cfg:   _cfg,
+                center: center,
+                back:   3,
+                ahead:  3);
+
+            if (errors.Count > 0)
+                _log.LogWarning("PerDate refresh had {Count} errors: {Errors}", errors.Count, string.Join("; ", errors.Select(kv => $"{kv.Key}:{kv.Value}")));
+
+            // Enforce retention after refresh
             BulkRefresh.CleanupRetention(_store, center, 3, 3);
         }
         catch (Exception ex)
