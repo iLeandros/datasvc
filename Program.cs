@@ -222,7 +222,7 @@ app.MapPost("/data/likes/recompute", async (
     await job.StopAsync(CancellationToken.None);
     return Results.Ok(new { ok = true, message = "likes recomputed" });
 });
-*/
+
 // POST /data/likes/recompute?hour=13
 app.MapPost("/data/likes/recompute", async (
     [FromServices] ILogger<LikesRefreshJob> log,
@@ -304,6 +304,122 @@ app.MapPost("/data/likes/recompute", async (
         return (gcount, icount);
     }
 });
+*/
+// POST /data/likes/recompute?hour=13
+app.MapPost("/data/likes/recompute", async (
+    [FromServices] ILogger<LikesRefreshJob> log,
+    [FromServices] ResultStore root,
+    [FromServices] SnapshotPerDateStore perDateStore,
+    [FromServices] IConfiguration cfg,
+    [FromQuery] int? hour,                 // 0..23 (UTC)
+    CancellationToken ct
+) =>
+{
+    var nowUtc = DateTime.UtcNow;
+
+    // validate hour
+    var hourToUse = hour ?? nowUtc.Hour;
+    if (hourToUse < 0 || hourToUse > 23)
+        return Results.BadRequest(new { ok = false, error = "hour must be 0..23 (UTC)" });
+
+    // open DB once for the whole recompute
+    var cs = cfg.GetConnectionString("Default");
+    await using var conn = new MySqlConnection(cs);
+    await conn.OpenAsync(ct);
+
+    int groupsTouched = 0, itemsTouched = 0;
+
+    try
+    {
+        // 1) Current snapshot (main page)
+        var current = root.Current;
+        if (current?.Payload?.TableDataGroup is not null)
+        {
+            var whenUtcCurrent = new DateTime(
+                nowUtc.Year, nowUtc.Month, nowUtc.Day,
+                hourToUse, 0, 0, DateTimeKind.Utc);
+
+            (int g, int i) = await RecomputeLikesForGroupsAsync(
+                current.Payload.TableDataGroup, whenUtcCurrent, nowUtc, conn, ct);
+            groupsTouched += g; itemsTouched += i;
+        }
+
+        // 2) Per-date snapshots in today±3 using the same hour on each date
+        var center = ScraperConfig.TodayLocal();
+        foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+        {
+            if (perDateStore.TryGet(d, out var snap) && snap?.Payload?.TableDataGroup is not null)
+            {
+                var whenUtcPerDate = new DateTime(
+                    d.Year, d.Month, d.Day,
+                    hourToUse, 0, 0, DateTimeKind.Utc);
+
+                (int g, int i) = await RecomputeLikesForGroupsAsync(
+                    snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc, conn, ct);
+                groupsTouched += g; itemsTouched += i;
+            }
+        }
+
+        log.LogInformation("Manual recompute completed: hour={Hour}Z, groups={Groups}, items={Items}",
+            hourToUse, groupsTouched, itemsTouched);
+
+        return Results.Ok(new { ok = true, hourUtc = hourToUse, groupsTouched, itemsTouched });
+    }
+    catch (Exception ex)
+    {
+        log.LogError(ex, "Manual recompute failed for hour={Hour}", hourToUse);
+        return Results.Problem(title: "likes recompute failed", detail: ex.Message);
+    }
+
+    // ----- local helper: recompute for a set of groups, mixing in SQL vote totals -----
+    static async Task<(int groups, int items)> RecomputeLikesForGroupsAsync(
+        System.Collections.ObjectModel.ObservableCollection<TableDataGroup> groups,
+        DateTime whenUtc,
+        DateTime nowUtc,
+        MySqlConnection conn,
+        CancellationToken ct)
+    {
+        int gcount = 0, icount = 0;
+
+        foreach (var g in groups ?? Enumerable.Empty<TableDataGroup>())
+        {
+            gcount++;
+
+            // collect hrefs in this group and bulk-get their vote scores from SQL
+            var hrefs = (g?.Items ?? Enumerable.Empty<TableDataItem>())
+                        .Select(i => i.Href)
+                        .Where(h => !string.IsNullOrWhiteSpace(h))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+
+            var scores = await VoteTotalsRepo.GetScoresByHrefAsync(conn, hrefs, ct); // href -> score (up-down) :contentReference[oaicite:2]{index=2}
+
+            foreach (var item in g?.Items ?? Enumerable.Empty<TableDataItem>())
+            {
+                var likesRaw  = item.LikePositive ?? "0";
+                var hostName  = item.HostTeam     ?? string.Empty;
+                var guestName = item.GuestTeam    ?? string.Empty;
+
+                // add user vote influence to the scraped likes
+                long baseLikes = 0;
+                long.TryParse(likesRaw, out baseLikes);
+
+                var bonus = (item.Href is not null && scores.TryGetValue(item.Href, out var s)) ? s : 0;
+                var effectiveLikes = Math.Max(0, baseLikes + bonus);
+
+                var computed = LikesCalculator.ComputeWithDateRules(   // uses target date rules you already have :contentReference[oaicite:3]{index=3}
+                    effectiveLikes.ToString(CultureInfo.InvariantCulture),
+                    hostName, guestName, whenUtc, nowUtc);
+
+                item.ServerComputedLikes = computed;
+                item.ServerComputedLikesFormatted = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
+                icount++;
+            }
+        }
+        return (gcount, icount);
+    }
+});
+
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
 app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
