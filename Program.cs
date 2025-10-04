@@ -77,6 +77,7 @@ builder.Services.AddResponseCompression(o =>
 });
 
 builder.Services.AddHostedService<LikesRefreshJob>();
+builder.Services.AddHostedService<CleanupOldMatchesHostedService>();
 
 // Livescores DI
 builder.Services.AddSingleton<LiveScoresStore>();
