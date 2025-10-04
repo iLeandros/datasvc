@@ -380,6 +380,7 @@ app.MapPost("/data/refresh-window", async (
     [FromQuery] string? date,
     [FromQuery] int? daysBack,
     [FromQuery] int? daysAhead,
+	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
     CancellationToken ct) =>
@@ -391,6 +392,7 @@ app.MapPost("/data/refresh-window", async (
     var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
         store:  perDateStore,
         cfg:    cfg,
+		hourUtc: hour,
         center: center,
         back:   back,
         ahead:  ahead,
@@ -413,6 +415,7 @@ app.MapGet("/data/refresh-window", async (
     [FromQuery] string? date,
     [FromQuery] int? daysBack,
     [FromQuery] int? daysAhead,
+	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
     CancellationToken ct) =>
@@ -424,6 +427,7 @@ app.MapGet("/data/refresh-window", async (
     var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
         store: perDateStore,
         cfg:   cfg,
+		hourUtc: hour,
         center: center,
         back:   back,
         ahead:  ahead,
@@ -474,6 +478,7 @@ app.MapGet("/data/snapshot/date/{date}", (string date) =>
 // GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01)
 app.MapGet("/data/refresh-date/{date}", async (
     string date,
+	[FromQuery] int? hour,   
     [FromServices] IConfiguration cfg,
     CancellationToken ct) =>
 {
@@ -2313,14 +2318,16 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
         try
         {
             var center = ScraperConfig.TodayLocal();
+			var hourUtc = DateTime.UtcNow.Hour;
 
             // *** pass cfg as 2nd arg, keep parameter order (or use named args) ***
             var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
-                store: _store,
-                cfg:   _cfg,
-                center: center,
-                back:   3,
-                ahead:  3);
+			    store: _store,
+			    cfg:   _cfg,
+			    hourUtc: hourUtc,     // << use the current hour
+			    center: center,
+			    back:   3,
+			    ahead:  3);
 
             if (errors.Count > 0)
                 _log.LogWarning("PerDate refresh had {Count} errors: {Errors}", errors.Count, string.Join("; ", errors.Select(kv => $"{kv.Key}:{kv.Value}")));
@@ -2350,11 +2357,12 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
 public static class BulkRefresh
 {
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
-        RefreshWindowAsync(
-            SnapshotPerDateStore store,
-            IConfiguration cfg,                  // <-- pass cfg in
-            DateOnly? center = null, int back = 3, int ahead = 3,
-            CancellationToken ct = default)
+    	RefreshWindowAsync(
+        SnapshotPerDateStore store,
+        IConfiguration cfg,
+        int? hourUtc = null,
+        DateOnly? center = null, int back = 3, int ahead = 3,
+        CancellationToken ct = default)
     {
         var c = center ?? ScraperConfig.TodayLocal();
         var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
@@ -2369,7 +2377,7 @@ public static class BulkRefresh
                 ct.ThrowIfCancellationRequested();
 
                 // Use the FetchOneDateAsync overload that takes IConfiguration
-                var snap = await ScraperService.FetchOneDateAsync(d, cfg, ct);
+                var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
 
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
@@ -2448,34 +2456,32 @@ public sealed class ScraperService
 	public static async Task<DataSnapshot> FetchOneDateAsync(
 	    DateOnly date,
 	    IConfiguration cfg,
+	    int? hourUtc = null,
 	    CancellationToken ct = default)
 	{
 	    var url  = ScraperConfig.UrlFor(date);
-	    //var html = await _http.GetStringAsync(url, ct);
-		var html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
+	    var html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
 	
 	    var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-
-		var whenUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc); // or use current UTC hour if you prefer
-	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, whenUtc);
-
-		// Mix in SQL vote totals before we build the payload/snapshot
-		var nowUtc = DateTime.UtcNow;
-		//var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
-		var cs = cfg.GetConnectionString("Default");
-		await using (var conn = new MySqlConnection(cs))
-		{
-		    await conn.OpenAsync(ct);
-		    await VoteMixing.ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
-		}
-		
-		//var payload = new DataPayload(html, titles, table);
-		//var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+	
+	    // Use provided hour if valid; otherwise current UTC hour
+	    var h = (hourUtc is >= 0 and <= 23) ? hourUtc.Value : DateTime.UtcNow.Hour;
+	
+	    var whenUtc = new DateTime(date.Year, date.Month, date.Day, h, 0, 0, DateTimeKind.Utc);
+	    var table   = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, whenUtc);
+	
+	    var nowUtc = DateTime.UtcNow;
+	    var cs = cfg.GetConnectionString("Default");
+	    await using (var conn = new MySqlConnection(cs))
+	    {
+	        await conn.OpenAsync(ct);
+	        await VoteMixing.ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
+	    }
 	
 	    var payload = new DataPayload(html, titles, table);
 	    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
 	
-	    // Persist to disk
+	    // Persist to disk (unchanged)
 	    var path = ScraperConfig.SnapshotPath(date);
 	    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 	    await File.WriteAllTextAsync(path,
@@ -2483,7 +2489,6 @@ public sealed class ScraperService
 	
 	    return snap;
 	}
-
 }
 
 public sealed class RefreshJob : BackgroundService
