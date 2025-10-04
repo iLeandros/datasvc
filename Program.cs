@@ -151,6 +151,7 @@ app.Use(async (ctx, next) =>
             || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
             || path.StartsWith("/account/delete")     // allow HTML confirm page
             || path.StartsWith("/v1/auth/account"))   // allow the DELETE API
+			|| path.StartsWith("/v1/likes"))      // <-- add this
         {
             await next();
             return;
