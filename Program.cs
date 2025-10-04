@@ -386,20 +386,33 @@ app.MapPost("/data/refresh-window", async (string? date, int? daysBack, int? day
 });
 
 // GET /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
-app.MapGet("/data/refresh-window", async (string? date, int? daysBack, int? daysAhead, CancellationToken ct) =>
+app.MapGet("/data/refresh-window", async (
+    [FromQuery] string? date,
+    [FromQuery] int? daysBack,
+    [FromQuery] int? daysAhead,
+    [FromServices] SnapshotPerDateStore perDateStore,
+    [FromServices] IConfiguration cfg,
+    CancellationToken ct) =>
 {
     var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
-    var back = daysBack ?? 3;
-    var ahead = daysAhead ?? 3;
+    var back   = daysBack  ?? 3;
+    var ahead  = daysAhead ?? 3;
 
-    var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(perDateStore, center, back, ahead, ct);
+    var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
+        store: perDateStore,
+        cfg:   cfg,
+        center: center,
+        back:   back,
+        ahead:  ahead,
+        ct:     ct);
+
     BulkRefresh.CleanupRetention(perDateStore, center, back, ahead);
 
     return Results.Ok(new {
         center = center.ToString("yyyy-MM-dd"),
         back, ahead,
         refreshed,
-        errors,                     // <-- see which dates failed instead of 500
+        errors,
         ok = errors.Count == 0
     });
 });
