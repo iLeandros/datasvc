@@ -209,7 +209,7 @@ else
         BulkRefresh.TryLoadFromDisk(perDateStore, d);
 }
 */
-
+/*
 app.MapPost("/data/likes/recompute", async (
     [FromServices] ILogger<LikesRefreshJob> log,
     [FromServices] ResultStore root,
@@ -220,6 +220,88 @@ app.MapPost("/data/likes/recompute", async (
     await job.StartAsync(CancellationToken.None);
     await job.StopAsync(CancellationToken.None);
     return Results.Ok(new { ok = true, message = "likes recomputed" });
+});
+*/
+// POST /data/likes/recompute?hour=13
+app.MapPost("/data/likes/recompute", async (
+    [FromServices] ILogger<LikesRefreshJob> log,
+    [FromServices] ResultStore root,
+    [FromServices] SnapshotPerDateStore perDateStore,
+    [FromQuery] int? hour  // 0..23 (UTC)
+) =>
+{
+    var nowUtc = DateTime.UtcNow;
+
+    // validate hour
+    var hourToUse = hour ?? nowUtc.Hour;
+    if (hourToUse < 0 || hourToUse > 23)
+        return Results.BadRequest(new { ok = false, error = "hour must be 0..23 (UTC)" });
+
+    int groupsTouched = 0, itemsTouched = 0;
+
+    try
+    {
+        // 1) Recompute for the “current” snapshot (main page) using today@hourToUse UTC
+        var current = root.Current;
+        if (current?.Payload?.TableDataGroup is not null)
+        {
+            var whenUtcCurrent = new DateTime(
+                nowUtc.Year, nowUtc.Month, nowUtc.Day,
+                hourToUse, 0, 0, DateTimeKind.Utc);
+
+            (int g, int i) = RecomputeLikesForGroups(current.Payload.TableDataGroup, whenUtcCurrent, nowUtc);
+            groupsTouched += g; itemsTouched += i;
+        }
+
+        // 2) Recompute for per-date snapshots in today±3 using that same hour on each date
+        var center = ScraperConfig.TodayLocal();
+        foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
+        {
+            if (perDateStore.TryGet(d, out var snap) && snap?.Payload?.TableDataGroup is not null)
+            {
+                var whenUtcPerDate = new DateTime(
+                    d.Year, d.Month, d.Day,
+                    hourToUse, 0, 0, DateTimeKind.Utc);
+
+                (int g, int i) = RecomputeLikesForGroups(snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc);
+                groupsTouched += g; itemsTouched += i;
+            }
+        }
+
+        log.LogInformation("Manual recompute completed: hour={Hour}Z, groups={Groups}, items={Items}", hourToUse, groupsTouched, itemsTouched);
+        return Results.Ok(new { ok = true, hourUtc = hourToUse, groupsTouched, itemsTouched });
+    }
+    catch (Exception ex)
+    {
+        log.LogError(ex, "Manual recompute failed for hour={Hour}", hourToUse);
+        return Results.Problem(title: "likes recompute failed", detail: ex.Message);
+    }
+
+    // local helper
+    static (int groups, int items) RecomputeLikesForGroups(
+        System.Collections.ObjectModel.ObservableCollection<TableDataGroup> groups,
+        DateTime whenUtc,
+        DateTime nowUtc)
+    {
+        int gcount = 0, icount = 0;
+
+        foreach (var g in groups ?? Enumerable.Empty<TableDataGroup>())
+        {
+            gcount++;
+            foreach (var item in g?.Items ?? Enumerable.Empty<TableDataItem>())
+            {
+                var likesRaw  = item.LikePositive ?? "0";
+                var hostName  = item.HostTeam     ?? string.Empty;
+                var guestName = item.GuestTeam    ?? string.Empty;
+
+                var computed = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, nowUtc);
+                item.ServerComputedLikes = computed;
+                item.ServerComputedLikesFormatted = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
+                icount++;
+            }
+        }
+        return (gcount, icount);
+    }
 });
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
