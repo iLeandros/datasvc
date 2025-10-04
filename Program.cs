@@ -2300,7 +2300,9 @@ public static class BulkRefresh
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
         RefreshWindowAsync(
             SnapshotPerDateStore store,
-            DateOnly? center = null, int back = 3, int ahead = 3, CancellationToken ct = default)
+            IConfiguration cfg,                  // <-- pass cfg in
+            DateOnly? center = null, int back = 3, int ahead = 3,
+            CancellationToken ct = default)
     {
         var c = center ?? ScraperConfig.TodayLocal();
         var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
@@ -2313,8 +2315,10 @@ public static class BulkRefresh
             try
             {
                 ct.ThrowIfCancellationRequested();
-                //var snap = await ScraperService.FetchOneDateAsync(d, ct);
-				var snap = await ScraperService.FetchOneDateAsync(d, _cfg, ct);
+
+                // Use the FetchOneDateAsync overload that takes IConfiguration
+                var snap = await ScraperService.FetchOneDateAsync(d, cfg, ct);
+
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
