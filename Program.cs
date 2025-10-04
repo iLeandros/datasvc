@@ -2398,7 +2398,8 @@ public sealed class ScraperService
 
 		// Mix in SQL vote totals before we build the payload/snapshot
 		var nowUtc = DateTime.UtcNow;
-		var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
+		//var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
+		var cs = cfg.GetConnectionString("Default");
 		await using (var conn = new MySqlConnection(cs))
 		{
 		    await conn.OpenAsync(ct);
