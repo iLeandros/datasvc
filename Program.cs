@@ -306,6 +306,7 @@ app.MapPost("/data/likes/recompute", async (
 });
 */
 // POST /data/likes/recompute?hour=13
+// Re-applies user vote totals to all snapshots for the chosen hour (UTC).
 app.MapPost("/data/likes/recompute", async (
     [FromServices] ILogger<LikesRefreshJob> log,
     [FromServices] ResultStore root,
@@ -317,12 +318,12 @@ app.MapPost("/data/likes/recompute", async (
 {
     var nowUtc = DateTime.UtcNow;
 
-    // validate hour
+    // validate/select hour
     var hourToUse = hour ?? nowUtc.Hour;
     if (hourToUse < 0 || hourToUse > 23)
         return Results.BadRequest(new { ok = false, error = "hour must be 0..23 (UTC)" });
 
-    // open DB once for the whole recompute
+    // open DB once for the whole recompute pass
     var cs = cfg.GetConnectionString("Default");
     await using var conn = new MySqlConnection(cs);
     await conn.OpenAsync(ct);
@@ -331,94 +332,47 @@ app.MapPost("/data/likes/recompute", async (
 
     try
     {
-        // 1) Current snapshot (main page)
+        // 1) Current snapshot (the main/home group)
         var current = root.Current;
-        if (current?.Payload?.TableDataGroup is not null)
+        if (current?.Payload?.TableDataGroup is not null && current.Payload.TableDataGroup.Count > 0)
         {
             var whenUtcCurrent = new DateTime(
                 nowUtc.Year, nowUtc.Month, nowUtc.Day,
                 hourToUse, 0, 0, DateTimeKind.Utc);
 
-            (int g, int i) = await RecomputeLikesForGroupsAsync(
-                current.Payload.TableDataGroup, whenUtcCurrent, nowUtc, conn, ct);
-            groupsTouched += g; itemsTouched += i;
+            await ApplyUserVotesAsync(current.Payload.TableDataGroup, whenUtcCurrent, nowUtc, conn, ct);
+
+            groupsTouched += current.Payload.TableDataGroup.Count;
+            itemsTouched  += current.Payload.TableDataGroup.Sum(g => g?.Items?.Count ?? 0);
         }
 
-        // 2) Per-date snapshots in today±3 using the same hour on each date
+        // 2) Per-date snapshots across today±3 using the same hour
         var center = ScraperConfig.TodayLocal();
         foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
         {
-            if (perDateStore.TryGet(d, out var snap) && snap?.Payload?.TableDataGroup is not null)
+            if (perDateStore.TryGet(d, out var snap) && snap?.Payload?.TableDataGroup is not null && snap.Payload.TableDataGroup.Count > 0)
             {
-                var whenUtcPerDate = new DateTime(
-                    d.Year, d.Month, d.Day,
-                    hourToUse, 0, 0, DateTimeKind.Utc);
+                var whenUtcPerDate = new DateTime(d.Year, d.Month, d.Day, hourToUse, 0, 0, DateTimeKind.Utc);
 
-                (int g, int i) = await RecomputeLikesForGroupsAsync(
-                    snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc, conn, ct);
-                groupsTouched += g; itemsTouched += i;
+                await ApplyUserVotesAsync(snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc, conn, ct);
+
+                groupsTouched += snap.Payload.TableDataGroup.Count;
+                itemsTouched  += snap.Payload.TableDataGroup.Sum(g => g?.Items?.Count ?? 0);
             }
         }
 
-        log.LogInformation("Manual recompute completed: hour={Hour}Z, groups={Groups}, items={Items}",
+        log.LogInformation("Manual likes recompute completed: hour={Hour}Z, groups={Groups}, items={Items}",
             hourToUse, groupsTouched, itemsTouched);
 
         return Results.Ok(new { ok = true, hourUtc = hourToUse, groupsTouched, itemsTouched });
     }
     catch (Exception ex)
     {
-        log.LogError(ex, "Manual recompute failed for hour={Hour}", hourToUse);
+        log.LogError(ex, "Manual likes recompute failed for hour={Hour}", hourToUse);
         return Results.Problem(title: "likes recompute failed", detail: ex.Message);
     }
-
-    // ----- local helper: recompute for a set of groups, mixing in SQL vote totals -----
-    static async Task<(int groups, int items)> RecomputeLikesForGroupsAsync(
-        System.Collections.ObjectModel.ObservableCollection<TableDataGroup> groups,
-        DateTime whenUtc,
-        DateTime nowUtc,
-        MySqlConnection conn,
-        CancellationToken ct)
-    {
-        int gcount = 0, icount = 0;
-
-        foreach (var g in groups ?? Enumerable.Empty<TableDataGroup>())
-        {
-            gcount++;
-
-            // collect hrefs in this group and bulk-get their vote scores from SQL
-            var hrefs = (g?.Items ?? Enumerable.Empty<TableDataItem>())
-                        .Select(i => i.Href)
-                        .Where(h => !string.IsNullOrWhiteSpace(h))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .ToArray();
-
-            var scores = await VoteTotalsRepo.GetScoresByHrefAsync(conn, hrefs, ct); // href -> score (up-down) :contentReference[oaicite:2]{index=2}
-
-            foreach (var item in g?.Items ?? Enumerable.Empty<TableDataItem>())
-            {
-                var likesRaw  = item.LikePositive ?? "0";
-                var hostName  = item.HostTeam     ?? string.Empty;
-                var guestName = item.GuestTeam    ?? string.Empty;
-
-                // add user vote influence to the scraped likes
-                long baseLikes = 0;
-                long.TryParse(likesRaw, out baseLikes);
-
-                var bonus = (item.Href is not null && scores.TryGetValue(item.Href, out var s)) ? s : 0;
-                var effectiveLikes = Math.Max(0, baseLikes + bonus);
-
-                var computed = LikesCalculator.ComputeWithDateRules(   // uses target date rules you already have :contentReference[oaicite:3]{index=3}
-                    effectiveLikes.ToString(CultureInfo.InvariantCulture),
-                    hostName, guestName, whenUtc, nowUtc);
-
-                item.ServerComputedLikes = computed;
-                item.ServerComputedLikesFormatted = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
-                icount++;
-            }
-        }
-        return (gcount, icount);
-    }
 });
+
 
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
@@ -1805,6 +1759,53 @@ static object MapDetailsRecordToAllhrefsItem(
     };
 }
 */
+
+// helper in Program.cs
+static async Task ApplyUserVotesAsync(
+    System.Collections.ObjectModel.ObservableCollection<TableDataGroup> groups,
+    DateTime whenUtc,
+    DateTime nowUtc,
+    MySqlConnection conn,
+    CancellationToken ct)
+{
+    if (groups is null || groups.Count == 0) return;
+
+    // 1) Collect ALL hrefs across all groups (deduped)
+    var hrefs = groups
+        .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+        .Select(i => i.Href)
+        .Where(h => !string.IsNullOrWhiteSpace(h))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
+    if (hrefs.Length == 0) return;
+
+    // 2) Bulk fetch href -> score (up - down)
+    var scores = await VoteTotalsRepo.GetScoresByHrefAsync(conn, hrefs, ct);
+
+    // 3) Recompute each item using (scrapedLikes + score) then LikesCalculator
+    foreach (var item in groups.SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>()))
+    {
+        var likesRaw  = item.LikePositive ?? "0";
+        var hostName  = item.HostTeam     ?? string.Empty;
+        var guestName = item.GuestTeam    ?? string.Empty;
+
+        long baseLikes = 0;
+        long.TryParse(likesRaw, out baseLikes);
+
+        var bonus = (item.Href is not null && scores.TryGetValue(item.Href, out var s)) ? s : 0;
+        var effectiveLikes = Math.Max(0, baseLikes + bonus);
+
+        var computed = LikesCalculator.ComputeWithDateRules(
+            effectiveLikes.ToString(CultureInfo.InvariantCulture),
+            hostName, guestName, whenUtc, nowUtc);
+
+        item.ServerComputedLikes = computed;
+        item.ServerComputedLikesFormatted =
+            LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
+    }
+}
+
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -2081,6 +2082,19 @@ public sealed class Top10ScraperService
             var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
             var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
             var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
+
+			// Mix in SQL vote totals before we build the payload/snapshot
+		    var nowUtc = DateTime.UtcNow;
+		    var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
+		    await using (var conn = new MySqlConnection(cs))
+		    {
+		        await conn.OpenAsync(ct);
+		        await ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
+		    }
+		
+		    var payload = new DataPayload(html, titles, table);
+		    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+
 
             var payload = new DataPayload(html, titles, table);
             var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
