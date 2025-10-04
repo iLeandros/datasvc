@@ -315,6 +315,13 @@ app.MapPost("/v1/likes", async (
 })
 .RequireAuthorization();
 
+app.MapPost("/__likes_probe", (HttpContext ctx) =>
+{
+    Console.WriteLine("HIT __likes_probe, auth=" + (ctx.User?.Identity?.IsAuthenticated ?? false));
+    return Results.Ok(new { ok = true, auth = ctx.User?.Identity?.IsAuthenticated ?? false });
+});
+
+
 // POST /data/likes/recompute?hour=13
 // Re-applies user vote totals to all snapshots for the chosen hour (UTC).
 app.MapPost("/data/likes/recompute", async (
