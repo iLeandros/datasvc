@@ -475,26 +475,37 @@ app.MapGet("/data/snapshot/date/{date}", (string date) =>
         titlesAndHrefs = snap.Payload.TitlesAndHrefs
     });
 });
-// GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01)
+// GET /data/refresh-date/{date}  (eg: /data/refresh-date/2025-10-01?hour=14)
 app.MapGet("/data/refresh-date/{date}", async (
     string date,
-	[FromQuery] int? hour,   
+    [FromQuery] int? hour,                                // optional hour 0..23
+    [FromServices] SnapshotPerDateStore perDateStore,     // <-- inject store
     [FromServices] IConfiguration cfg,
     CancellationToken ct) =>
 {
     try
     {
         var d = DateOnly.Parse(date);
-        var snap = await ScraperService.FetchOneDateAsync(d, cfg, ct);
+
+        // pass the hour through; null means "use current UTC hour"
+        var snap = await ScraperService.FetchOneDateAsync(d, cfg, hour, ct);
+
         perDateStore.Set(d, snap);
-        return Results.Ok(new { date = d.ToString("yyyy-MM-dd"), lastUpdatedUtc = snap.LastUpdatedUtc });
+
+        return Results.Ok(new {
+            date = d.ToString("yyyy-MM-dd"),
+            hour = hour ?? DateTime.UtcNow.Hour,
+            lastUpdatedUtc = snap.LastUpdatedUtc
+        });
     }
     catch (Exception ex)
     {
-        return Results.Problem(title: "Fetch failed", detail: ex.Message, statusCode: StatusCodes.Status502BadGateway);
+        return Results.Problem(
+            title: "Fetch failed",
+            detail: ex.Message,
+            statusCode: StatusCodes.Status502BadGateway);
     }
 });
-
 
 
 // Back-compat: current-day shortcuts (resolve to Brussels today)
