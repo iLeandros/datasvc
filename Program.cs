@@ -2402,7 +2402,7 @@ public sealed class ScraperService
 		await using (var conn = new MySqlConnection(cs))
 		{
 		    await conn.OpenAsync(ct);
-		    await ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
+		    await VoteMixing.ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
 		}
 		
 		//var payload = new DataPayload(html, titles, table);
