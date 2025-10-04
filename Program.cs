@@ -340,7 +340,7 @@ app.MapPost("/data/likes/recompute", async (
                 nowUtc.Year, nowUtc.Month, nowUtc.Day,
                 hourToUse, 0, 0, DateTimeKind.Utc);
 
-            await ApplyUserVotesAsync(current.Payload.TableDataGroup, whenUtcCurrent, nowUtc, conn, ct);
+            await VoteMixing.ApplyUserVotesAsync(current.Payload.TableDataGroup, whenUtcCurrent, nowUtc, conn, ct);
 
             groupsTouched += current.Payload.TableDataGroup.Count;
             itemsTouched  += current.Payload.TableDataGroup.Sum(g => g?.Items?.Count ?? 0);
@@ -354,7 +354,7 @@ app.MapPost("/data/likes/recompute", async (
             {
                 var whenUtcPerDate = new DateTime(d.Year, d.Month, d.Day, hourToUse, 0, 0, DateTimeKind.Utc);
 
-                await ApplyUserVotesAsync(snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc, conn, ct);
+                await VoteMixing.ApplyUserVotesAsync(snap.Payload.TableDataGroup, whenUtcPerDate, nowUtc, conn, ct);
 
                 groupsTouched += snap.Payload.TableDataGroup.Count;
                 itemsTouched  += snap.Payload.TableDataGroup.Sum(g => g?.Items?.Count ?? 0);
@@ -1760,52 +1760,6 @@ static object MapDetailsRecordToAllhrefsItem(
 }
 */
 
-// helper in Program.cs
-static async Task ApplyUserVotesAsync(
-    System.Collections.ObjectModel.ObservableCollection<TableDataGroup> groups,
-    DateTime whenUtc,
-    DateTime nowUtc,
-    MySqlConnection conn,
-    CancellationToken ct)
-{
-    if (groups is null || groups.Count == 0) return;
-
-    // 1) Collect ALL hrefs across all groups (deduped)
-    var hrefs = groups
-        .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
-        .Select(i => i.Href)
-        .Where(h => !string.IsNullOrWhiteSpace(h))
-        .Distinct(StringComparer.OrdinalIgnoreCase)
-        .ToArray();
-
-    if (hrefs.Length == 0) return;
-
-    // 2) Bulk fetch href -> score (up - down)
-    var scores = await VoteTotalsRepo.GetScoresByHrefAsync(conn, hrefs, ct);
-
-    // 3) Recompute each item using (scrapedLikes + score) then LikesCalculator
-    foreach (var item in groups.SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>()))
-    {
-        var likesRaw  = item.LikePositive ?? "0";
-        var hostName  = item.HostTeam     ?? string.Empty;
-        var guestName = item.GuestTeam    ?? string.Empty;
-
-        long baseLikes = 0;
-        long.TryParse(likesRaw, out baseLikes);
-
-        var bonus = (item.Href is not null && scores.TryGetValue(item.Href, out var s)) ? s : 0;
-        var effectiveLikes = Math.Max(0, baseLikes + bonus);
-
-        var computed = LikesCalculator.ComputeWithDateRules(
-            effectiveLikes.ToString(CultureInfo.InvariantCulture),
-            hostName, guestName, whenUtc, nowUtc);
-
-        item.ServerComputedLikes = computed;
-        item.ServerComputedLikesFormatted =
-            LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
-    }
-}
-
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -2082,19 +2036,6 @@ public sealed class Top10ScraperService
             var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
             var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
             var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
-
-			// Mix in SQL vote totals before we build the payload/snapshot
-		    var nowUtc = DateTime.UtcNow;
-		    var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
-		    await using (var conn = new MySqlConnection(cs))
-		    {
-		        await conn.OpenAsync(ct);
-		        await ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
-		    }
-		
-		    var payload = new DataPayload(html, titles, table);
-		    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-
 
             var payload = new DataPayload(html, titles, table);
             var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
@@ -2454,6 +2395,18 @@ public sealed class ScraperService
 
 		var whenUtc = date.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc); // or use current UTC hour if you prefer
 	    var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, whenUtc);
+
+		// Mix in SQL vote totals before we build the payload/snapshot
+		var nowUtc = DateTime.UtcNow;
+		var cs = builder.Configuration.GetConnectionString("Default"); // or cfg if you have it in scope
+		await using (var conn = new MySqlConnection(cs))
+		{
+		    await conn.OpenAsync(ct);
+		    await ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
+		}
+		
+		//var payload = new DataPayload(html, titles, table);
+		//var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
 	
 	    var payload = new DataPayload(html, titles, table);
 	    var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
