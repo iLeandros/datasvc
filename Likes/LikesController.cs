@@ -75,6 +75,20 @@ public sealed class LikesController : ControllerBase
         return Unauthorized(new { error = "Missing or invalid user ID" });
     }
 
+    [NonAction]
+    private static (string primary, string? alt) CanonicalHrefCandidates(string href)
+    {
+        // as-is
+        var primary = href.Trim();
+    
+        // if the string we received contains spaces (likely decoded '+'),
+        // also try a variant where spaces are turned back into '+'
+        string? alt = null;
+        if (primary.IndexOf(' ') >= 0)
+            alt = primary.Replace(' ', '+');
+    
+        return (primary, alt);
+    }
 
     private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
 
@@ -260,60 +274,71 @@ public sealed class LikesController : ControllerBase
     // =========================================
     [HttpGet]
     [AllowAnonymous]
-    public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct)
+    public async Task<IActionResult> Get([FromQuery] string href, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(href))
             return BadRequest(new { error = "href is required" });
-
-        href = href.Trim();
-        var hrefHash = Sha256(href);
-
-        ulong? userId = null;
-        var uidStr = User.FindFirstValue("uid");
-        if (ulong.TryParse(uidStr, out var uidParsed)) userId = uidParsed;
-
+        if (href.Length > 600)
+            return BadRequest(new { error = "href too long (max 600 chars)" });
+    
+        var (h1, h2) = CanonicalHrefCandidates(href);
+        var h1Hash = Sha256(h1);
+        var h2Hash = h2 is null ? null : Sha256(h2);
+    
+        const string sql = @"
+    SELECT
+      m.match_id,
+      m.href,
+      m.match_utc,
+      COALESCE(t.upvotes, 0)  AS Up,
+      COALESCE(t.downvotes, 0) AS Down,
+      COALESCE(t.score, 0)     AS Score,
+      COALESCE(t.updated_at, m.created_at) AS Updated
+    FROM matches m
+    LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+    WHERE m.href_hash = @h1
+       OR (@h2 IS NOT NULL AND m.href_hash = @h2)
+    LIMIT 1;";
+    
         await using var conn = Open();
-        await conn.OpenAsync(ct);
-
-        var rec = await conn.QueryFirstOrDefaultAsync<(ulong Mid, int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-            SELECT m.match_id, COALESCE(t.upvotes,0), COALESCE(t.downvotes,0), COALESCE(t.score,0),
-                   COALESCE(t.updated_at, UTC_TIMESTAMP()), m.match_utc
-              FROM matches m
-              LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
-             WHERE m.href_hash = @hrefHash
-             LIMIT 1;", new { hrefHash });
-
-        if (rec.Mid == 0UL)
+        var rec = await conn.QuerySingleOrDefaultAsync(sql, new { h1 = h1Hash, h2 = h2Hash });
+    
+        // Not seen before: return zeros with current time
+        if (rec is null)
         {
             return Ok(new LikeTotalsDto
             {
-                Href = href,
+                Href = h1, // normalized primary
                 Upvotes = 0,
                 Downvotes = 0,
                 Score = 0,
                 UserVote = null,
-                UpdatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc),
                 MatchUtc = null
             });
         }
-
-        sbyte? userVote = null;
-        if (userId is not null)
+    
+        int? userVote = null;
+        if (User?.Identity?.IsAuthenticated == true)
         {
-            userVote = await conn.ExecuteScalarAsync<sbyte?>(@"
-                SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
-                new { uid = userId.Value, mid = rec.Mid });
+            // Best-effort: if we can read the user id, include the caller's vote
+            if (GetRequiredUserId(out var userId) is null)
+            {
+                const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
+                userVote = await conn.ExecuteScalarAsync<int?>(
+                    sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
+            }
         }
-
+    
         return Ok(new LikeTotalsDto
         {
-            Href = href,
+            Href = rec.href,
             Upvotes = rec.Up,
             Downvotes = rec.Down,
             Score = rec.Score,
             UserVote = userVote,
             UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
-            MatchUtc = rec.MUtc
+            MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
         });
     }
 }
