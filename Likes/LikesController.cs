@@ -35,11 +35,26 @@ public sealed class LikesController : ControllerBase
     }
 
     // ===== Helpers =====
+    /*
     private ulong GetRequiredUserId()
     {
         var uid = User.FindFirstValue("uid");
         if (string.IsNullOrWhiteSpace(uid)) throw new UnauthorizedAccessException("Missing uid claim.");
         return ulong.Parse(uid);
+    }
+    */
+    [NonAction]
+    private ulong GetRequiredUserId()
+    {
+        if (HttpContext.Items.TryGetValue("user_id", out var v) &&
+            ulong.TryParse(v?.ToString(), out var fromItem))
+            return fromItem;
+    
+        var claim = User.FindFirstValue("uid");
+        if (ulong.TryParse(claim, out var fromClaim))
+            return fromClaim;
+    
+        throw new UnauthorizedAccessException("Missing user id.");
     }
 
     private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
@@ -58,14 +73,14 @@ public sealed class LikesController : ControllerBase
         if (dt.Value.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
         return dt.Value.ToUniversalTime();
     }
-    
+    /*
     [HttpPost("")]
-    [Authorize]
+    //[Authorize]
     public async Task<IActionResult> Vote(CancellationToken ct)
     {
         return Ok(new { message = "POST received" });
     }
-    /*
+    */
     [HttpPost("")]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
     {
@@ -77,7 +92,7 @@ public sealed class LikesController : ControllerBase
         var userId = GetRequiredUserId(); // Add this
         return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc, userId });
     }
-    */
+    
     // =========================================
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
     // Idempotent; stores match_utc (if provided) so we can prune later.
