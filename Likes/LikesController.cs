@@ -127,21 +127,22 @@ public sealed class LikesController : ControllerBase
         _log.LogWarning("Missing user id (no HttpContext.Items[\"user_id\"] and no uid/sub claim).");
         return Unauthorized(new { error = "Missing or invalid user ID" });
     }
-
+    
     [NonAction]
-    private static (string primary, string? alt) CanonicalHrefCandidates(string href)
+    private static (string primary, string? altPlus, string? altPct20) CanonicalHrefCandidates(string href)
     {
-        // as-is
-        var primary = href.Trim();
+        var primary = href.Trim();                  // as received (already URL-decoded by ASP.NET)
+        string? altPlus = null, altPct20 = null;
     
-        // if the string we received contains spaces (likely decoded '+'),
-        // also try a variant where spaces are turned back into '+'
-        string? alt = null;
         if (primary.IndexOf(' ') >= 0)
-            alt = primary.Replace(' ', '+');
+        {
+            altPlus  = primary.Replace(' ', '+');   // spaces → '+'
+            altPct20 = primary.Replace(" ", "%20"); // spaces → '%20'
+        }
     
-        return (primary, alt);
+        return (primary, altPlus, altPct20);
     }
+
 
     private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
 
@@ -346,24 +347,21 @@ public sealed class LikesController : ControllerBase
             return BadRequest(new { error = "href too long (max 600 chars)" });
     
         // tolerate '+' ↔ ' ' querystring decoding
-        var (h1, h2) = CanonicalHrefCandidates(href);
+        var (h1, h2, h3) = CanonicalHrefCandidates(href);
         var h1Hash = Sha256(h1);
         var h2Hash = h2 is null ? null : Sha256(h2);
+        var h3Hash = h3 is null ? null : Sha256(h3);
     
         const string sql = @"
-    SELECT
-      m.match_id,
-      m.href,
-      m.match_utc,
-      COALESCE(t.upvotes, 0)   AS Up,
-      COALESCE(t.downvotes, 0) AS Down,
-      COALESCE(t.score, 0)     AS Score,
-      COALESCE(t.updated_at, m.created_at) AS Updated
-    FROM matches m
-    LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
-    WHERE m.href_hash = @h1
-       OR (@h2 IS NOT NULL AND m.href_hash = @h2)
-    LIMIT 1;";
+            SELECT m.match_id, m.href, m.match_utc,
+                   COALESCE(t.upvotes,0) Up, COALESCE(t.downvotes,0) Down,
+                   COALESCE(t.score,0) Score, COALESCE(t.updated_at, m.created_at) Updated
+            FROM matches m
+            LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+            WHERE m.href_hash = @h1
+               OR (@h2 IS NOT NULL AND m.href_hash = @h2)
+               OR (@h3 IS NOT NULL AND m.href_hash = @h3)
+            LIMIT 1;";
     
         await using var conn = Open();
         var rec = await conn.QuerySingleOrDefaultAsync(sql, new { h1 = h1Hash, h2 = h2Hash });
