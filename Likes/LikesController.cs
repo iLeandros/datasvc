@@ -43,22 +43,38 @@ public sealed class LikesController : ControllerBase
         return ulong.Parse(uid);
     }
     */
-    private IActionResult GetRequiredUserId(out ulong userId)
+    [NonAction]
+    private IActionResult? GetRequiredUserId(out ulong userId)
     {
-        userId = 26;
-        var uid = User.FindFirstValue("uid");
-        if (string.IsNullOrWhiteSpace(uid))
+        userId = 0;
+    
+        // 1) Prefer the pipeline’s Items slot (how your auth often passes it)
+        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
+            raw is not null &&
+            ulong.TryParse(raw.ToString(), out userId))
         {
-            _log.LogWarning("Missing uid claim in User principal");
-            return Unauthorized(new { error = "Missing or invalid user ID claim" });
+            return null; // success
         }
-        if (!ulong.TryParse(uid, out userId))
+    
+        // 2) Fall back to common claim types
+        string?[] candidates =
         {
-            _log.LogWarning("Invalid uid claim format: {Uid}", uid);
-            return BadRequest(new { error = "Invalid user ID format" });
+            User.FindFirstValue("uid"),
+            User.FindFirstValue(ClaimTypes.NameIdentifier), // "nameidentifier"
+            User.FindFirstValue("sub")
+        };
+    
+        foreach (var s in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out userId))
+                return null; // success
         }
-        return null; // Success
+    
+        // 3) Still nothing → 401
+        _log.LogWarning("Missing user id (no HttpContext.Items[\"user_id\"] and no uid/sub claim).");
+        return Unauthorized(new { error = "Missing or invalid user ID" });
     }
+
 
     private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
 
