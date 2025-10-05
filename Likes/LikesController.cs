@@ -310,7 +310,6 @@ public sealed class LikesController : ControllerBase
             return Problem("Vote failed.");
         }
     }
-
     // PUBLIC: GET /v1/likes  (anonymous OK; includes UserVote only if user id can be resolved)
     [HttpGet("")]
     [AllowAnonymous]
@@ -379,49 +378,46 @@ public sealed class LikesController : ControllerBase
             MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
         });
     }
+    // AUTHORIZED: GET /v1/likes/my  (requires user id)
     [HttpGet("my")]
     [Authorize]
     public async Task<IActionResult> GetMyLikes([FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken ct = default)
     {
         if (take <= 0 || take > 200) take = 50;
-
-        var auth = GetRequiredUserId(out var userId);
-        if (auth is not null) return auth;
-
+        if (skip < 0) skip = 0;
+    
+        var (err, userId) = await GetRequiredUserIdAsync(ct);
+        if (err is not null) return err;
+    
         const string sql = @"
-            SELECT
-              m.href,
-              m.match_utc,
-              umv.updated_at    AS user_updated_at,
-              COALESCE(t.upvotes, 0)   AS upvotes,
-              COALESCE(t.downvotes, 0) AS downvotes,
-              COALESCE(t.score, 0)     AS score
-            FROM user_match_votes umv
-            JOIN matches m       ON m.match_id = umv.match_id
-            LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
-            WHERE umv.user_id = @user_id AND umv.vote = 1
-            ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
-            LIMIT @take OFFSET @skip;";
-
-        using var conn = Open();
-        var rows = (await conn.QueryAsync(sql, new { user_id = userId, take, skip })).ToList();
-
-        var list = rows.Select(r => new MyLikeDto
+    SELECT
+      m.href,
+      m.match_utc,
+      umv.updated_at              AS user_updated_at,
+      COALESCE(t.upvotes, 0)      AS upvotes,
+      COALESCE(t.downvotes, 0)    AS downvotes,
+      COALESCE(t.score, 0)        AS score
+    FROM user_match_votes umv
+    JOIN matches m            ON m.match_id = umv.match_id
+    LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
+    WHERE umv.user_id = @user_id AND umv.vote = 1
+    ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
+    LIMIT @skip, @take;";
+    
+        await using var conn = Open();
+        var rows = (await conn.QueryAsync(sql, new { user_id = userId, skip, take })).ToList();
+    
+        var items = rows.Select(r => new MyLikeDto
         {
             Href = r.href,
             MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc),
             UserUpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.user_updated_at, DateTimeKind.Utc),
-            Upvotes = r.upvotes,
-            Downvotes = r.downvotes,
-            Score = r.score
+            Upvotes = (int)r.upvotes,
+            Downvotes = (int)r.downvotes,
+            Score = (int)r.score
         });
-
-        return Ok(new
-        {
-            skip,
-            take,
-            count = rows.Count,
-            items = list
-        });
+    
+        return Ok(new { skip, take, count = rows.Count, items });
     }
+
 }
