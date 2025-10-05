@@ -1,3 +1,4 @@
+
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -10,6 +11,7 @@ namespace DataSvc.Likes;
 
 [ApiController]
 [Route("v1/likes")]
+[Produces("application/json")]
 public sealed class LikesController : ControllerBase
 {
     private readonly string? _connString;
@@ -21,63 +23,41 @@ public sealed class LikesController : ControllerBase
         _log = log;
     }
 
-    // ===== DTOs =====
-    public sealed record VoteRequest(string Href, sbyte Vote, DateTime? MatchUtc); // Vote in {-1,0,+1}, optional UTC kick-off
+    // ---------- DTOs ----------
+    public sealed class VoteRequest
+    {
+        public string? Href { get; set; }
+        public int Vote { get; set; } // -1, 0, +1
+        public DateTime? MatchUtc { get; set; }
+    }
+
     public sealed class LikeTotalsDto
     {
         public string Href { get; set; } = "";
         public int Upvotes { get; set; }
         public int Downvotes { get; set; }
         public int Score { get; set; }
-        public sbyte? UserVote { get; set; }
+        public int? UserVote { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
         public DateTime? MatchUtc { get; set; }
     }
 
-    // ===== Helpers =====
-    /*
-    private ulong GetRequiredUserId()
+    public sealed class MyLikeDto
     {
-        var uid = User.FindFirstValue("uid");
-        if (string.IsNullOrWhiteSpace(uid)) throw new UnauthorizedAccessException("Missing uid claim.");
-        return ulong.Parse(uid);
+        public string Href { get; set; } = "";
+        public DateTime? MatchUtc { get; set; }
+        public DateTime UserUpdatedAtUtc { get; set; }
+        public int Upvotes { get; set; }
+        public int Downvotes { get; set; }
+        public int Score { get; set; }
     }
-    */
+
+    // ---------- Helpers ----------
+
     [NonAction]
-    private IActionResult? GetRequiredUserId(out ulong userId)
-    {
-        userId = 0;
-    
-        // 1) Prefer the pipeline’s Items slot (how your auth often passes it)
-        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
-            raw is not null &&
-            ulong.TryParse(raw.ToString(), out userId))
-        {
-            return null; // success
-        }
-    
-        // 2) Fall back to common claim types
-        string?[] candidates =
-        {
-            User.FindFirstValue("uid"),
-            User.FindFirstValue(ClaimTypes.NameIdentifier), // "nameidentifier"
-            User.FindFirstValue("sub")
-        };
-    
-        foreach (var s in candidates)
-        {
-            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out userId))
-                return null; // success
-        }
-    
-        // 3) Still nothing → 401
-        _log.LogWarning("Missing user id (no HttpContext.Items[\"user_id\"] and no uid/sub claim).");
-        return Unauthorized(new { error = "Missing or invalid user ID" });
-    }
+    private static byte[] Sha256(string? s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
 
-
-    private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
-
+    [NonAction]
     private MySqlConnection Open()
     {
         if (string.IsNullOrWhiteSpace(_connString))
@@ -85,6 +65,7 @@ public sealed class LikesController : ControllerBase
         return new MySqlConnection(_connString);
     }
 
+    [NonAction]
     private static DateTime? ForceUtc(DateTime? dt)
     {
         if (dt is null) return null;
@@ -92,34 +73,47 @@ public sealed class LikesController : ControllerBase
         if (dt.Value.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
         return dt.Value.ToUniversalTime();
     }
-    /*
-    [HttpPost("")]
-    //[Authorize]
-    public async Task<IActionResult> Vote(CancellationToken ct)
+
+    /// <summary>
+    /// Try to read the authenticated user's id from HttpContext.Items["user_id"] or common claim types.
+    /// Returns null on success and sets userId, or an IActionResult (401/400) on failure.
+    /// </summary>
+    [NonAction]
+    private IActionResult? GetRequiredUserId(out ulong userId)
     {
-        return Ok(new { message = "POST received" });
+        userId = 0;
+
+        // 1) Pipeline often stashes the id here
+        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
+            raw is not null &&
+            ulong.TryParse(raw.ToString(), out userId))
+        {
+            return null; // success
+        }
+
+        // 2) Common claims
+        string?[] candidates =
+        {
+            User.FindFirstValue("uid"),
+            User.FindFirstValue(ClaimTypes.NameIdentifier),
+            User.FindFirstValue("sub"),
+        };
+
+        foreach (var s in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out userId))
+                return null; // success
+        }
+
+        _log.LogWarning("Missing user id (no HttpContext.Items[\"user_id\"] and no uid/sub claim).");
+        return Unauthorized(new { error = "Missing or invalid user ID" });
     }
-    
-    [HttpPost("")]
-    public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
-    {
-        if (req is null || string.IsNullOrWhiteSpace(req.Href))
-            return BadRequest(new { error = "href is required" });
-        if (req.Vote is < -1 or > 1)
-            return BadRequest(new { error = "vote must be -1, 0, or +1" });
-    
-        var authResult = GetRequiredUserId(out var userId);
-        if (authResult != null)
-            return authResult;
-    
-        return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc, userId });
-    }
-    */
-    // =========================================
-    // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
-    // Idempotent; stores match_utc (if provided) so we can prune later.
-    // =========================================
-    
+
+    // ---------- Endpoints ----------
+
+    /// <summary>
+    /// Idempotent vote endpoint.
+    /// </summary>
     [HttpPost("")]
     [Authorize]
     [Consumes("application/json")]
@@ -129,162 +123,141 @@ public sealed class LikesController : ControllerBase
             return BadRequest(new { error = "href is required" });
         if (req.Vote is < -1 or > 1)
             return BadRequest(new { error = "vote must be -1, 0, or +1" });
+        if (req.Href!.Length > 600)
+            return BadRequest(new { error = "href too long (max 600 chars)" });
 
-        var href = req.Href.Trim();
+        var auth = GetRequiredUserId(out var userId);
+        if (auth is not null) return auth;
+
+        var href = req.Href!.Trim();
         var hrefHash = Sha256(href);
-        var newVote = req.Vote;
-        //var userId = GetRequiredUserId();
-        var authResult = GetRequiredUserId(out var userId);
-        if (authResult != null)
-            return authResult;
         var matchUtc = ForceUtc(req.MatchUtc);
 
-        await using var conn = Open();
+        const string sqlEnsureMatch = @"
+INSERT INTO matches (match_id, href_hash, href, match_utc, created_at)
+VALUES (/* match_id */ 0, @href_hash, @href, @match_utc, NOW(3))
+ON DUPLICATE KEY UPDATE match_id = match_id;
+SELECT match_id FROM matches WHERE href_hash = @href_hash;";
+
+        const string sqlSelectPrev = @"
+SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
+
+        const string sqlUpsertVote = @"
+INSERT INTO user_match_votes (user_id, match_id, vote, updated_at)
+VALUES (@user_id, @match_id, @vote, NOW(3))
+ON DUPLICATE KEY UPDATE vote=VALUES(vote), updated_at=NOW(3);";
+
+        const string sqlEnsureTotals = @"
+INSERT IGNORE INTO match_vote_totals (match_id, upvotes, downvotes, score, updated_at)
+VALUES (@match_id, 0, 0, 0, NOW(3));";
+
+        const string sqlUpdateTotals = @"
+UPDATE match_vote_totals
+SET upvotes  = upvotes  + @up_delta,
+    downvotes= downvotes+ @down_delta,
+    score    = score    + @score_delta,
+    updated_at = NOW(3)
+WHERE match_id=@match_id;";
+
+        const string sqlReadTotals = @"
+SELECT m.href, m.match_utc, t.upvotes, t.downvotes, t.score, t.updated_at
+FROM matches m
+LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+WHERE m.match_id=@match_id;";
+
+        using var conn = Open();
         await conn.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
+        using var tx = await conn.BeginTransactionAsync(ct);
 
-        try
+        // 1) Ensure match row exists (by hash/unique)
+        var matchId = await conn.ExecuteScalarAsync<ulong>(new CommandDefinition(
+            sqlEnsureMatch, new { href_hash = hrefHash, href, match_utc = matchUtc }, tx, cancellationToken: ct));
+
+        // 2) Diff against previous vote
+        var prevVote = await conn.ExecuteScalarAsync<int?>(new CommandDefinition(
+            sqlSelectPrev, new { user_id = userId, match_id = matchId }, tx, cancellationToken: ct));
+
+        // If prev == req.Vote, it's idempotent; still update timestamp but deltas are zero
+        var newVote = req.Vote;
+        int upDelta = 0, downDelta = 0, scoreDelta = 0;
+
+        int old = prevVote ?? 0;
+        int _new = newVote;
+
+        // Compute deltas going from old -> new
+        if (old != _new)
         {
-            // 1) Ensure match row exists (and store match_utc if provided)
-            ulong matchId = await conn.ExecuteScalarAsync<ulong?>(@"
-                SELECT match_id FROM matches WHERE href_hash=@hrefHash LIMIT 1;",
-                new { hrefHash }, tx) ?? 0UL;
+            // Remove old
+            if (old == 1) { upDelta -= 1; scoreDelta -= 1; }
+            else if (old == -1) { downDelta -= 1; scoreDelta += 1; }
 
-            if (matchId == 0UL)
-            {
-                await conn.ExecuteAsync(@"
-                    INSERT INTO matches (href_hash, href, match_utc)
-                    VALUES (@hrefHash, @href, @matchUtc)
-                    ON DUPLICATE KEY UPDATE href=VALUES(href), match_utc=COALESCE(VALUES(match_utc), match_utc);",
-                    new { hrefHash, href, matchUtc }, tx);
-
-                matchId = await conn.ExecuteScalarAsync<ulong>(@"
-                    SELECT match_id FROM matches WHERE href_hash=@hrefHash LIMIT 1;",
-                    new { hrefHash }, tx);
-
-                await conn.ExecuteAsync("INSERT IGNORE INTO match_vote_totals (match_id) VALUES (@mid);",
-                    new { mid = matchId }, tx);
-            }
-            else if (matchUtc is not null)
-            {
-                // backfill or correct match_utc if client now knows it
-                await conn.ExecuteAsync(@"
-                    UPDATE matches
-                       SET match_utc = @matchUtc
-                     WHERE match_id  = @mid
-                       AND (match_utc IS NULL OR match_utc <> @matchUtc);",
-                    new { matchUtc, mid = matchId }, tx);
-            }
-
-            // 2) Previous vote for delta calc (treat null as 0)
-            sbyte prev = await conn.ExecuteScalarAsync<sbyte?>(@"
-                SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
-                new { uid = userId, mid = matchId }, tx) ?? (sbyte)0;
-
-            if (prev == newVote)
-            {
-                var unchanged = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-                    SELECT t.upvotes, t.downvotes, t.score, t.updated_at, m.match_utc
-                      FROM match_vote_totals t
-                      JOIN matches m ON m.match_id=t.match_id
-                     WHERE t.match_id=@mid;",
-                    new { mid = matchId }, tx);
-
-                await tx.CommitAsync(ct);
-
-                return Ok(new LikeTotalsDto
-                {
-                    Href = href,
-                    Upvotes = unchanged.Up,
-                    Downvotes = unchanged.Down,
-                    Score = unchanged.Score,
-                    UserVote = prev,
-                    UpdatedAtUtc = DateTime.SpecifyKind(unchanged.Updated, DateTimeKind.Utc),
-                    MatchUtc = unchanged.MUtc
-                });
-            }
-
-            // 3) Upsert user vote
-            await conn.ExecuteAsync(@"
-                INSERT INTO user_match_votes (user_id, match_id, vote)
-                VALUES (@uid, @mid, @vote)
-                ON DUPLICATE KEY UPDATE vote = VALUES(vote);",
-                new { uid = userId, mid = matchId, vote = newVote }, tx);
-
-            // 4) Apply deltas
-            int upDelta = 0, downDelta = 0, scoreDelta = newVote - prev;
-            if (prev == 1) upDelta--;
-            if (prev == -1) downDelta--;
-            if (newVote == 1) upDelta++;
-            if (newVote == -1) downDelta++;
-
-            await conn.ExecuteAsync(@"
-                UPDATE match_vote_totals
-                   SET upvotes   = upvotes   + @u,
-                       downvotes = downvotes + @d,
-                       score     = score     + @s
-                 WHERE match_id  = @mid;",
-                new { u = upDelta, d = downDelta, s = scoreDelta, mid = matchId }, tx);
-
-            var row = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-                SELECT t.upvotes, t.downvotes, t.score, t.updated_at, m.match_utc
-                  FROM match_vote_totals t
-                  JOIN matches m ON m.match_id=t.match_id
-                 WHERE t.match_id=@mid;",
-                new { mid = matchId }, tx);
-
-            await tx.CommitAsync(ct);
-
-            return Ok(new LikeTotalsDto
-            {
-                Href = href,
-                Upvotes = row.Up,
-                Downvotes = row.Down,
-                Score = row.Score,
-                UserVote = newVote,
-                UpdatedAtUtc = DateTime.SpecifyKind(row.Updated, DateTimeKind.Utc),
-                MatchUtc = row.MUtc
-            });
+            // Add new
+            if (_new == 1) { upDelta += 1; scoreDelta += 1; }
+            else if (_new == -1) { downDelta += 1; scoreDelta -= 1; }
         }
-        catch (Exception ex)
+
+        // 3) Upsert user's vote
+        await conn.ExecuteAsync(new CommandDefinition(
+            sqlUpsertVote, new { user_id = userId, match_id = matchId, vote = newVote }, tx, cancellationToken: ct));
+
+        // 4) Ensure totals exist and apply deltas
+        await conn.ExecuteAsync(new CommandDefinition(sqlEnsureTotals, new { match_id = matchId }, tx, cancellationToken: ct));
+        if (upDelta != 0 || downDelta != 0 || scoreDelta != 0)
         {
-            try { await tx.RollbackAsync(ct); } catch { /* ignore */ }
-            _log.LogError(ex, "Vote failed for href {Href}", href);
-            return Problem("Vote failed.");
+            await conn.ExecuteAsync(new CommandDefinition(
+                sqlUpdateTotals, new { match_id = matchId, up_delta = upDelta, down_delta = downDelta, score_delta = scoreDelta }, tx, cancellationToken: ct));
         }
+
+        // 5) Read back
+        var row = await conn.QuerySingleAsync(new CommandDefinition(
+            sqlReadTotals, new { match_id = matchId }, tx, cancellationToken: ct));
+
+        await tx.CommitAsync(ct);
+
+        return Ok(new LikeTotalsDto
+        {
+            Href = row.href,
+            Upvotes = (int)(row.upvotes ?? 0),
+            Downvotes = (int)(row.downvotes ?? 0),
+            Score = (int)(row.score ?? 0),
+            UserVote = newVote,
+            UpdatedAtUtc = DateTime.SpecifyKind((DateTime)row.updated_at, DateTimeKind.Utc),
+            MatchUtc = row.match_utc is null ? null : DateTime.SpecifyKind((DateTime)row.match_utc, DateTimeKind.Utc)
+        });
     }
-    
-    // =========================================
-    // GET /v1/likes?href=...
-    // Returns totals and matchUtc (if known).
-    // =========================================
-    [HttpGet]
-    [AllowAnonymous]
-    public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct)
+
+    /// <summary>
+    /// Get totals (anonymous OK), and the caller's vote if authenticated.
+    /// </summary>
+    [HttpGet("")]
+    public async Task<IActionResult> Get([FromQuery] string href, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(href))
             return BadRequest(new { error = "href is required" });
+        if (href.Length > 600)
+            return BadRequest(new { error = "href too long (max 600 chars)" });
 
-        href = href.Trim();
-        var hrefHash = Sha256(href);
+        var hrefHash = Sha256(href.Trim());
 
-        ulong? userId = null;
-        var uidStr = User.FindFirstValue("uid");
-        if (ulong.TryParse(uidStr, out var uidParsed)) userId = uidParsed;
+        const string sql = @"
+SELECT
+  m.match_id,
+  m.href,
+  m.match_utc,
+  COALESCE(t.upvotes, 0) AS Up,
+  COALESCE(t.downvotes, 0) AS Down,
+  COALESCE(t.score, 0) AS Score,
+  COALESCE(t.updated_at, m.created_at) AS Updated
+FROM matches m
+LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+WHERE m.href_hash = @href_hash;";
 
-        await using var conn = Open();
-        await conn.OpenAsync(ct);
+        using var conn = Open();
+        var rec = await conn.QuerySingleOrDefaultAsync(sql, new { href_hash = hrefHash });
 
-        var rec = await conn.QueryFirstOrDefaultAsync<(ulong Mid, int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-            SELECT m.match_id, COALESCE(t.upvotes,0), COALESCE(t.downvotes,0), COALESCE(t.score,0),
-                   COALESCE(t.updated_at, UTC_TIMESTAMP()), m.match_utc
-              FROM matches m
-              LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
-             WHERE m.href_hash = @hrefHash
-             LIMIT 1;", new { hrefHash });
-
-        if (rec.Mid == 0UL)
+        if (rec is null)
         {
+            // Not seen before
             return Ok(new LikeTotalsDto
             {
                 Href = href,
@@ -292,28 +265,80 @@ public sealed class LikesController : ControllerBase
                 Downvotes = 0,
                 Score = 0,
                 UserVote = null,
-                UpdatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc),
                 MatchUtc = null
             });
         }
 
-        sbyte? userVote = null;
-        if (userId is not null)
+        int? userVote = null;
+        if (User?.Identity?.IsAuthenticated == true)
         {
-            userVote = await conn.ExecuteScalarAsync<sbyte?>(@"
-                SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
-                new { uid = userId.Value, mid = rec.Mid });
+            if (GetRequiredUserId(out var userId) is null)
+            {
+                const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
+                userVote = await conn.ExecuteScalarAsync<int?>(sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
+            }
         }
 
         return Ok(new LikeTotalsDto
         {
-            Href = href,
+            Href = rec.href,
             Upvotes = rec.Up,
             Downvotes = rec.Down,
             Score = rec.Score,
             UserVote = userVote,
             UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
-            MatchUtc = rec.MUtc
+            MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
+        });
+    }
+
+    /// <summary>
+    /// NEW: Return all matches the current user has liked (vote = +1).
+    /// Optional paging via skip/take. Sorted by MatchUtc desc (fallback to user vote updated_at).
+    /// </summary>
+    [HttpGet("my")]
+    [Authorize]
+    public async Task<IActionResult> GetMyLikes([FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        if (take <= 0 || take > 200) take = 50;
+
+        var auth = GetRequiredUserId(out var userId);
+        if (auth is not null) return auth;
+
+        const string sql = @"
+SELECT
+  m.href,
+  m.match_utc,
+  umv.updated_at    AS user_updated_at,
+  COALESCE(t.upvotes, 0)   AS upvotes,
+  COALESCE(t.downvotes, 0) AS downvotes,
+  COALESCE(t.score, 0)     AS score
+FROM user_match_votes umv
+JOIN matches m       ON m.match_id = umv.match_id
+LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
+WHERE umv.user_id = @user_id AND umv.vote = 1
+ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
+LIMIT @take OFFSET @skip;";
+
+        using var conn = Open();
+        var rows = (await conn.QueryAsync(sql, new { user_id = userId, take, skip })).ToList();
+
+        var list = rows.Select(r => new MyLikeDto
+        {
+            Href = r.href,
+            MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc),
+            UserUpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.user_updated_at, DateTimeKind.Utc),
+            Upvotes = r.upvotes,
+            Downvotes = r.downvotes,
+            Score = r.score
+        });
+
+        return Ok(new
+        {
+            skip,
+            take,
+            count = rows.Count,
+            items = list
         });
     }
 }
