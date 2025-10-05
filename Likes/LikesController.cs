@@ -324,6 +324,7 @@ public sealed class LikesController : ControllerBase
         if (href.Length > 600)
             return BadRequest(new { error = "href too long (max 600 chars)" });
     
+        // tolerate '+' ↔ ' ' differences from querystring decoding
         var (h1, h2) = CanonicalHrefCandidates(href);
         var h1Hash = Sha256(h1);
         var h2Hash = h2 is null ? null : Sha256(h2);
@@ -348,6 +349,7 @@ public sealed class LikesController : ControllerBase
     
         if (rec is null)
         {
+            // unseen href → zeros
             return Ok(new LikeTotalsDto
             {
                 Href = h1,
@@ -360,18 +362,17 @@ public sealed class LikesController : ControllerBase
             });
         }
     
-        // NOTE: sbyte? instead of int? to match your DTO (TINYINT in MySQL)
+        // Try to include the caller's vote IF we can resolve user id (no hard failure on anonymous)
         sbyte? userVote = null;
-        if (User?.Identity?.IsAuthenticated == true)
         {
-            if (GetRequiredUserId(out var userId) is null)
+            var (err, userId) = await GetRequiredUserIdAsync(ct);
+            if (err is null) // we successfully resolved a user id
             {
-                const string sqlUserVote =
-                    @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
-    
+                const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
                 userVote = await conn.ExecuteScalarAsync<sbyte?>(
                     sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
             }
+            // else: leave userVote as null (caller is effectively anonymous)
         }
     
         return Ok(new LikeTotalsDto
@@ -380,7 +381,7 @@ public sealed class LikesController : ControllerBase
             Upvotes = rec.Up,
             Downvotes = rec.Down,
             Score = rec.Score,
-            UserVote = userVote, // now types match
+            UserVote = userVote,
             UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
             MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
         });
