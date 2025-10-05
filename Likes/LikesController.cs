@@ -397,13 +397,14 @@ public sealed class LikesController : ControllerBase
         return Ok(new LikeTotalsDto
         {
             Href = rec.href,
-            Upvotes = rec.Up,
-            Downvotes = rec.Down,
-            Score = rec.Score,
+            Upvotes = (int)rec.Up,
+            Downvotes = (int)rec.Down,
+            Score = (int)rec.Score,
             UserVote = userVote,
-            UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
-            MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
+            UpdatedAtUtc = DateTime.SpecifyKind((DateTime)rec.Updated, DateTimeKind.Utc),
+            MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind((DateTime)rec.match_utc, DateTimeKind.Utc)
         });
+
     }
     // AUTHORIZED: GET /v1/likes/my  (requires user id)
     [HttpGet("my")]
