@@ -43,18 +43,21 @@ public sealed class LikesController : ControllerBase
         return ulong.Parse(uid);
     }
     */
-    [NonAction]
-    private ulong GetRequiredUserId()
+    private IActionResult GetRequiredUserId(out ulong userId)
     {
-        if (HttpContext.Items.TryGetValue("user_id", out var v) &&
-            ulong.TryParse(v?.ToString(), out var fromItem))
-            return fromItem;
-    
-        var claim = User.FindFirstValue("uid");
-        if (ulong.TryParse(claim, out var fromClaim))
-            return fromClaim;
-    
-        throw new UnauthorizedAccessException("Missing user id.");
+        userId = 0;
+        var uid = User.FindFirstValue("uid");
+        if (string.IsNullOrWhiteSpace(uid))
+        {
+            _log.LogWarning("Missing uid claim in User principal");
+            return Unauthorized(new { error = "Missing or invalid user ID claim" });
+        }
+        if (!ulong.TryParse(uid, out userId))
+        {
+            _log.LogWarning("Invalid uid claim format: {Uid}", uid);
+            return BadRequest(new { error = "Invalid user ID format" });
+        }
+        return null; // Success
     }
 
     private static byte[] Sha256(string s) => SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
@@ -89,7 +92,10 @@ public sealed class LikesController : ControllerBase
         if (req.Vote is < -1 or > 1)
             return BadRequest(new { error = "vote must be -1, 0, or +1" });
     
-        var userId = GetRequiredUserId(); // Add this
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult != null)
+            return authResult;
+    
         return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc, userId });
     }
     
