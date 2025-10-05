@@ -12,10 +12,16 @@ namespace DataSvc.Likes;
 //[Route("v1/likes")]
 public sealed class LikesController : ControllerBase
 {
-    public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct) {  }
+    public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct) 
+    { 
+        return null;
+    }
 
     // [HttpGet] [AllowAnonymous]
-    public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct) {  }
+    public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct) 
+    { 
+        return null;
+    }
     
     private readonly string? _connString;
     private readonly ILogger<LikesController> _log;
