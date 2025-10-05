@@ -310,6 +310,23 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 */
+// POST /v1/likes  -> forwards to controller method
+app.MapPost("/v1/likes", async (
+    [FromServices] DataSvc.Likes.LikesController controller,
+    [FromBody] DataSvc.Likes.LikesController.VoteRequest req,
+    CancellationToken ct) =>
+{
+    return await controller.Vote(req, ct);
+}).RequireAuthorization();
+
+// GET /v1/likes?href=...
+app.MapGet("/v1/likes", async (
+    [FromServices] DataSvc.Likes.LikesController controller,
+    [FromQuery] string href,
+    CancellationToken ct) =>
+{
+    return await controller.GetTotals(href, ct);
+}).AllowAnonymous();
 
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
 {
