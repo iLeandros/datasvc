@@ -70,8 +70,9 @@ public sealed class LikesController : ControllerBase
     // Idempotent; stores match_utc (if provided) so we can prune later.
     // =========================================
     
-    [HttpPost]
+    [HttpPost("")]
     [Authorize]
+    [Consumes("application/json")]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
     {
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
