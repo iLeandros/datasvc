@@ -81,6 +81,27 @@ public class AuthController : ControllerBase
         public string NewPassword { get; set; } = "";
     }
 
+    [HttpPost("likes-test")]
+    [Authorize]
+    public Task<IActionResult> LikesPostViaAuth(
+        [FromBody] DataSvc.Likes.LikesController.VoteRequest req,
+        [FromServices] DataSvc.Likes.LikesController likes,
+        CancellationToken ct)
+    {
+        return likes.Vote(req, ct);
+    }
+    
+    // GET /v1/auth/likes-test?href=...
+    [HttpGet("likes-test")]
+    [AllowAnonymous]
+    public Task<IActionResult> LikesGetViaAuth(
+        [FromQuery] string href,
+        [FromServices] DataSvc.Likes.LikesController likes,
+        CancellationToken ct)
+    {
+        return likes.GetTotals(href, ct);
+    }
+
     [HttpPost("google")]
     [AllowAnonymous]
     public async Task<IActionResult> Google([FromBody] GoogleLoginRequest req, CancellationToken ct)
