@@ -58,17 +58,18 @@ public sealed class LikesController : ControllerBase
         if (dt.Value.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
         return dt.Value.ToUniversalTime();
     }
-
+    /*
     [HttpPost("")]
     public async Task<IActionResult> Vote(CancellationToken ct)
     {
         return Ok(new { message = "POST received" });
     }
+    */
     // =========================================
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
     // Idempotent; stores match_utc (if provided) so we can prune later.
     // =========================================
-    /*
+    
     [HttpPost]
     [Authorize]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
@@ -193,12 +194,12 @@ public sealed class LikesController : ControllerBase
         }
         catch (Exception ex)
         {
-            try { await tx.RollbackAsync(ct); } catch { /* ignore  }
+            try { await tx.RollbackAsync(ct); } catch { /* ignore */ }
             _log.LogError(ex, "Vote failed for href {Href}", href);
             return Problem("Vote failed.");
         }
     }
-    */
+    
     // =========================================
     // GET /v1/likes?href=...
     // Returns totals and matchUtc (if known).
