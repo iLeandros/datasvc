@@ -33,6 +33,16 @@ public sealed class LikesController : ControllerBase
         public DateTime UpdatedAtUtc { get; set; }
         public DateTime? MatchUtc { get; set; }
     }
+    public sealed class MyLikeDto
+    {
+        public string Href { get; set; } = "";
+        public DateTime? MatchUtc { get; set; }
+        public DateTime UserUpdatedAtUtc { get; set; }
+        public int Upvotes { get; set; }
+        public int Downvotes { get; set; }
+        public int Score { get; set; }
+    }
+
 
     // ===== Helpers =====
     /*
