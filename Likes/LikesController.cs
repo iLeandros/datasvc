@@ -16,7 +16,7 @@ public sealed class LikesController : ControllerBase
 
     // [HttpGet] [AllowAnonymous]
     public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct) {  }
-    /*
+    
     private readonly string? _connString;
     private readonly ILogger<LikesController> _log;
 
@@ -68,7 +68,7 @@ public sealed class LikesController : ControllerBase
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
     // Idempotent; stores match_utc (if provided) so we can prune later.
     // =========================================
-    
+    /*
     [HttpPost]
     [Authorize]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
