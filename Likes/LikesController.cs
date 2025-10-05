@@ -290,7 +290,7 @@ public sealed class LikesController : ControllerBase
       m.match_id,
       m.href,
       m.match_utc,
-      COALESCE(t.upvotes, 0)  AS Up,
+      COALESCE(t.upvotes, 0)   AS Up,
       COALESCE(t.downvotes, 0) AS Down,
       COALESCE(t.score, 0)     AS Score,
       COALESCE(t.updated_at, m.created_at) AS Updated
@@ -303,12 +303,11 @@ public sealed class LikesController : ControllerBase
         await using var conn = Open();
         var rec = await conn.QuerySingleOrDefaultAsync(sql, new { h1 = h1Hash, h2 = h2Hash });
     
-        // Not seen before: return zeros with current time
         if (rec is null)
         {
             return Ok(new LikeTotalsDto
             {
-                Href = h1, // normalized primary
+                Href = h1,
                 Upvotes = 0,
                 Downvotes = 0,
                 Score = 0,
@@ -318,14 +317,16 @@ public sealed class LikesController : ControllerBase
             });
         }
     
-        int? userVote = null;
+        // NOTE: sbyte? instead of int? to match your DTO (TINYINT in MySQL)
+        sbyte? userVote = null;
         if (User?.Identity?.IsAuthenticated == true)
         {
-            // Best-effort: if we can read the user id, include the caller's vote
             if (GetRequiredUserId(out var userId) is null)
             {
-                const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
-                userVote = await conn.ExecuteScalarAsync<int?>(
+                const string sqlUserVote =
+                    @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
+    
+                userVote = await conn.ExecuteScalarAsync<sbyte?>(
                     sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
             }
         }
@@ -336,7 +337,7 @@ public sealed class LikesController : ControllerBase
             Upvotes = rec.Up,
             Downvotes = rec.Down,
             Score = rec.Score,
-            UserVote = userVote,
+            UserVote = userVote, // now types match
             UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
             MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
         });
