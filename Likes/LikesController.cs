@@ -310,13 +310,10 @@ public sealed class LikesController : ControllerBase
             return Problem("Vote failed.");
         }
     }
-    
-    // =========================================
-    // GET /v1/likes?href=...
-    // Returns totals and matchUtc (if known).
-    // =========================================
-    [HttpGet]
-    [Authorize]
+
+    // PUBLIC: GET /v1/likes  (anonymous OK; includes UserVote only if user id can be resolved)
+    [HttpGet("")]
+    [AllowAnonymous]
     public async Task<IActionResult> Get([FromQuery] string href, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(href))
@@ -324,7 +321,7 @@ public sealed class LikesController : ControllerBase
         if (href.Length > 600)
             return BadRequest(new { error = "href too long (max 600 chars)" });
     
-        // tolerate '+' ↔ ' ' differences from querystring decoding
+        // tolerate '+' ↔ ' ' querystring decoding
         var (h1, h2) = CanonicalHrefCandidates(href);
         var h1Hash = Sha256(h1);
         var h2Hash = h2 is null ? null : Sha256(h2);
@@ -349,7 +346,6 @@ public sealed class LikesController : ControllerBase
     
         if (rec is null)
         {
-            // unseen href → zeros
             return Ok(new LikeTotalsDto
             {
                 Href = h1,
@@ -362,17 +358,14 @@ public sealed class LikesController : ControllerBase
             });
         }
     
-        // Try to include the caller's vote IF we can resolve user id (no hard failure on anonymous)
+        // Try to include the caller's vote if we can resolve a user id (no hard auth requirement here)
         sbyte? userVote = null;
+        var (err, userId) = await GetRequiredUserIdAsync(ct);
+        if (err is null && userId != 0UL)
         {
-            var (err, userId) = await GetRequiredUserIdAsync(ct);
-            if (err is null) // we successfully resolved a user id
-            {
-                const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
-                userVote = await conn.ExecuteScalarAsync<sbyte?>(
-                    sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
-            }
-            // else: leave userVote as null (caller is effectively anonymous)
+            const string sqlUserVote = @"SELECT vote FROM user_match_votes WHERE user_id=@user_id AND match_id=@match_id;";
+            userVote = await conn.ExecuteScalarAsync<sbyte?>(
+                sqlUserVote, new { user_id = userId, match_id = (ulong)rec.match_id });
         }
     
         return Ok(new LikeTotalsDto
@@ -384,6 +377,51 @@ public sealed class LikesController : ControllerBase
             UserVote = userVote,
             UpdatedAtUtc = DateTime.SpecifyKind(rec.Updated, DateTimeKind.Utc),
             MatchUtc = rec.match_utc is null ? null : DateTime.SpecifyKind(rec.match_utc, DateTimeKind.Utc)
+        });
+    }
+    [HttpGet("my")]
+    [Authorize]
+    public async Task<IActionResult> GetMyLikes([FromQuery] int skip = 0, [FromQuery] int take = 50, CancellationToken ct = default)
+    {
+        if (take <= 0 || take > 200) take = 50;
+
+        var auth = GetRequiredUserId(out var userId);
+        if (auth is not null) return auth;
+
+        const string sql = @"
+            SELECT
+              m.href,
+              m.match_utc,
+              umv.updated_at    AS user_updated_at,
+              COALESCE(t.upvotes, 0)   AS upvotes,
+              COALESCE(t.downvotes, 0) AS downvotes,
+              COALESCE(t.score, 0)     AS score
+            FROM user_match_votes umv
+            JOIN matches m       ON m.match_id = umv.match_id
+            LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
+            WHERE umv.user_id = @user_id AND umv.vote = 1
+            ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
+            LIMIT @take OFFSET @skip;";
+
+        using var conn = Open();
+        var rows = (await conn.QueryAsync(sql, new { user_id = userId, take, skip })).ToList();
+
+        var list = rows.Select(r => new MyLikeDto
+        {
+            Href = r.href,
+            MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc),
+            UserUpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.user_updated_at, DateTimeKind.Utc),
+            Upvotes = r.upvotes,
+            Downvotes = r.downvotes,
+            Score = r.score
+        });
+
+        return Ok(new
+        {
+            skip,
+            take,
+            count = rows.Count,
+            items = list
         });
     }
 }
