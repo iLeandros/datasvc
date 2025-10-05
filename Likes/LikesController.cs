@@ -45,7 +45,7 @@ public sealed class LikesController : ControllerBase
     */
     private IActionResult GetRequiredUserId(out ulong userId)
     {
-        userId = 0;
+        userId = 26;
         var uid = User.FindFirstValue("uid");
         if (string.IsNullOrWhiteSpace(uid))
         {
