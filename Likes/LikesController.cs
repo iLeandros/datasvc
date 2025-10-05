@@ -58,13 +58,14 @@ public sealed class LikesController : ControllerBase
         if (dt.Value.Kind == DateTimeKind.Unspecified) return DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc);
         return dt.Value.ToUniversalTime();
     }
-    /*
+    
     [HttpPost("")]
+    [Authorize]
     public async Task<IActionResult> Vote(CancellationToken ct)
     {
         return Ok(new { message = "POST received" });
     }
-    */
+    /*
     [HttpPost("")]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
     {
@@ -76,6 +77,7 @@ public sealed class LikesController : ControllerBase
         var userId = GetRequiredUserId(); // Add this
         return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc, userId });
     }
+    */
     // =========================================
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
     // Idempotent; stores match_utc (if provided) so we can prune later.
