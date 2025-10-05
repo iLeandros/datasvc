@@ -407,7 +407,7 @@ public sealed class LikesController : ControllerBase
         await using var conn = Open();
         var rows = (await conn.QueryAsync(sql, new { user_id = userId, skip, take })).ToList();
     
-        var items = rows.Select(r => new MyLikeDto
+        var items = rows.Select(r => new LikeTotalsDto
         {
             Href = r.href,
             MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc),
