@@ -316,7 +316,7 @@ app.MapPost("/v1/likes", async (
     [FromBody] LikesController.VoteRequest req,
     CancellationToken ct) =>
 {
-    return await controller.Vote(req, ct);
+    return null;
 }).RequireAuthorization();
 
 // GET /v1/likes?href=...
