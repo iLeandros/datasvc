@@ -209,26 +209,34 @@ public sealed class LikesController : ControllerBase
         await using var conn = Open();
         await conn.OpenAsync(ct);
         await using var tx = await conn.BeginTransactionAsync(ct);
+        // Build both candidates exactly like Get()
+        var (h1, h2) = CanonicalHrefCandidates(href);
+        var h1Hash = Sha256(h1);
+        var h2Hash = h2 is null ? null : Sha256(h2);
 
         try
         {
-            // 1) Ensure match row exists (and store match_utc if provided)
+            // Try to find an existing match by either hash
             ulong matchId = await conn.ExecuteScalarAsync<ulong?>(@"
-                SELECT match_id FROM matches WHERE href_hash=@hrefHash LIMIT 1;",
-                new { hrefHash }, tx) ?? 0UL;
-
+                SELECT match_id
+                FROM matches
+                WHERE href_hash = @h1Hash OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
+                LIMIT 1;",
+                new { h1Hash, h2Hash }, tx) ?? 0UL;
+            
             if (matchId == 0UL)
             {
+                // Choose a canonical to store; easiest is h1 + h1Hash
                 await conn.ExecuteAsync(@"
                     INSERT INTO matches (href_hash, href, match_utc)
-                    VALUES (@hrefHash, @href, @matchUtc)
+                    VALUES (@h1Hash, @h1, @matchUtc)
                     ON DUPLICATE KEY UPDATE href=VALUES(href), match_utc=COALESCE(VALUES(match_utc), match_utc);",
-                    new { hrefHash, href, matchUtc }, tx);
-
+                    new { h1Hash, h1, matchUtc }, tx);
+            
                 matchId = await conn.ExecuteScalarAsync<ulong>(@"
-                    SELECT match_id FROM matches WHERE href_hash=@hrefHash LIMIT 1;",
-                    new { hrefHash }, tx);
-
+                    SELECT match_id FROM matches WHERE href_hash=@h1Hash LIMIT 1;",
+                    new { h1Hash }, tx);
+            
                 await conn.ExecuteAsync("INSERT IGNORE INTO match_vote_totals (match_id) VALUES (@mid);",
                     new { mid = matchId }, tx);
             }
@@ -243,11 +251,18 @@ public sealed class LikesController : ControllerBase
                     new { matchUtc, mid = matchId }, tx);
             }
 
+            // replace the existing prev line with an int read and clamp:
+            int prevRaw = await conn.ExecuteScalarAsync<int?>(@"
+                SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
+                new { uid = userId, mid = matchId }, tx) ?? 0;
+            
+            sbyte prev = (sbyte)Math.Clamp(prevRaw, -1, 1);
+            /*
             // 2) Previous vote for delta calc (treat null as 0)
             sbyte prev = await conn.ExecuteScalarAsync<sbyte?>(@"
                 SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
                 new { uid = userId, mid = matchId }, tx) ?? (sbyte)0;
-
+            */
             if (prev == newVote)
             {
                 var unchanged = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
