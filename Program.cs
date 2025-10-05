@@ -131,6 +131,11 @@ app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
 
+app.Use(async (ctx, next) => {
+    ctx.Response.Headers["X-Build"] = "likes-post-only";
+    await next();
+});
+
 app.Use(async (ctx, next) =>
 {
     await next();
