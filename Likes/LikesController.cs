@@ -133,7 +133,10 @@ public sealed class LikesController : ControllerBase
         var href = req.Href.Trim();
         var hrefHash = Sha256(href);
         var newVote = req.Vote;
-        var userId = GetRequiredUserId();
+        //var userId = GetRequiredUserId();
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult != null)
+            return authResult;
         var matchUtc = ForceUtc(req.MatchUtc);
 
         await using var conn = Open();
