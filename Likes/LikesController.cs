@@ -63,6 +63,7 @@ public sealed class LikesController : ControllerBase
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
     // Idempotent; stores match_utc (if provided) so we can prune later.
     // =========================================
+    /*
     [HttpPost]
     [Authorize]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
@@ -192,11 +193,12 @@ public sealed class LikesController : ControllerBase
             return Problem("Vote failed.");
         }
     }
-
+    */
     // =========================================
     // GET /v1/likes?href=...
     // Returns totals and matchUtc (if known).
     // =========================================
+    /*
     [HttpGet]
     [AllowAnonymous]
     public async Task<IActionResult> GetTotals([FromQuery] string href, CancellationToken ct)
@@ -255,4 +257,5 @@ public sealed class LikesController : ControllerBase
             MatchUtc = rec.MUtc
         });
     }
+    */
 }
