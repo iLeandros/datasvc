@@ -44,6 +44,49 @@ public sealed class LikesController : ControllerBase
     }
     */
     [NonAction]
+    private async Task<(IActionResult? error, ulong userId)> GetRequiredUserIdAsync(CancellationToken ct)
+    {
+        // 1) HttpContext.Items (preferred when auth middleware sets it)
+        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
+            raw is not null &&
+            ulong.TryParse(raw.ToString(), out var uidFromItem))
+        {
+            return (null, uidFromItem);
+        }
+    
+        // 2) Common claims
+        string?[] candidates =
+        {
+            User.FindFirstValue("uid"),
+            User.FindFirstValue(ClaimTypes.NameIdentifier),
+            User.FindFirstValue("sub"),
+        };
+        foreach (var s in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out var uidFromClaim))
+                return (null, uidFromClaim);
+        }
+    
+        // 3) Fallback: Bearer token → debug_tokens lookup
+        if (Request.Headers.TryGetValue("Authorization", out var authHeader) &&
+            authHeader.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            var token = authHeader.ToString().Substring("Bearer ".Length).Trim();
+            if (!string.IsNullOrEmpty(token))
+            {
+                const string sql = "SELECT user_id FROM debug_tokens WHERE token = @token LIMIT 1;";
+                await using var conn = Open();
+                var uid = await conn.ExecuteScalarAsync<ulong?>(new CommandDefinition(sql, new { token }, cancellationToken: ct));
+                if (uid.HasValue)
+                    return (null, uid.Value);
+            }
+        }
+    
+        _log.LogWarning("Missing user id: no Items, no claim, and token not found in debug_tokens.");
+        return (Unauthorized(new { error = "Missing or invalid user identity" }), 0UL);
+    }
+
+    [NonAction]
     private IActionResult? GetRequiredUserId(out ulong userId)
     {
         userId = 0;
