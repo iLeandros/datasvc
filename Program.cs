@@ -312,8 +312,8 @@ app.MapPost("/data/likes/recompute", async (
 */
 // POST /v1/likes  -> forwards to controller method
 app.MapPost("/v1/likes", async (
-    [FromServices] DataSvc.Likes.LikesController controller,
-    [FromBody] DataSvc.Likes.LikesController.VoteRequest req,
+    [FromServices] LikesController controller,
+    [FromBody] LikesController.VoteRequest req,
     CancellationToken ct) =>
 {
     return await controller.Vote(req, ct);
@@ -321,7 +321,7 @@ app.MapPost("/v1/likes", async (
 
 // GET /v1/likes?href=...
 app.MapGet("/v1/likes", async (
-    [FromServices] DataSvc.Likes.LikesController controller,
+    [FromServices] LikesController controller,
     [FromQuery] string href,
     CancellationToken ct) =>
 {
