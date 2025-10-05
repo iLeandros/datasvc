@@ -68,17 +68,13 @@ public sealed class LikesController : ControllerBase
     [HttpPost("")]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
     {
-        if (!ModelState.IsValid)
-        {
-            _log.LogWarning("Model state invalid: {Errors}", string.Join("; ", ModelState.Values.SelectMany(v => v.Errors).Select(e => e.ErrorMessage)));
-            return BadRequest(ModelState);
-        }
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
             return BadRequest(new { error = "href is required" });
         if (req.Vote is < -1 or > 1)
             return BadRequest(new { error = "vote must be -1, 0, or +1" });
     
-        return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc });
+        var userId = GetRequiredUserId(); // Add this
+        return Ok(new { message = "POST received", href = req.Href, vote = req.Vote, matchUtc = req.MatchUtc, userId });
     }
     // =========================================
     // POST /v1/likes  { href, vote: -1|0|+1, matchUtc?: ISO-UTC }
