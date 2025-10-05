@@ -368,7 +368,7 @@ public sealed class LikesController : ControllerBase
             LIMIT 1;";
     
         await using var conn = Open();
-        var rec = await conn.QuerySingleOrDefaultAsync(sql, new { h1 = h1Hash, h2 = h2Hash });
+        var rec = await conn.QuerySingleOrDefaultAsync(sql, new { h1 = h1Hash, h2 = h2Hash, h3 = h3Hash });
     
         if (rec is null)
         {
