@@ -311,6 +311,14 @@ app.MapPost("/data/likes/recompute", async (
 });
 */
 
+app.MapPost("/v1/likes/vote", async (
+    [FromServices] DataSvc.Likes.LikesController controller,
+    [FromBody] DataSvc.Likes.LikesController.VoteRequest req,
+    CancellationToken ct) =>
+{
+    return await controller.Vote(req, ct);
+}).RequireAuthorization();
+
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
 {
     Console.WriteLine("HIT __likes_probe, auth=" + (ctx.User?.Identity?.IsAuthenticated ?? false));
