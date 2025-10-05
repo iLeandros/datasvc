@@ -316,7 +316,7 @@ public sealed class LikesController : ControllerBase
     // Returns totals and matchUtc (if known).
     // =========================================
     [HttpGet]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<IActionResult> Get([FromQuery] string href, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(href))
