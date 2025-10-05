@@ -65,7 +65,7 @@ public sealed class LikesController : ControllerBase
     // =========================================
     
     [HttpPost]
-    //[Authorize]
+    [Authorize]
     public async Task<IActionResult> Vote([FromBody] VoteRequest req, CancellationToken ct)
     {
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
