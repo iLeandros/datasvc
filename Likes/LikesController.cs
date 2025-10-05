@@ -188,7 +188,7 @@ public sealed class LikesController : ControllerBase
         }
         catch (Exception ex)
         {
-            try { await tx.RollbackAsync(ct); } catch { /* ignore */ }
+            try { await tx.RollbackAsync(ct); } catch { /* ignore  }
             _log.LogError(ex, "Vote failed for href {Href}", href);
             return Problem("Vote failed.");
         }
