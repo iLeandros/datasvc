@@ -104,13 +104,15 @@ public static class LiveScoresParser
             // home
             var homeNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'name')]");
             var homeGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'goals')]");
-            var homeName  = NormalizeTeam(Clean(homeNameNode));
+            //var homeName  = NormalizeTeam(Clean(homeNameNode));
+            var homeName  = Clean(homeNameNode);
             var homeGoals = Clean(homeGoalsNode);
 
             // away
             var awayNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'name')]");
             var awayGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'goals')]");
-            var awayName  = NormalizeTeam(Clean(awayNameNode));
+            //var awayName  = NormalizeTeam(Clean(awayNameNode));
+            var awayName  = Clean(awayNameNode);
             var awayGoals = Clean(awayGoalsNode);
 
             list.Add(new LiveScoreItem(
@@ -129,13 +131,14 @@ public static class LiveScoresParser
     private static string Clean(HtmlNode? node)
         => HtmlEntity.DeEntitize(node?.InnerText ?? string.Empty).Trim();
 
-    private static string NormalizeTeam(string? name)
+    private static string NormalizeTeam2(string? name)
     {
         var n = (name ?? string.Empty).Trim();
         try
         {
             // Use your existing helper for display normalization.
-            return DataSvc.ModelHelperCalls.renameTeam.renameTeamNameToFitDisplayLabel(n);
+            return n;
+            //return DataSvc.ModelHelperCalls.renameTeam.renameTeamNameToFitDisplayLabel(n);
         }
         catch
         {
