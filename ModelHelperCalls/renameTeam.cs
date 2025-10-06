@@ -2,7 +2,7 @@ namespace DataSvc.ModelHelperCalls;
 
 public class renameTeam
 {
-    public static string renameTeamNameToFitDisplayLabel(string team)
+    public static string renameTeamNameToFitDisplayLabel2(string team)
     {
         if (team.Length > 13)
         {
