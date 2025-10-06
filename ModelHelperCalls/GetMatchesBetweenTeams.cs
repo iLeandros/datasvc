@@ -66,14 +66,14 @@ public static class GetMatchesBetweenTeamsHelper
                 var guestHT = htGoals != null && htGoals.Count > 1 ? ToInt(Clean(htGoals[1])) : 0;
 
                 // optional display shortening (your helper)
-                var hostDisplay = renameTeam.renameTeamNameToFitDisplayLabel(hostName);
-                var guestDisplay = renameTeam.renameTeamNameToFitDisplayLabel(guestName);
+                //var hostDisplay = renameTeam.renameTeamNameToFitDisplayLabel(hostName);
+                //var guestDisplay = renameTeam.renameTeamNameToFitDisplayLabel(guestName);
 
                 items.Add(
                     new DetailsTableDataItemMatchesBetween(
                         new Match(
-                            new hostTeam { name = hostDisplay, goals = hostGoals },
-                            new guestTeam { name = guestDisplay, goals = guestGoals }),
+                            new hostTeam { name = hostName, goals = hostGoals },
+                            new guestTeam { name = guestName, goals = guestGoals }),
                         new Details(new info { hostHTGoals = hostHT, guestHTGoals = guestHT })
                     )
                 );
