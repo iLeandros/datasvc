@@ -340,6 +340,163 @@ public sealed class LikesController : ControllerBase
             return Problem("Vote failed.");
         }
     }
+    // PUBLIC: GET /v1/likes/matches
+    // Lists matches + aggregated votes, optionally including the caller's vote.
+    // Query:
+    //   skip (default 0), take (default 50, max 200)
+    //   withVotesOnly (default true) → only rows where there is at least 1 up/down vote
+    //   sort = "recent" | "top" (default "recent")
+    [HttpGet("matches")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetAllMatches(
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 50,
+        [FromQuery] bool withVotesOnly = true,
+        [FromQuery] string? sort = "recent",
+        CancellationToken ct = default)
+    {
+        if (take <= 0 || take > 200) take = 50;
+        if (skip < 0) skip = 0;
+    
+        // Try to identify user (anonymous OK). We'll only use the id if we have it.
+        ulong? userIdForJoin = null;
+        var (err, uid) = await GetRequiredUserIdAsync(ct); // same helper you use in GET /v1/likes
+        if (err is null && uid != 0UL)
+            userIdForJoin = uid; // include caller's vote per match if available  :contentReference[oaicite:1]{index=1}
+    
+        // Safe ORDER BY choices
+        var orderBy = (sort ?? "recent").Trim().ToLowerInvariant() switch
+        {
+            "top"    => "COALESCE(t.score,0) DESC, COALESCE(m.match_utc, COALESCE(t.updated_at, m.created_at)) DESC",
+            _        => "COALESCE(m.match_utc, COALESCE(t.updated_at, m.created_at)) DESC"
+        };
+    
+        var where = withVotesOnly
+            ? "WHERE (COALESCE(t.upvotes,0) + COALESCE(t.downvotes,0)) > 0"
+            : "";
+    
+        var sql = $@"
+                    SELECT
+                      m.href,
+                      m.match_utc,
+                      COALESCE(t.upvotes,   0)    AS upvotes,
+                      COALESCE(t.downvotes, 0)    AS downvotes,
+                      COALESCE(t.score,     0)    AS score,
+                      COALESCE(t.updated_at, m.created_at) AS updated_at,
+                      umv.vote AS user_vote
+                    FROM matches m
+                    LEFT JOIN match_vote_totals t
+                           ON t.match_id = m.match_id
+                    LEFT JOIN user_match_votes umv
+                           ON umv.match_id = m.match_id
+                          AND umv.user_id  = @user_id
+                    {where}
+                    ORDER BY {orderBy}
+                    LIMIT @skip, @take;";
+    
+        await using var conn = Open(); // your existing helper  :contentReference[oaicite:2]{index=2}
+        var rows = (await conn.QueryAsync(sql, new
+        {
+            user_id = userIdForJoin, // null is fine → no row in LEFT JOIN
+            skip,
+            take
+        })).ToList();
+    
+        var items = rows.Select(r => new LikeTotalsDto
+        {
+            Href = r.href,
+            Upvotes = (int)r.upvotes,
+            Downvotes = (int)r.downvotes,
+            Score = (int)r.score,
+            UserVote = r.user_vote is null ? (sbyte?)null : (sbyte)r.user_vote,
+            UpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.updated_at, DateTimeKind.Utc),
+            MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc)
+        });
+    
+        return Ok(new { skip, take, count = rows.Count, items });
+    }
+
+    // PUBLIC: GET /v1/likes/matches/on/{dateUtc}
+    // Example: GET /v1/likes/matches/on/2025-10-07?skip=0&take=200&sort=time
+    // Notes: {dateUtc} must be YYYY-MM-DD (interpreted as a UTC calendar day)
+    [HttpGet("matches/on/{dateUtc}")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetMatchesOnDate(
+        [FromRoute] string dateUtc,
+        [FromQuery] int skip = 0,
+        [FromQuery] int take = 200,
+        [FromQuery] string? sort = "time",
+        CancellationToken ct = default)
+    {
+        if (take <= 0 || take > 500) take = 200;
+        if (skip < 0) skip = 0;
+    
+        // Parse YYYY-MM-DD as a UTC day
+        if (!System.Text.RegularExpressions.Regex.IsMatch(dateUtc ?? "", @"^\d{4}-\d{2}-\d{2}$"))
+            return BadRequest(new { error = "dateUtc must be YYYY-MM-DD" });
+    
+        var startUtc = DateTime.SpecifyKind(
+            DateTime.ParseExact(dateUtc, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture),
+            DateTimeKind.Utc);
+        var endUtc = startUtc.AddDays(1);
+    
+        // Try to include the caller's vote if we can resolve a user id (anonymous OK)
+        ulong? userIdForJoin = null;
+        var (err, uid) = await GetRequiredUserIdAsync(ct); // same helper as your GET /v1/likes
+        if (err is null && uid != 0UL)
+            userIdForJoin = uid;                                                       // include UserVote when available
+    
+        // Sorting options: by kickoff time or by score
+        var orderBy = (sort ?? "time").Trim().ToLowerInvariant() switch
+        {
+            "top"  => "COALESCE(t.score,0) DESC, COALESCE(m.match_utc, COALESCE(t.updated_at, m.created_at)) DESC",
+            _      => "COALESCE(m.match_utc, COALESCE(t.updated_at, m.created_at)) ASC"
+        };
+    
+        var sql = $@"
+                    SELECT
+                      m.href,
+                      m.match_utc,
+                      COALESCE(t.upvotes,   0) AS upvotes,
+                      COALESCE(t.downvotes, 0) AS downvotes,
+                      COALESCE(t.score,     0) AS score,
+                      COALESCE(t.updated_at, m.created_at) AS updated_at,
+                      umv.vote AS user_vote
+                    FROM matches m
+                    LEFT JOIN match_vote_totals t
+                           ON t.match_id = m.match_id
+                    LEFT JOIN user_match_votes umv
+                           ON umv.match_id = m.match_id
+                          AND umv.user_id  = @user_id
+                    WHERE m.match_utc >= @startUtc AND m.match_utc < @endUtc
+                    ORDER BY {orderBy}
+                    LIMIT @skip, @take;";
+    
+        await using var conn = Open();
+        var rows = (await conn.QueryAsync(sql, new
+        {
+            user_id = userIdForJoin, // null → no row from LEFT JOIN (fine)
+            startUtc,
+            endUtc,
+            skip,
+            take
+        })).ToList();
+    
+        var items = rows.Select(r => new LikeTotalsDto
+        {
+            Href = r.href,
+            Upvotes = (int)r.upvotes,
+            Downvotes = (int)r.downvotes,
+            Score = (int)r.score,
+            UserVote = r.user_vote is null ? (sbyte?)null : (sbyte)r.user_vote,
+            UpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.updated_at, DateTimeKind.Utc),
+            MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc)
+        });
+    
+        return Ok(new { dateUtc, skip, take, count = rows.Count, items });
+    }
+
+    
     // PUBLIC: GET /v1/likes  (anonymous OK; includes UserVote only if user id can be resolved)
     [HttpGet("")]
     [AllowAnonymous]
