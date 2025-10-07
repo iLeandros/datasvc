@@ -310,13 +310,35 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 */
+// GET /v1/time/now  — returns server UTC & server-local time
+app.MapGet("/v1/time/now", () =>
+{
+    var nowUtc = DateTimeOffset.UtcNow;
+
+    // Reuse your server's configured/local TZ (you already honor env TOP_OF_HOUR_TZ elsewhere)
+    var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
+    var tz   = !string.IsNullOrWhiteSpace(tzId)
+        ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
+        : TimeZoneInfo.Local;
+
+    var local = TimeZoneInfo.ConvertTime(nowUtc, tz);
+
+    // Lowercase keys to match your other minimal endpoints
+    return Results.Ok(new
+    {
+        utc      = nowUtc,                  // ISO-8601 with offset
+        local    = local,                  // ISO-8601 with offset in server TZ
+        tz       = tz.Id,                  // e.g., "Europe/Brussels"
+        epochSec = nowUtc.ToUnixTimeSeconds()
+    });
+});
+
 
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
 {
     Console.WriteLine("HIT __likes_probe, auth=" + (ctx.User?.Identity?.IsAuthenticated ?? false));
     return Results.Ok(new { ok = true, auth = ctx.User?.Identity?.IsAuthenticated ?? false });
 });
-
 
 // POST /data/likes/recompute?hour=13
 // Re-applies user vote totals to all snapshots for the chosen hour (UTC).
