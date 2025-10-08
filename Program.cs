@@ -1301,7 +1301,7 @@ app.MapGet("/data/livescores/download", (HttpContext ctx) =>
 // Keep only the last N days (default 4). Also supports dryRun and explicit "keep" list for debugging.
 app.MapPost("/data/livescores/cleanup",
     async ([FromServices] LiveScoresStore store,
-           [FromQuery] int keepDays = 4,
+           [FromQuery] int keepDays = 7,
            [FromQuery] bool dryRun = false) =>
 {
     var dates = store.Dates().ToList();
