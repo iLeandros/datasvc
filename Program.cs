@@ -1234,18 +1234,41 @@ app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
 
 app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
 {
-    // default: today in server's configured TZ (job/store use same TZ basis)
-    var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-    var tz = !string.IsNullOrWhiteSpace(tzId)
-        ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-        : TimeZoneInfo.Local;
+    var center = ScraperConfig.TodayLocal();
+    var min = center.AddDays(-3);
+    var max = center.AddDays(+3);
 
-    var localTodayIso = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, tz).Date.ToString("yyyy-MM-dd");
-    var key = string.IsNullOrWhiteSpace(date) ? localTodayIso : date;
+    DateOnly d;
+    if (string.IsNullOrWhiteSpace(date))
+    {
+        d = center;
+    }
+    else if (!DateOnly.TryParse(date, out d))
+    {
+        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
+    }
 
-    var d = store.Get(key);
-    return d is null ? Results.NotFound(new { message = "No livescores for date", date = key }) : Results.Json(d);
+    if (d < min || d > max)
+    {
+        return Results.BadRequest(new
+        {
+            message = "date outside allowed window (today±3)",
+            date = d.ToString("yyyy-MM-dd"),
+            allowed = new
+            {
+                from = min.ToString("yyyy-MM-dd"),
+                to   = max.ToString("yyyy-MM-dd")
+            }
+        });
+    }
+
+    var key = d.ToString("yyyy-MM-dd");
+    var day = store.Get(key);
+    return day is null
+        ? Results.NotFound(new { message = "No livescores for date (refresh first)", date = key })
+        : Results.Json(day);
 });
+
 
 app.MapPost("/data/livescores/refresh",
     async ([FromServices] LiveScoresScraperService svc) =>
@@ -2251,46 +2274,46 @@ public sealed class LiveScoresScraperService
     }
 
     public async Task<(int Refreshed, DateTimeOffset LastUpdatedUtc)> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        int refreshed = 0;
-
-        var now = DateTimeOffset.UtcNow;
-        var localToday = TimeZoneInfo.ConvertTime(now, _tz).Date;
-        var days = Enumerable.Range(0, 4).Select(off => localToday.AddDays(-off)).ToList();
-
-        foreach (var d in days)
-        {
-            ct.ThrowIfCancellationRequested();
-            var url = BuildUrl(d);
-
-            // Reuse your hardened HTTP fetcher (adds UA, gzip/brotli, cookies, referer, etc.) :contentReference[oaicite:7]{index=7}
-            string html;
-            try
-            {
-                html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
-            }
-            catch
-            {
-                // Fallback: today without query (some sites treat "today" differently)
-                if (d == localToday)
-                    html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/livescore");
-                else
-                    throw;
-            }
-
-            var dateIso = d.ToString("yyyy-MM-dd");
-            var day = LiveScoresParser.ParseDay(html, dateIso);
-            _store.Set(day);
-            refreshed++;
-        }
-
-        // Enforce rolling window (keep exactly 4 dates)
-        var keep = days.Select(d => d.ToString("yyyy-MM-dd")).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        _store.ShrinkTo(keep);
-
-        await LiveScoresFiles.SaveAsync(_store);
-        return (refreshed, DateTimeOffset.UtcNow);
-    }
+	{
+	    int refreshed = 0;
+	
+	    var center = ScraperConfig.TodayLocal();
+	    var dates = ScraperConfig.DateWindow(center, back: 3, ahead: 3).ToList();
+	
+	    foreach (var dateOnly in dates)
+	    {
+	        ct.ThrowIfCancellationRequested();
+	
+	        var localDay = new DateTime(dateOnly.Year, dateOnly.Month, dateOnly.Day);
+	        var url = BuildUrl(localDay);
+	
+	        string html;
+	        try
+	        {
+	            html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
+	        }
+	        catch
+	        {
+	            // Fallback for "today" without query, same as before
+	            if (dateOnly == center)
+	                html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/livescore");
+	            else
+	                throw;
+	        }
+	
+	        var dateIso = dateOnly.ToString("yyyy-MM-dd");
+	        var day = LiveScoresParser.ParseDay(html, dateIso);
+	        _store.Set(day);
+	        refreshed++;
+	    }
+	
+	    // Enforce rolling window (keep exactly today±3)
+	    var keep = dates.Select(d => d.ToString("yyyy-MM-dd")).ToHashSet(StringComparer.OrdinalIgnoreCase);
+	    _store.ShrinkTo(keep);
+	
+	    await LiveScoresFiles.SaveAsync(_store);
+	    return (refreshed, DateTimeOffset.UtcNow);
+	}
 }
 
 // ---------- LiveScores: background job ----------
