@@ -2270,7 +2270,7 @@ public sealed class LiveScoresScraperService
     {
         // Statarea typically supports date query; we try param first, fallback to plain page.
         var iso = localDay.ToString("yyyy-MM-dd");
-        return $"https://www.statarea.com/livescore?date={iso}";
+        return $"https://www.statarea.com/livescore/date/{iso}/";
     }
 
     public async Task<(int Refreshed, DateTimeOffset LastUpdatedUtc)> FetchAndStoreAsync(CancellationToken ct = default)
