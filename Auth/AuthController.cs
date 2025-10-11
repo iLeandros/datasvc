@@ -36,7 +36,14 @@ public class AuthController : ControllerBase
     public sealed class ResetPasswordRequest  { public string Token { get; set; } = ""; public string NewPassword { get; set; } = ""; }
     public sealed class DeleteAccountRequest  { public string? Password { get; set; } } // optional for social-only users
     
-    public sealed class RegisterRequest { public string Email { get; set; } = ""; public string Password { get; set; } = ""; }
+    public sealed class RegisterRequest
+    {
+        public string? Email { get; set; }
+        public string? Password { get; set; }
+        public string? Username { get; set; }   // ← add this
+        public DateTime? Birthdate { get; set; } // (optional) if you want to store it now
+    }
+
     public sealed class LoginRequest    { public string Email { get; set; } = ""; public string Password { get; set; } = ""; public string? TotpCode { get; set; } }
     public sealed class LoginResponse   { public string? Token { get; set; } public DateTimeOffset? ExpiresAt { get; set; } public UserDto? User { get; set; } public bool MfaRequired { get; set; } public string? Ticket { get; set; } }
     public sealed class UserDto
@@ -680,54 +687,69 @@ public class AuthController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
-
+    
         var email = (req.Email ?? "").Trim();
         var password = req.Password ?? "";
-
+        var username = (req.Username ?? "").Trim();
+    
+        // basic validations
         if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
             return BadRequest(new { error = "Invalid email." });
         if (password.Length < 8)
             return BadRequest(new { error = "Password must be at least 8 characters." });
-
+        if (username.Length is < 3 or > 30)
+            return BadRequest(new { error = "Username must be 3–30 characters." });
+    
+        var usernameNorm = username.ToLowerInvariant().Trim();
+    
         try
         {
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
-
-            var exists = await conn.ExecuteScalarAsync<int>(@"
+    
+            // 1) email conflict
+            var emailExists = await conn.ExecuteScalarAsync<int>(@"
                 SELECT 1
                 FROM user_auth
                 WHERE email = @em OR email_norm = LOWER(TRIM(@em))
                 LIMIT 1;", new { em = email }, tx);
-
-            if (exists == 1)
+            if (emailExists == 1)
                 return Conflict(new { error = "Email already registered." });
-
+    
+            // 2) username conflict (normalized)
+            var unameExists = await conn.ExecuteScalarAsync<int>(@"
+                SELECT 1
+                FROM user_profile
+                WHERE display_name_norm = @un
+                LIMIT 1;", new { un = usernameNorm }, tx);
+            if (unameExists == 1)
+                return Conflict(new { error = "Username already taken." });
+    
+            // create user
             await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx);
             var userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx);
-
+    
+            // auth row
             var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
             var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
-
             await conn.ExecuteAsync(@"
-                INSERT INTO user_auth (user_id, email, password_hash, email_verified_at, last_login_at)
-                VALUES (@uid, @email, @hash, NULL, NULL);",
-                new { uid = userId, email, hash = hashBytes }, tx);
-
-            await conn.ExecuteAsync("INSERT INTO user_profile (user_id) VALUES (@uid);", new { uid = userId }, tx);
-            /*
-            await conn.ExecuteAsync(
-                    @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
-                      VALUES (@uid, @name, @pic, @loc)",
-                    new { uid = userId, name = payload.Name, 
-                    pic = @"https://cdn0.iconfinder.com/data/icons/cryptocurrency-137/128/1_profile_user_avatar_account_person-132-64.png", loc = "en" });
-            */
-
+                INSERT INTO user_auth (user_id, email, email_norm, password_hash, email_verified_at, last_login_at)
+                VALUES (@uid, @em, LOWER(TRIM(@em)), @hash, NULL, NULL);",
+                new { uid = userId, em = email, hash = hashBytes }, tx);
+    
+            // profile with username (+ birthdate if you want)
+            await conn.ExecuteAsync(@"
+                INSERT INTO user_profile (user_id, display_name, display_name_norm, birthdate)
+                VALUES (@uid, @name, @nameNorm, @bdate);",
+                new { uid = userId, name = username, nameNorm = usernameNorm, bdate = req.Birthdate }, tx);
+    
+            // role
             var roleId = await EnsureRole(conn, tx, "user");
             await conn.ExecuteAsync("INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
                 new { uid = userId, rid = roleId }, tx);
-
+    
+            // session
             var (token, tokenHash) = MakeToken();
             var expiresAt = DateTimeOffset.UtcNow.AddDays(30);
             await conn.ExecuteAsync(@"
@@ -741,15 +763,17 @@ public class AuthController : ControllerBase
                     ip = GetClientIpBinary(HttpContext),
                     ua = Request.Headers.UserAgent.ToString() is var ua && ua.Length > 255 ? ua[..255] : ua
                 }, tx);
-
+    
             await tx.CommitAsync(ct);
-
+    
             var user = await LoadUserDto(conn, userId, ct);
             return Ok(new LoginResponse { Token = token, ExpiresAt = expiresAt, User = user, MfaRequired = false });
         }
-        catch (MySqlException ex) when (ex.Number == 1062)
+        catch (MySqlException ex) when (ex.Number == 1062) // unique key violation
         {
-            return Conflict(new { error = "Email already registered." });
+            // Decide which field collided based on the key name if you want to be fancy,
+            // otherwise give a general message:
+            return Conflict(new { error = "Email or username already registered." });
         }
         catch (Exception ex)
         {
