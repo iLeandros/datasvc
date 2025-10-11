@@ -691,6 +691,7 @@ public class AuthController : ControllerBase
         var email = (req.Email ?? "").Trim();
         var password = req.Password ?? "";
         var username = (req.Username ?? "").Trim();
+        var usernameNorm = username.ToLowerInvariant().Trim();
     
         // basic validations
         if (!System.Net.Mail.MailAddress.TryCreate(email, out _))
@@ -700,15 +701,13 @@ public class AuthController : ControllerBase
         if (username.Length is < 3 or > 30)
             return BadRequest(new { error = "Username must be 3–30 characters." });
     
-        var usernameNorm = username.ToLowerInvariant().Trim();
-    
         try
         {
             await using var conn = new MySqlConnection(_connString);
             await conn.OpenAsync(ct);
             await using var tx = await conn.BeginTransactionAsync(ct);
     
-            // 1) email conflict
+            // 1) email conflict (use email or email_norm generated in DB)
             var emailExists = await conn.ExecuteScalarAsync<int>(@"
                 SELECT 1
                 FROM user_auth
@@ -730,15 +729,15 @@ public class AuthController : ControllerBase
             await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx);
             var userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx);
     
-            // auth row
+            // auth row (DO NOT insert email_norm; it's generated in DB)
             var hashStr = BCrypt.Net.BCrypt.HashPassword(password, workFactor: 12);
             var hashBytes = System.Text.Encoding.UTF8.GetBytes(hashStr);
             await conn.ExecuteAsync(@"
-                INSERT INTO user_auth (user_id, email, email_norm, password_hash, email_verified_at, last_login_at)
-                VALUES (@uid, @em, LOWER(TRIM(@em)), @hash, NULL, NULL);",
+                INSERT INTO user_auth (user_id, email, password_hash, email_verified_at, last_login_at)
+                VALUES (@uid, @em, @hash, NULL, NULL);",
                 new { uid = userId, em = email, hash = hashBytes }, tx);
     
-            // profile with username (+ birthdate if you want)
+            // profile (store normalized username for the unique index)
             await conn.ExecuteAsync(@"
                 INSERT INTO user_profile (user_id, display_name, display_name_norm, birthdate)
                 VALUES (@uid, @name, @nameNorm, @bdate);",
@@ -771,8 +770,7 @@ public class AuthController : ControllerBase
         }
         catch (MySqlException ex) when (ex.Number == 1062) // unique key violation
         {
-            // Decide which field collided based on the key name if you want to be fancy,
-            // otherwise give a general message:
+            // Map to a friendlier message (email_norm or display_name_norm collided)
             return Conflict(new { error = "Email or username already registered." });
         }
         catch (Exception ex)
