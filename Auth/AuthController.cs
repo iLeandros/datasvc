@@ -113,72 +113,134 @@ public class AuthController : ControllerBase
         var provider = "google";
         var subject  = payload.Subject;
         var email    = payload.Email ?? "";
+        var name     = (payload.Name ?? "").Trim();
+        var avatar   = payload.Picture;
+        var locale   = "en";
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
     
-        // 1) Find identity → user
+        // 1) Does this Google identity already exist?
         var userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
             "SELECT user_id FROM user_identities WHERE provider=@provider AND subject=@subject",
             new { provider, subject });
     
         if (userId is null)
         {
-            // Try match by email
+            // 1b) Match by email if any
             userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
-                @"SELECT ua.user_id FROM user_auth ua
-                  WHERE ua.email_norm = LOWER(@email) LIMIT 1",
-                new { email });
+                "SELECT ua.user_id FROM user_auth ua WHERE ua.email_norm = LOWER(@em) LIMIT 1",
+                new { em = email });
     
             if (userId is null)
             {
-                
                 if (!req.AllowCreate)
-                {
                     return NotFound("Account not found for this Google identity.");
+    
+                // 2) Create user + auth + profile (transactional)
+                await using var tx = await conn.BeginTransactionAsync(ct);
+                try
+                {
+                    await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx);
+                    userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx);
+    
+                    // user_auth: DO NOT insert email_norm (generated)
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
+                        VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
+                        new { uid = userId, em = email }, tx);
+    
+                    // Generate a unique username
+                    var baseName = string.IsNullOrWhiteSpace(name) ? (email.Split('@').FirstOrDefault() ?? "user") : name;
+                    var (displayName, displayNameNorm) = await GenerateUniqueUsernameAsync(conn, tx, baseName, ct);
+    
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO user_profile (user_id, display_name, display_name_norm, avatar_url, locale)
+                        VALUES (@uid, @name, @nameNorm, @avatar, @locale)",
+                        new { uid = userId, name = displayName, nameNorm = displayNameNorm, avatar, locale }, tx);
+    
+                    // default role
+                    var rid = await EnsureRole(conn, tx, "user");
+                    await conn.ExecuteAsync(
+                        "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
+                        new { uid = userId.Value, rid }, tx);
+    
+                    await tx.CommitAsync(ct);
                 }
-                // Create user + auth/profile (use UUID_TO_BIN to match your schema)
-                await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));");
-                userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();");
+                catch (MySqlException ex) when (ex.Number == 1062)
+                {
+                    // If username collided mid-race, try again with a new suffix
+                    await tx.RollbackAsync(ct);
+                    // Fallback: regenerate username once and retry in a fresh tx
+                    await using var tx2 = await conn.BeginTransactionAsync(ct);
+                    await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx2);
+                    userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx2);
     
-                await conn.ExecuteAsync(
-                    @"INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
-                      VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
-                    new { uid = userId, em = email });
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
+                        VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
+                        new { uid = userId, em = email }, tx2);
     
-                await conn.ExecuteAsync(
-                    @"INSERT INTO user_profile (user_id, display_name, avatar_url, locale)
-                      VALUES (@uid, @name, @pic, @loc)",
-                    new { uid = userId, name = payload.Name, pic = payload.Picture, loc = "en" });
-                    
-                // ✅ Ensure default role "user"
-                var rid = await EnsureRole(conn, tx: null, "user");
-                await conn.ExecuteAsync(new CommandDefinition(
-                    "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
-                    new { uid = userId.Value, rid }, cancellationToken: ct));
+                    var (dn2, dnNorm2) = await GenerateUniqueUsernameAsync(conn, tx2, baseName, ct, startSuffix: 1);
+                    await conn.ExecuteAsync(@"
+                        INSERT INTO user_profile (user_id, display_name, display_name_norm, avatar_url, locale)
+                        VALUES (@uid, @name, @nameNorm, @avatar, @locale)",
+                        new { uid = userId, name = dn2, nameNorm = dnNorm2, avatar, locale }, tx2);
+    
+                    var rid = await EnsureRole(conn, tx2, "user");
+                    await conn.ExecuteAsync(
+                        "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (@uid, @rid);",
+                        new { uid = userId.Value, rid }, tx2);
+    
+                    await tx2.CommitAsync(ct);
+                }
             }
     
-            await conn.ExecuteAsync(
-                @"INSERT INTO user_identities (user_id, provider, subject, email)
-                  VALUES (@uid, @provider, @subject, @em)
-                  ON DUPLICATE KEY UPDATE email=VALUES(email)",
-                new { uid = userId, provider, subject, em = email });
+            // Link identity (requires unique key on (provider, subject))
+            await conn.ExecuteAsync(@"
+                INSERT INTO user_identities (user_id, provider, subject, email, email_verified)
+                VALUES (@uid, @provider, @subject, @em, @verified)
+                ON DUPLICATE KEY UPDATE email=VALUES(email), email_verified=VALUES(email_verified)",
+                new { uid = userId, provider, subject, em = email, verified = payload.EmailVerified ? 1 : 0 });
         }
     
-        // 2) Create a normal session and return it
+        // 3) Create normal session
         var sess = await CreateSessionAsync(userId.Value, ct);
-        return Ok(new
+    
+        // 4) Return user summary; profile has the stored display name
+        var user = await LoadUserDto(conn, userId.Value, ct); // re-use your existing loader
+        return Ok(new LoginResponse
         {
-            token = sess.Token,
-            expiresAt = sess.ExpiresAt,
-            user = new
-            {
-                id = userId.Value,
-                email = email,
-                displayName = payload.Name,
-                roles = new[] { "user" }
-            }
+            Token = sess.Token,
+            ExpiresAt = sess.ExpiresAt,
+            User = user,
+            MfaRequired = false
         });
+    }
+    
+    // helper: try base, base1, base2, ...
+    private static async Task<(string display, string norm)> GenerateUniqueUsernameAsync(
+        MySqlConnection conn, MySqlTransaction tx, string baseName, CancellationToken ct, int startSuffix = 0)
+    {
+        string Norm(string s) => s.Trim().ToLowerInvariant();
+        var baseClean = baseName.Trim();
+        var baseNorm  = Norm(baseClean);
+    
+        var suffix = startSuffix;
+        while (true)
+        {
+            var candidate = suffix == 0 ? baseClean : $"{baseClean}{suffix}";
+            var norm = Norm(candidate);
+    
+            var exists = await conn.ExecuteScalarAsync<int>(@"
+                SELECT 1 FROM user_profile WHERE display_name_norm = @n LIMIT 1",
+                new { n = norm }, tx);
+    
+            if (exists != 1)
+                return (candidate, norm);
+    
+            suffix++;
+        }
     }
 
     //Forgot password
