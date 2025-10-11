@@ -112,24 +112,31 @@ public class AuthController : ControllerBase
     
         var provider = "google";
         var subject  = payload.Subject;
-        var email    = payload.Email ?? "";
-        var name     = (payload.Name ?? "").Trim();
+        var email    = payload.Email ?? string.Empty;
+        var name     = (payload.Name ?? string.Empty).Trim();
         var avatar   = payload.Picture;
         var locale   = "en";
+    
+        // Base username candidate used if we need to create a new account
+        var baseName = string.IsNullOrWhiteSpace(name)
+            ? (email.Split('@').FirstOrDefault() ?? "user")
+            : name;
     
         await using var conn = new MySqlConnection(_connString);
         await conn.OpenAsync(ct);
     
-        // 1) Does this Google identity already exist?
+        // 1) Already linked Google identity?
         var userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
             "SELECT user_id FROM user_identities WHERE provider=@provider AND subject=@subject",
             new { provider, subject });
     
         if (userId is null)
         {
-            // 1b) Match by email if any
+            // 1b) Match by email (email_norm is GENERATED in DB)
             userId = await conn.QueryFirstOrDefaultAsync<ulong?>(
-                "SELECT ua.user_id FROM user_auth ua WHERE ua.email_norm = LOWER(@em) LIMIT 1",
+                @"SELECT ua.user_id FROM user_auth ua
+                  WHERE ua.email_norm = LOWER(@em)
+                  LIMIT 1",
                 new { em = email });
     
             if (userId is null)
@@ -137,23 +144,25 @@ public class AuthController : ControllerBase
                 if (!req.AllowCreate)
                     return NotFound("Account not found for this Google identity.");
     
-                // 2) Create user + auth + profile (transactional)
+                // 2) Create user + auth + profile transactionally
                 await using var tx = await conn.BeginTransactionAsync(ct);
                 try
                 {
+                    // users
                     await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx);
                     userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx);
     
-                    // user_auth: DO NOT insert email_norm (generated)
+                    // user_auth (DO NOT write email_norm; it's generated)
                     await conn.ExecuteAsync(@"
                         INSERT INTO user_auth (user_id, email, password_hash, email_verified_at)
                         VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
                         new { uid = userId, em = email }, tx);
     
-                    // Generate a unique username
-                    var baseName = string.IsNullOrWhiteSpace(name) ? (email.Split('@').FirstOrDefault() ?? "user") : name;
-                    var (displayName, displayNameNorm) = await GenerateUniqueUsernameAsync(conn, tx, baseName, ct);
+                    // unique username generation
+                    var (displayName, displayNameNorm) =
+                        await GenerateUniqueUsernameAsync(conn, tx, baseName, ct);
     
+                    // user_profile (store both display_name + display_name_norm)
                     await conn.ExecuteAsync(@"
                         INSERT INTO user_profile (user_id, display_name, display_name_norm, avatar_url, locale)
                         VALUES (@uid, @name, @nameNorm, @avatar, @locale)",
@@ -169,9 +178,10 @@ public class AuthController : ControllerBase
                 }
                 catch (MySqlException ex) when (ex.Number == 1062)
                 {
-                    // If username collided mid-race, try again with a new suffix
+                    // Rare race: username collided between check and insert.
                     await tx.RollbackAsync(ct);
-                    // Fallback: regenerate username once and retry in a fresh tx
+    
+                    // Try once more with a suffixed username in a fresh transaction
                     await using var tx2 = await conn.BeginTransactionAsync(ct);
                     await conn.ExecuteAsync("INSERT INTO users (uuid) VALUES (UUID_TO_BIN(UUID()));", transaction: tx2);
                     userId = await conn.ExecuteScalarAsync<ulong>("SELECT LAST_INSERT_ID();", transaction: tx2);
@@ -181,7 +191,9 @@ public class AuthController : ControllerBase
                         VALUES (@uid, @em, 0x00, UTC_TIMESTAMP())",
                         new { uid = userId, em = email }, tx2);
     
-                    var (dn2, dnNorm2) = await GenerateUniqueUsernameAsync(conn, tx2, baseName, ct, startSuffix: 1);
+                    (string dn2, string dnNorm2) =
+                        await GenerateUniqueUsernameAsync(conn, tx2, baseName, ct, startSuffix: 1);
+    
                     await conn.ExecuteAsync(@"
                         INSERT INTO user_profile (user_id, display_name, display_name_norm, avatar_url, locale)
                         VALUES (@uid, @name, @nameNorm, @avatar, @locale)",
@@ -196,19 +208,25 @@ public class AuthController : ControllerBase
                 }
             }
     
-            // Link identity (requires unique key on (provider, subject))
+            // 3) Link identity (requires UNIQUE (provider, subject) on user_identities)
             await conn.ExecuteAsync(@"
                 INSERT INTO user_identities (user_id, provider, subject, email, email_verified)
                 VALUES (@uid, @provider, @subject, @em, @verified)
                 ON DUPLICATE KEY UPDATE email=VALUES(email), email_verified=VALUES(email_verified)",
-                new { uid = userId, provider, subject, em = email, verified = payload.EmailVerified ? 1 : 0 });
+                new
+                {
+                    uid = userId,
+                    provider,
+                    subject,
+                    em = email,
+                    verified = payload.EmailVerified ? 1 : 0
+                });
         }
     
-        // 3) Create normal session
+        // 4) Create a session and return your standard response
         var sess = await CreateSessionAsync(userId.Value, ct);
+        var user = await LoadUserDto(conn, userId.Value, ct);
     
-        // 4) Return user summary; profile has the stored display name
-        var user = await LoadUserDto(conn, userId.Value, ct); // re-use your existing loader
         return Ok(new LoginResponse
         {
             Token = sess.Token,
@@ -218,11 +236,15 @@ public class AuthController : ControllerBase
         });
     }
     
-    // helper: try base, base1, base2, ...
+    /// <summary>
+    /// Generates a unique username by checking user_profile.display_name_norm.
+    /// Tries baseName, baseName1, baseName2, ...
+    /// </summary>
     private static async Task<(string display, string norm)> GenerateUniqueUsernameAsync(
         MySqlConnection conn, MySqlTransaction tx, string baseName, CancellationToken ct, int startSuffix = 0)
     {
-        string Norm(string s) => s.Trim().ToLowerInvariant();
+        static string Norm(string s) => s.Trim().ToLowerInvariant();
+    
         var baseClean = baseName.Trim();
         var baseNorm  = Norm(baseClean);
     
@@ -240,6 +262,7 @@ public class AuthController : ControllerBase
                 return (candidate, norm);
     
             suffix++;
+            // Optional: cap attempts if you want to guard against extreme cases
         }
     }
 
