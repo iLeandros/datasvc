@@ -3302,7 +3302,7 @@ public sealed class DetailsRefreshService
 				//var rec = await DetailsScraperService.FetchOneAsync(h, ct);
 				//_details.Set(rec);
 				var existing = _details.Get(h);
-		        var fresh    = await _scraper.FetchOneAsync(h, ct);
+		        var fresh    = await DetailsScraperService.FetchOneAsync(h, ct);
 		        _details.Set(DetailsMerge.Merge(existing, fresh));
 
             }
