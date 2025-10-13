@@ -1872,21 +1872,28 @@ static object MapDetailsRecordToAllhrefsItem(
     };
 }
 */
-static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+internal static class DetailsMerge
 {
-    if (oldRec is null) return newRec;
-    var pOld = oldRec.Payload; var pNew = newRec.Payload;
-    var mergedPayload = new DetailsPayload(
-        pNew.TeamsInfoHtml          ?? pOld.TeamsInfoHtml,
-        pNew.MatchBetweenHtml       ?? pOld.MatchBetweenHtml,
-        pNew.TeamMatchesSeparateHtml?? pOld.TeamMatchesSeparateHtml,
-        pNew.LastTeamsMatchesHtml   ?? pOld.LastTeamsMatchesHtml,
-        pNew.TeamsStatisticsHtml    ?? pOld.TeamsStatisticsHtml,
-        pNew.TeamsBetStatisticsHtml ?? pOld.TeamsBetStatisticsHtml,
-        pNew.FactsHtml              ?? pOld.FactsHtml,
-        pNew.TeamStandingsHtml      ?? pOld.TeamStandingsHtml
-    );
-    return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
+    public static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+    {
+        if (oldRec is null) return newRec;
+
+        var pOld = oldRec.Payload;
+        var pNew = newRec.Payload;
+
+        var mergedPayload = new DetailsPayload(
+            pNew.TeamsInfoHtml           ?? pOld.TeamsInfoHtml,
+            pNew.MatchBetweenHtml        ?? pOld.MatchBetweenHtml,
+            pNew.TeamMatchesSeparateHtml ?? pOld.TeamMatchesSeparateHtml,
+            pNew.LastTeamsMatchesHtml    ?? pOld.LastTeamsMatchesHtml,
+            pNew.TeamsStatisticsHtml     ?? pOld.TeamsStatisticsHtml,
+            pNew.TeamsBetStatisticsHtml  ?? pOld.TeamsBetStatisticsHtml,
+            pNew.FactsHtml               ?? pOld.FactsHtml,
+            pNew.TeamStandingsHtml       ?? pOld.TeamStandingsHtml
+        );
+
+        return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
+    }
 }
 
 
@@ -3293,8 +3300,8 @@ public sealed class DetailsRefreshService
 				//var rec = await DetailsScraperService.FetchOneAsync(h, ct);
 				//_details.Set(rec);
 				var existing = _details.Get(h);
-				var fresh    = await DetailsScraperService.FetchOneAsync(h, ct);
-				_details.Set(Merge(existing, fresh));
+		        var fresh    = await _scraper.FetchOneAsync(h, ct);
+		        _details.Set(DetailsMerge.Merge(existing, fresh));
 
             }
             catch (Exception ex)
@@ -3456,9 +3463,9 @@ public sealed class DetailsScraperService
 	
 	            //var rec = await FetchOneAsync(href, ct);
 	            //_store.Set(rec);
-				var existing = _details.Get(h);
-				var fresh    = await DetailsScraperService.FetchOneAsync(href, ct);
-				_details.Set(Merge(existing, fresh));
+				var fresh   = await FetchOneAsync(href, ct);
+				var merged  = DetailsMerge.Merge(existing, fresh);
+				_store.Set(merged);
 
 	            Interlocked.Increment(ref refreshed);
 	        }
