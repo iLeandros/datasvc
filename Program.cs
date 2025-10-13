@@ -3318,12 +3318,19 @@ public sealed class DetailsRefreshService
         DetailsPerDateFiles.CleanupRetention(center, back, ahead);
     }
 
-    private static bool NeedsFetch(DetailsRecord? rec)
-    {
-        if (rec is null) return true;
-        // keep your existing TTL logic; example:
-        return (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > TimeSpan.FromHours(6);
-    }
+    private static bool IsIncomplete(DetailsRecord r)
+	    => r.Payload.TeamsInfoHtml == null
+	    || r.Payload.MatchBetweenHtml == null
+	    || r.Payload.TeamMatchesSeparateHtml == null
+	    || r.Payload.TeamsBetStatisticsHtml == null
+	    || r.Payload.FactsHtml == null
+	    || r.Payload.LastTeamsMatchesHtml == null
+	    || r.Payload.TeamsStatisticsHtml == null
+	    || r.Payload.TeamStandingsHtml == null;
+	
+	private static bool NeedsFetch(DetailsRecord? rec)
+	    => rec is null || IsIncomplete(rec) || (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > TimeSpan.FromHours(6);
+
 
     // Reuse the same mapping the endpoint does, but as a helper so we can write files post-refresh
     private async Task GenerateAndSavePerDateAsync(DateOnly date)
