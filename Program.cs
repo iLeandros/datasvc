@@ -1872,6 +1872,22 @@ static object MapDetailsRecordToAllhrefsItem(
     };
 }
 */
+static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+{
+    if (oldRec is null) return newRec;
+    var pOld = oldRec.Payload; var pNew = newRec.Payload;
+    var mergedPayload = new DetailsPayload(
+        pNew.TeamsInfoHtml          ?? pOld.TeamsInfoHtml,
+        pNew.MatchBetweenHtml       ?? pOld.MatchBetweenHtml,
+        pNew.TeamMatchesSeparateHtml?? pOld.TeamMatchesSeparateHtml,
+        pNew.LastTeamsMatchesHtml   ?? pOld.LastTeamsMatchesHtml,
+        pNew.TeamsStatisticsHtml    ?? pOld.TeamsStatisticsHtml,
+        pNew.TeamsBetStatisticsHtml ?? pOld.TeamsBetStatisticsHtml,
+        pNew.FactsHtml              ?? pOld.FactsHtml,
+        pNew.TeamStandingsHtml      ?? pOld.TeamStandingsHtml
+    );
+    return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
+}
 
 
 static void SaveGzipCopy(string jsonPath)
@@ -3753,22 +3769,6 @@ public sealed class TradeSignal
 
     [JsonPropertyName("strategy_id")]
     public string? StrategyId { get; set; }
-}
-static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
-{
-    if (oldRec is null) return newRec;
-    var pOld = oldRec.Payload; var pNew = newRec.Payload;
-    var mergedPayload = new DetailsPayload(
-        pNew.TeamsInfoHtml          ?? pOld.TeamsInfoHtml,
-        pNew.MatchBetweenHtml       ?? pOld.MatchBetweenHtml,
-        pNew.TeamMatchesSeparateHtml?? pOld.TeamMatchesSeparateHtml,
-        pNew.LastTeamsMatchesHtml   ?? pOld.LastTeamsMatchesHtml,
-        pNew.TeamsStatisticsHtml    ?? pOld.TeamsStatisticsHtml,
-        pNew.TeamsBetStatisticsHtml ?? pOld.TeamsBetStatisticsHtml,
-        pNew.FactsHtml              ?? pOld.FactsHtml,
-        pNew.TeamStandingsHtml      ?? pOld.TeamStandingsHtml
-    );
-    return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
 }
 
 public record TradeSignalReceived(
