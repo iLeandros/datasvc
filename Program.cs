@@ -1872,6 +1872,22 @@ static object MapDetailsRecordToAllhrefsItem(
     };
 }
 */
+static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+{
+    if (oldRec is null) return newRec;
+    var pOld = oldRec.Payload; var pNew = newRec.Payload;
+    var mergedPayload = new DetailsPayload(
+        pNew.TeamsInfoHtml          ?? pOld.TeamsInfoHtml,
+        pNew.MatchBetweenHtml       ?? pOld.MatchBetweenHtml,
+        pNew.TeamMatchesSeparateHtml?? pOld.TeamMatchesSeparateHtml,
+        pNew.LastTeamsMatchesHtml   ?? pOld.LastTeamsMatchesHtml,
+        pNew.TeamsStatisticsHtml    ?? pOld.TeamsStatisticsHtml,
+        pNew.TeamsBetStatisticsHtml ?? pOld.TeamsBetStatisticsHtml,
+        pNew.FactsHtml              ?? pOld.FactsHtml,
+        pNew.TeamStandingsHtml      ?? pOld.TeamStandingsHtml
+    );
+    return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
+}
 
 static void SaveGzipCopy(string jsonPath)
 {
@@ -3273,8 +3289,12 @@ public sealed class DetailsRefreshService
             {
                 //var rec = await _scraper.FetchOneAsync(h, ct);   // prefer the injected instance
 				//_details.Set(rec);
-				var rec = await DetailsScraperService.FetchOneAsync(h, ct);
-				_details.Set(rec);
+				//var rec = await DetailsScraperService.FetchOneAsync(h, ct);
+				//_details.Set(rec);
+				var existing = _details.Get(h);
+				var fresh    = await DetailsScraperService.FetchOneAsync(h, ct);
+				_details.Set(Merge(existing, fresh));
+
             }
             catch (Exception ex)
             {
@@ -3426,8 +3446,12 @@ public sealed class DetailsScraperService
 	                return;
 	            }
 	
-	            var rec = await FetchOneAsync(href, ct);
-	            _store.Set(rec);
+	            //var rec = await FetchOneAsync(href, ct);
+	            //_store.Set(rec);
+				var existing = _details.Get(h);
+				var fresh    = await DetailsScraperService.FetchOneAsync(href, ct);
+				_details.Set(Merge(existing, fresh));
+
 	            Interlocked.Increment(ref refreshed);
 	        }
 	        catch (Exception ex)
