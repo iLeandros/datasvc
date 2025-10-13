@@ -3130,6 +3130,31 @@ public sealed class DetailsStore
 	}
 }
 
+internal static class DetailsMerge
+{
+    public static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+    {
+        if (oldRec is null) return newRec;
+
+        var pOld = oldRec.Payload;
+        var pNew = newRec.Payload;
+
+        var mergedPayload = new DetailsPayload(
+            pNew.TeamsInfoHtml           ?? pOld.TeamsInfoHtml,
+            pNew.MatchBetweenHtml        ?? pOld.MatchBetweenHtml,
+            pNew.TeamMatchesSeparateHtml ?? pOld.TeamMatchesSeparateHtml,
+            pNew.LastTeamsMatchesHtml    ?? pOld.LastTeamsMatchesHtml,
+            pNew.TeamsStatisticsHtml     ?? pOld.TeamsStatisticsHtml,
+            pNew.TeamsBetStatisticsHtml  ?? pOld.TeamsBetStatisticsHtml,
+            pNew.FactsHtml               ?? pOld.FactsHtml,
+            pNew.TeamStandingsHtml       ?? pOld.TeamStandingsHtml
+        );
+
+        return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
+    }
+}
+
+
 public static class DetailsFiles
 {
     public const string File = "/var/lib/datasvc/details.json";
@@ -3798,28 +3823,4 @@ public static class TradeSignalUtils
     }
 
     public static int? TryParseInt(string? s) => int.TryParse(s, out var v) ? v : (int?)null;
-}
-
-internal static class DetailsMerge
-{
-    public static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
-    {
-        if (oldRec is null) return newRec;
-
-        var pOld = oldRec.Payload;
-        var pNew = newRec.Payload;
-
-        var mergedPayload = new DetailsPayload(
-            pNew.TeamsInfoHtml           ?? pOld.TeamsInfoHtml,
-            pNew.MatchBetweenHtml        ?? pOld.MatchBetweenHtml,
-            pNew.TeamMatchesSeparateHtml ?? pOld.TeamMatchesSeparateHtml,
-            pNew.LastTeamsMatchesHtml    ?? pOld.LastTeamsMatchesHtml,
-            pNew.TeamsStatisticsHtml     ?? pOld.TeamsStatisticsHtml,
-            pNew.TeamsBetStatisticsHtml  ?? pOld.TeamsBetStatisticsHtml,
-            pNew.FactsHtml               ?? pOld.FactsHtml,
-            pNew.TeamStandingsHtml       ?? pOld.TeamStandingsHtml
-        );
-
-        return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
-    }
 }
