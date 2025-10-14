@@ -3140,15 +3140,15 @@ internal static class DetailsMerge
         var pNew = newRec.Payload;
 
         var mergedPayload = new DetailsPayload(
-            pNew.TeamsInfoHtml           ?? pOld.TeamsInfoHtml,
-            pNew.MatchBetweenHtml        ?? pOld.MatchBetweenHtml,
-            pNew.TeamMatchesSeparateHtml ?? pOld.TeamMatchesSeparateHtml,
-            pNew.LastTeamsMatchesHtml    ?? pOld.LastTeamsMatchesHtml,
-            pNew.TeamsStatisticsHtml     ?? pOld.TeamsStatisticsHtml,
-            pNew.TeamsBetStatisticsHtml  ?? pOld.TeamsBetStatisticsHtml,
-            pNew.FactsHtml               ?? pOld.FactsHtml,
-            pNew.TeamStandingsHtml       ?? pOld.TeamStandingsHtml
-        );
+		    pOld.TeamsInfoHtml           ?? pNew.TeamsInfoHtml,
+		    pOld.MatchBetweenHtml        ?? pNew.MatchBetweenHtml,
+		    pOld.TeamMatchesSeparateHtml ?? pNew.TeamMatchesSeparateHtml,
+		    pOld.LastTeamsMatchesHtml    ?? pNew.LastTeamsMatchesHtml,
+		    pOld.TeamsStatisticsHtml     ?? pNew.TeamsStatisticsHtml,
+		    pOld.TeamsBetStatisticsHtml  ?? pNew.TeamsBetStatisticsHtml,
+		    pOld.FactsHtml               ?? pNew.FactsHtml,
+		    pOld.TeamStandingsHtml       ?? pNew.TeamStandingsHtml
+		);
 
         return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
     }
