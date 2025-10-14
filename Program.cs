@@ -3132,6 +3132,13 @@ public sealed class DetailsStore
 
 internal static class DetailsMerge
 {
+	static string? PreferOldUnlessNullOrEmpty(string? oldValue, string? newValue)
+	{
+	    if (!string.IsNullOrWhiteSpace(oldValue)) return oldValue;
+	    if (!string.IsNullOrWhiteSpace(newValue)) return newValue;
+
+	    return null;
+	}
     public static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
     {
         if (oldRec is null) return newRec;
@@ -3140,14 +3147,14 @@ internal static class DetailsMerge
         var pNew = newRec.Payload;
 
         var mergedPayload = new DetailsPayload(
-		    pOld.TeamsInfoHtml           ?? pNew.TeamsInfoHtml,
-		    pOld.MatchBetweenHtml        ?? pNew.MatchBetweenHtml,
-		    pOld.TeamMatchesSeparateHtml ?? pNew.TeamMatchesSeparateHtml,
-		    pOld.LastTeamsMatchesHtml    ?? pNew.LastTeamsMatchesHtml,
-		    pOld.TeamsStatisticsHtml     ?? pNew.TeamsStatisticsHtml,
-		    pOld.TeamsBetStatisticsHtml  ?? pNew.TeamsBetStatisticsHtml,
-		    pOld.FactsHtml               ?? pNew.FactsHtml,
-		    pOld.TeamStandingsHtml       ?? pNew.TeamStandingsHtml
+		    PreferOldUnlessNullOrEmpty(pOld.TeamsInfoHtml,           pNew.TeamsInfoHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.MatchBetweenHtml,        pNew.MatchBetweenHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.TeamMatchesSeparateHtml, pNew.TeamMatchesSeparateHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.LastTeamsMatchesHtml,    pNew.LastTeamsMatchesHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.TeamsStatisticsHtml,     pNew.TeamsStatisticsHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.TeamsBetStatisticsHtml,  pNew.TeamsBetStatisticsHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.FactsHtml,               pNew.FactsHtml),
+		    PreferOldUnlessNullOrEmpty(pOld.TeamStandingsHtml,       pNew.TeamStandingsHtml)
 		);
 
         return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
