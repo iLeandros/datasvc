@@ -61,12 +61,7 @@ public static class MatchSeparatelyHelper
                         if (string.IsNullOrWhiteSpace(raw)) continue;
 
                         // Infer side from nearest host/guest container
-                        var sideClass = a.Ancestors("div")
-                                         .Select(n => n.GetAttributeValue("class", "").ToLowerInvariant())
-                                         .FirstOrDefault(c => c.Contains("hostteam") || c.Contains("guestteam")) ?? "";
-                        var side = sideClass.Contains("guestteam")
-                            ? TeamSide.Guest
-                            : TeamSide.Host;
+                        var side = SideFromAction(a);
 
                         // Kind: look for inner icon class
                         var icon = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div") 
@@ -95,6 +90,18 @@ public static class MatchSeparatelyHelper
     }
 
     // ---------- helpers ----------
+
+    private static TeamSide SideFromAction(HtmlNode actionNode)
+    {
+        // action → (hostteam|guestteam) → ...
+        if (actionNode.SelectSingleNode(".//div[contains(@class,'guestteam')]") != null)
+            return TeamSide.Guest;
+        if (actionNode.SelectSingleNode(".//div[contains(@class,'hostteam')]") != null)
+            return TeamSide.Host;
+    
+        // Fallback (shouldn’t hit with your structure)
+        return TeamSide.Host;
+    }
 
     private static string Normalize(string s)
     {
