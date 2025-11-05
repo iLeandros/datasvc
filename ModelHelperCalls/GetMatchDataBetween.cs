@@ -59,32 +59,36 @@ namespace DataSvc.ModelHelperCalls
                     // Halftime (if present on this card)
                     matchItem.HalfTime = ParseHalfTime(item);
 
-                    // Actions, robust to different classnames. We look for elements which represent a single action.
-                    var actionNodes = item.SelectNodes(".//div[contains(@class,'action') or contains(@class,'event')]");
-                    if (actionNodes != null)
+                    // Actions inside this matchitem (top-level .action blocks)
+                    var actions = item.SelectNodes(".//div[contains(concat(' ',normalize-space(@class),' '),' action ')]");
+                    if (actions != null)
                     {
-                        foreach (var actionNode in actionNodes)
+                        foreach (var a in actions)
                         {
-                            // Decide side from the node class or its parents
-                            var cls  = actionNode.GetAttributeValue("class", string.Empty).ToLowerInvariant();
-                            var side = InferSide(actionNode, cls);
-
-                            // Determine kind from the css classnames (goal, ycard, dycard, penalty, rcard)
-                            var kind = ClassToActionKind(cls);
-
-                            // Extract raw text like: 45+2' Player Name
-                            var raw = actionNode.InnerText.Trim();
+                            // Player text (only from .player node)
+                            var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
+                            var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+                            if (string.IsNullOrWhiteSpace(raw)) continue; // skip icon-only rows
+                    
+                            // Side from container
+                            var sideClass = a.Ancestors("div")
+                                             .Select(n => n.GetAttributeValue("class", "").ToLowerInvariant())
+                                             .FirstOrDefault(c => c.Contains("hostteam") || c.Contains("guestteam")) ?? "";
+                            var side = sideClass.Contains("guestteam") ? TeamSide.Guest : TeamSide.Host;
+                    
+                            // Kind from the icon classes
+                            var icon = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+                            var classStr = (icon?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+                            var kind = ClassToActionKind(classStr);
+                    
+                            // "45+2' Player Name" → (47, "Player Name")
                             var (minute, player) = ParseMinuteAndPlayer(raw);
-
-                            // Skip empty lines
-                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue)
-                                continue;
-
-                            // Create new strongly-typed action
-                            var matchAction = new MatchAction(side, kind, minute, player);
-                            matchItem.Actions.Add(matchAction);
+                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue; // still nothing? skip
+                    
+                            data.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
                         }
                     }
+
 
                     matchData.Matches.Add(matchItem);
                 }
@@ -96,6 +100,16 @@ namespace DataSvc.ModelHelperCalls
                 Debug.WriteLine("GetMatchDataBetween error: " + ex.Message);
                 return null;
             }
+        }
+
+        private static string Normalize(string s)
+        {
+            if (s == null) return string.Empty;
+            // Html decode, replace NBSP (char + entity), collapse spaces, trim
+            var decoded = HtmlEntity.DeEntitize(s)
+                .Replace('\u00A0', ' ')
+                .Replace("&nbsp;", " ");
+            return System.Text.RegularExpressions.Regex.Replace(decoded, @"\s+", " ").Trim();
         }
 
         private static TeamSide InferSide(HtmlNode node, string classString)
@@ -119,46 +133,41 @@ namespace DataSvc.ModelHelperCalls
 
         private static HalfTimeScore ParseHalfTime(HtmlNode matchItemNode)
         {
-            // Example structures this tries to support:
-            // 1) <div class="halftime"><div class="goals">1</div><div class="goals">0</div></div>
-            // 2) <div class="ht">HT: 1-0</div>
-            var holder =
-                matchItemNode.SelectSingleNode(".//div[contains(@class,'halftime') or contains(@class,'half-time') or contains(@class,'ht')]");
-
-            if (holder == null)
+            // 1) Classic "ht/halftime" holder
+            var holder = matchItemNode.SelectSingleNode(
+                ".//div[contains(@class,'halftime') or contains(@class,'half-time') or contains(@class,'ht')]"
+            );
+            if (holder != null)
             {
-                // Try to parse from a textual token like "HT 1-0" within the score line
-                var scoreText = TryGetInnerText(matchItemNode, ".//div[contains(@class,'score') or contains(@class,'result')]");
-                if (!string.IsNullOrWhiteSpace(scoreText))
-                {
-                    var m2 = System.Text.RegularExpressions.Regex.Match(scoreText, @"HT\s*[:\-]?\s*(\d+)\s*[-:]\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-                    if (m2.Success)
-                    {
-                        return new HalfTimeScore(ParseIntSafe(m2.Groups[1].Value), ParseIntSafe(m2.Groups[2].Value));
-                    }
-                }
-                return new HalfTimeScore(0, 0);
+                var nodes = holder.SelectNodes(".//div[contains(@class,'goals') or contains(@class,'score')]");
+                if (nodes != null && nodes.Count >= 2)
+                    return new HalfTimeScore(ParseIntSafe(nodes[0].InnerText), ParseIntSafe(nodes[1].InnerText));
+        
+                var text = Normalize(holder.InnerText);
+                var m = System.Text.RegularExpressions.Regex.Match(text, @"(\d+)\s*[-:]\s*(\d+)");
+                if (m.Success) return new HalfTimeScore(ParseIntSafe(m.Groups[1].Value), ParseIntSafe(m.Groups[2].Value));
             }
-
-            // Structured holders with two goal nodes
-            var goalNodes = holder.SelectNodes(".//div[contains(@class,'goals') or contains(@class,'score')]/text() | .//div[contains(@class,'goals') or contains(@class,'score')]");
-            if (goalNodes != null && goalNodes.Count >= 2)
+        
+            // 2) The Statarea "details > info > holder > goals goals" pattern  ← your sample
+            var infoHolderGoals = matchItemNode.SelectNodes(".//div[@class='details']//div[@class='info']//div[@class='holder']/div[@class='goals']");
+            if (infoHolderGoals != null && infoHolderGoals.Count >= 2)
             {
-                var host = ParseIntSafe(goalNodes[0].InnerText);
-                var guest = ParseIntSafe(goalNodes[1].InnerText);
-                return new HalfTimeScore(host, guest);
+                return new HalfTimeScore(ParseIntSafe(infoHolderGoals[0].InnerText), ParseIntSafe(infoHolderGoals[1].InnerText));
             }
-
-            // Try "1-0" inside the holder text
-            var text = holder.InnerText;
-            var m = System.Text.RegularExpressions.Regex.Match(text, @"(\d+)\s*[-:]\s*(\d+)");
-            if (m.Success)
+        
+            // 3) Try to read from a "score/result" text that includes 'HT x-y'
+            var scoreTextNode = matchItemNode.SelectSingleNode(".//div[contains(@class,'score') or contains(@class,'result')]");
+            var scoreText = Normalize(scoreTextNode?.InnerText ?? "");
+            if (!string.IsNullOrWhiteSpace(scoreText))
             {
-                return new HalfTimeScore(ParseIntSafe(m.Groups[1].Value), ParseIntSafe(m.Groups[2].Value));
+                var m2 = System.Text.RegularExpressions.Regex.Match(scoreText, @"HT\s*[:\-]?\s*(\d+)\s*[-:]\s*(\d+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                if (m2.Success)
+                    return new HalfTimeScore(ParseIntSafe(m2.Groups[1].Value), ParseIntSafe(m2.Groups[2].Value));
             }
-
+        
             return new HalfTimeScore(0, 0);
         }
+
 
         private static ActionKind ClassToActionKind(string cls)
         {
@@ -174,26 +183,35 @@ namespace DataSvc.ModelHelperCalls
 
         private static (int? minute, string player) ParseMinuteAndPlayer(string raw)
         {
-            if (string.IsNullOrWhiteSpace(raw))
-                return (null, string.Empty);
-
-            // Patterns like:
-            // 45' Player, 45+2' Player, 90 + 3' Player
+            var text = Normalize(raw);
+        
+            // Accept 45', 45 + 2', 45+2'
             var m = System.Text.RegularExpressions.Regex.Match(
-                raw, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'\s*(.+?)\s*$");
-
+                text, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'\s*(.+?)\s*$"
+            );
+        
             if (m.Success)
             {
                 int baseMin = int.Parse(m.Groups[1].Value);
                 int extra   = string.IsNullOrEmpty(m.Groups[2].Value) ? 0 : int.Parse(m.Groups[2].Value);
-                var total   = baseMin + extra;
-                var player  = m.Groups[3].Value.Trim();
-                return (total, player);
+                return (baseMin + extra, m.Groups[3].Value.Trim());
             }
-
-            // Fallback: no minute parsed, keep raw as player
-            return (null, raw.Trim());
+        
+            // If it looks like "19'Name" without a space, handle that too
+            m = System.Text.RegularExpressions.Regex.Match(
+                text, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'(.+?)\s*$"
+            );
+            if (m.Success)
+            {
+                int baseMin = int.Parse(m.Groups[1].Value);
+                int extra   = string.IsNullOrEmpty(m.Groups[2].Value) ? 0 : int.Parse(m.Groups[2].Value);
+                return (baseMin + extra, m.Groups[3].Value.Trim());
+            }
+        
+            // Last resort: no minute parsed; return as player
+            return (null, text);
         }
+
 
         private static int ParseIntSafe(string? s)
         {
