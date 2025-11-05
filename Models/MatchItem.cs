@@ -9,4 +9,5 @@ public class MatchItem
     public string GuestTeam { get; set; }
     public int GuestGoals { get; set; }
     public List<MatchAction> Actions { get; set; } = new List<MatchAction>();
+    public HalfTimeScore HalfTime { get; set; } = new(0,0);
 }
