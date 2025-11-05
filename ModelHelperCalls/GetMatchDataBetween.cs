@@ -62,6 +62,7 @@ public static class MatchBetweenHelper
                     
                             // build your new strongly-typed action
                             var matchAction = new MatchAction(side, kind, minute, player);
+                            matchItem.HalfTime = ParseHalfTime(item);
                     
                             matchItem.Actions.Add(matchAction);
                         }
@@ -80,6 +81,38 @@ public static class MatchBetweenHelper
             return null;
         }
     }
+
+    private static HalfTimeScore ParseHalfTime(HtmlNode matchItemNode)
+    {
+        if (matchItemNode == null)
+            return new HalfTimeScore(0, 0);
+    
+        // .details > .info > .holder contains two ".goals" nodes (host, guest)
+        var holder = matchItemNode.SelectSingleNode(
+            ".//div[contains(@class,'details')]//div[contains(@class,'info')]//div[contains(@class,'holder')]");
+    
+        if (holder == null)
+            return new HalfTimeScore(0, 0);
+    
+        var goalNodes = holder.SelectNodes(".//div[contains(@class,'goals')]");
+        if (goalNodes == null || goalNodes.Count < 2)
+            return new HalfTimeScore(0, 0);
+    
+        int host = ParseIntSafe(goalNodes[0].InnerText);
+        int guest = ParseIntSafe(goalNodes[1].InnerText);
+    
+        return new HalfTimeScore(host, guest);
+    }
+    
+    private static int ParseIntSafe(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return 0;
+        // strip everything except digits (defensive against &nbsp; or stray chars)
+        var digits = new string(s.Where(char.IsDigit).ToArray());
+        return int.TryParse(digits, System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
+    }
+
     
     private static ActionKind ClassToActionKind(string cls)
     {
