@@ -85,7 +85,7 @@ namespace DataSvc.ModelHelperCalls
                             var (minute, player) = ParseMinuteAndPlayer(raw);
                             if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue; // still nothing? skip
                     
-                            data.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
+                            matchData.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
                         }
                     }
 
