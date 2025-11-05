@@ -2843,47 +2843,8 @@ public static class GetStartupMainTableDataGroup2024
 							// compute server-side using the chosen UTC moment
 	                        var computed    = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
 	                        var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
-
-							if (likesandvotes != null && likesandvotes.Count >= 11)
-							{
-							    var item = new TableDataItem(
-							        "flag",
-							        backgroundtipcolor,
-							        time ?? "",
-							        teamone,
-							        teamonescore,
-							        teamtwoscore,
-							        teamtwo,
-							        tip?.InnerText,
-							        likebuttonimage,
-							        dislikebuttonimage,
-							        likepositive,
-							        likenegative,
-							        computed,
-							        computedFmt,
-							        likesandvotes[0].InnerText,
-							        likesandvotes[1].InnerText,
-							        likesandvotes[2].InnerText,
-							        likesandvotes[3].InnerText,
-							        likesandvotes[4].InnerText,
-							        likesandvotes[5].InnerText,
-							        likesandvotes[6].InnerText,
-							        likesandvotes[7].InnerText,
-							        likesandvotes[8].InnerText,
-							        likesandvotes[9].InnerText,
-							        likesandvotes[10].InnerText,
-							        "Beta",
-							        hrefs,
-							        Colors.LightGray
-							    );
 							
-							    // NEW: parse details for this match
-							    item.Details = ParseMatchDetails(matchItem);
 							
-							    items.Add(item);
-							}
-							
-							/*
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
                                 items.Add(new TableDataItem(
@@ -2919,7 +2880,7 @@ public static class GetStartupMainTableDataGroup2024
                                     Colors.LightGray
                                 ));
                             }
-							*/
+							
                         }
 
                         var groupImage = group.Descendants("img").FirstOrDefault()?.Attributes["src"].Value;
