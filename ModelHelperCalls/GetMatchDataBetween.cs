@@ -38,30 +38,35 @@ public static class MatchBetweenHelper
                         GuestGoals  = int.Parse(item.SelectSingleNode(".//div[@class='guestteam']//div[@class='goals']").InnerText.Trim())
                     };
 
-                    var actions = item.SelectNodes(".//div[@class='action']");
+                    // REPLACE your current 'if (actions != null) { ... }' block with this:
+
+                    var actions = item.SelectNodes(".//div[contains(@class,'action')]");
                     if (actions != null)
                     {
                         foreach (var action in actions)
                         {
-                            var matchAction = new MatchAction
-                            {
-                                TeamType   = action.SelectSingleNode(".//div[@class='matchaction']/../..").GetAttributeValue("class", ""),
-                                ActionType = action.SelectSingleNode(".//div[@class='matchaction']").ChildNodes[0].GetAttributeValue("class", ""),
-                                Player     = action.SelectSingleNode(".//div[@class='player']").InnerText.Trim()
-                            };
-
-                            // peel out "45'+ Player Name"
-                            var playerText   = matchAction.Player;
-                            var timeEndIndex = playerText.IndexOf('\'');
-                            if (timeEndIndex > 0)
-                            {
-                                matchAction.Time   = playerText.Substring(0, timeEndIndex + 1);
-                                matchAction.Player = playerText.Substring(timeEndIndex + 1).Trim();
-                            }
-
+                            // side: detect which team node is present in the action
+                            var hostNode = action.SelectSingleNode(".//div[contains(@class,'hostteam')]");
+                            var guestNode = action.SelectSingleNode(".//div[contains(@class,'guestteam')]");
+                            var side     = hostNode != null ? TeamSide.Host : TeamSide.Guest;
+                            var teamNode = hostNode ?? guestNode;
+                            if (teamNode == null) continue;
+                    
+                            // kind: the first child under ".matchaction" holds the marker (e.g., "goal", "ycard", "dycard", "penalty", "rcard")
+                            var marker   = teamNode.SelectSingleNode(".//div[contains(@class,'matchaction')]/div[1]");
+                            var kind     = ClassToActionKind(marker?.GetAttributeValue("class", "") ?? string.Empty);
+                    
+                            // minute + player: typical formats "26' Kiessling S." or "45+2' Player Name"
+                            var playerRaw = teamNode.SelectSingleNode(".//div[contains(@class,'player')]")?.InnerText?.Trim() ?? string.Empty;
+                            var (minute, player) = ParseMinuteAndPlayer(playerRaw);
+                    
+                            // build your new strongly-typed action
+                            var matchAction = new MatchAction(side, kind, minute, player);
+                    
                             matchItem.Actions.Add(matchAction);
                         }
                     }
+
 
                     matchData.Matches.Add(matchItem);
                 }
@@ -75,4 +80,42 @@ public static class MatchBetweenHelper
             return null;
         }
     }
+    
+    private static ActionKind ClassToActionKind(string cls)
+    {
+        if (string.IsNullOrWhiteSpace(cls)) return ActionKind.Unknown;
+    
+        // normalize to be safe with multiple classes
+        var c = cls.ToLowerInvariant();
+        if (c.Contains("goal"))    return ActionKind.Goal;
+        if (c.Contains("penalty")) return ActionKind.Penalty;
+        if (c.Contains("dycard"))  return ActionKind.SecondYellow;
+        if (c.Contains("ycard"))   return ActionKind.YellowCard;
+        if (c.Contains("rcard"))   return ActionKind.RedCard;
+    
+        return ActionKind.Unknown;
+    }
+    
+    private static (int? minute, string player) ParseMinuteAndPlayer(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return (null, string.Empty);
+    
+        // Matches: 90' Name   |  45+2' Name   |  5'Name
+        // Groups: 1=base, 2=extra (optional), 3=player
+        var m = System.Text.RegularExpressions.Regex.Match(
+            raw, @"^\s*(\d+)(?:\+(\d+))?\s*'\s*(.+?)\s*$");
+    
+        if (m.Success)
+        {
+            int baseMin = int.Parse(m.Groups[1].Value);
+            int extra   = string.IsNullOrEmpty(m.Groups[2].Value) ? 0 : int.Parse(m.Groups[2].Value);
+            var total   = baseMin + extra;
+            var player  = m.Groups[3].Value.Trim();
+            return (total, player);
+        }
+    
+        // Fallback: no minute parsed, keep raw as player
+        return (null, raw.Trim());
+    }
+
 }
