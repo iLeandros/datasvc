@@ -28,9 +28,25 @@ namespace DataSvc.ModelHelperCalls
                 document.LoadHtml(htmlContent);
 
                 // Heuristic: match container nodes. Adjust selectors to your actual markup if needed.
-                var matchNodes = document.DocumentNode.SelectNodes(
-                    "//div[contains(@class,'match') or contains(@class,'result')][contains(@class,'item') or contains(@class,'box') or contains(@class,'row') or contains(@class,'card')]"
-                ) ?? document.DocumentNode.SelectNodes("//div[contains(@class,'match-item') or contains(@class,'result-item')]");
+                var matchNodes =
+                    document.DocumentNode.SelectNodes(
+                        "//*[contains(@class,'matchitem') or contains(@class,'match-item') or " +
+                        "   contains(@class,'result-item') or " +
+                        "  (contains(@class,'match') and (contains(@class,'row') or contains(@class,'box') or contains(@class,'card')))]"
+                    )
+                    // common containers like lastteamsmatches / matchesbetween
+                    ?? document.DocumentNode.SelectNodes(
+                        "//*[contains(@class,'lastteamsmatches') or contains(@class,'matchesbetween')]//*[contains(@class,'match')]"
+                    );
+                
+                // Fallback: any node that clearly contains both a host and a guest team section
+                if (matchNodes == null || matchNodes.Count == 0)
+                {
+                    matchNodes = document.DocumentNode.SelectNodes(
+                        "//*[.//div[contains(@class,'hostteam')] and .//div[contains(@class,'guestteam')]]"
+                    );
+                }
+
 
                 if (matchNodes == null || matchNodes.Count == 0)
                     return matchData;
@@ -85,11 +101,12 @@ namespace DataSvc.ModelHelperCalls
                             var (minute, player) = ParseMinuteAndPlayer(raw);
                             if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue; // still nothing? skip
                     
-                            matchData.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
+                            //matchData.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
+                            matchItem.Actions.Add(new MatchAction(side, kind, minute, player));
+
                         }
                     }
-
-
+                    
                     matchData.Matches.Add(matchItem);
                 }
 
