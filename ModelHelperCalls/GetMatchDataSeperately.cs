@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.RegularExpressions;
 using HtmlAgilityPack;
 using DataSvc.Models;
 
@@ -26,7 +27,7 @@ public static class MatchSeparatelyHelper
 
             if (items == null || items.Count == 0) return data;
 
-            string Clean(HtmlNode? n) => HtmlEntity.DeEntitize(n?.InnerText ?? "").Trim();
+            string Clean(HtmlNode? n) => Normalize(n?.InnerText ?? "");
             int ToInt(HtmlNode? n) => int.TryParse(Clean(n), out var v) ? v : 0;
 
             foreach (var item in items)
@@ -43,36 +44,38 @@ public static class MatchSeparatelyHelper
                     HalfTime    = new HalfTimeScore(0, 0)
                 };
 
-                // Halftime (if available in this match card)
+                // Halftime (robust)
                 mi.HalfTime = ParseHalfTime(item);
+                // Reconcile if page listed guest-first
+                mi.HalfTime = ReconcileHalfTimeWithActions(mi);
 
-                // Actions inside this matchitem
+                // Actions: parse only from ".player" text; skip blanks
                 var actions = item.SelectNodes(".//*[contains(concat(' ',normalize-space(@class),' '),' action ')]");
                 if (actions != null)
                 {
                     foreach (var a in actions)
                     {
-                        // Determine side from ancestor classes
+                        // Player text (avoid taking the whole action node to skip icons/&nbsp;)
+                        var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
+                        var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+                        if (string.IsNullOrWhiteSpace(raw)) continue;
+
+                        // Infer side from nearest host/guest container
                         var sideClass = a.Ancestors("div")
                                          .Select(n => n.GetAttributeValue("class", "").ToLowerInvariant())
                                          .FirstOrDefault(c => c.Contains("hostteam") || c.Contains("guestteam")) ?? "";
-
                         var side = sideClass.Contains("guestteam")
                             ? TeamSide.Guest
-                            : sideClass.Contains("hostteam") ? TeamSide.Host : TeamSide.Host;
+                            : TeamSide.Host;
 
-                        // Class-to-kind mapping (check the action and its first inner marker)
-                        var markerContainer = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' matchaction ')]");
-                        var firstEl = markerContainer?.ChildNodes.FirstOrDefault(n => n.NodeType == HtmlNodeType.Element);
-                        var classStr = (firstEl?.GetAttributeValue("class", "") ?? a.GetAttributeValue("class", "")).ToLowerInvariant();
+                        // Kind: look for inner icon class
+                        var icon = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div") 
+                                   ?? a.SelectSingleNode(".//*[contains(@class,'matchaction')]");
+                        var classStr = (icon?.GetAttributeValue("class", "") ?? a.GetAttributeValue("class", "")).ToLowerInvariant();
                         var kind = ClassToActionKind(classStr);
 
-                        // Extract raw like "45+2' Player Name"
-                        var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
-                        var raw = Clean(playerNode ?? a);
+                        // Minute + player
                         var (minute, player) = ParseMinuteAndPlayer(raw);
-
-                        // Skip empty rows
                         if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
 
                         mi.Actions.Add(new MatchAction(side, kind, minute, player));
@@ -93,52 +96,78 @@ public static class MatchSeparatelyHelper
 
     // ---------- helpers ----------
 
+    private static string Normalize(string s)
+    {
+        if (s == null) return string.Empty;
+        // Html-decode, replace NBSP (char + entity), collapse whitespace
+        var decoded = HtmlEntity.DeEntitize(s).Replace('\u00A0', ' ').Replace("&nbsp;", " ");
+        return Regex.Replace(decoded, @"\s+", " ").Trim();
+    }
+
     private static HalfTimeScore ParseHalfTime(HtmlNode matchItemNode)
     {
-        // Examples supported:
-        // <div class="halftime"><div class="goals">1</div><div class="goals">0</div></div>
-        // <div class="ht">HT: 1-0</div>
+        // 1) Classic "ht/halftime" holder
         var holder = matchItemNode.SelectSingleNode(
             ".//div[contains(@class,'halftime') or contains(@class,'half-time') or contains(@class,'ht')]"
         );
-
-        if (holder == null)
+        if (holder != null)
         {
-            // Try to parse "HT 1-0" from a score/result area
-            var scoreTextNode = matchItemNode.SelectSingleNode(".//div[contains(@class,'score') or contains(@class,'result')]");
-            var scoreText = HtmlEntity.DeEntitize(scoreTextNode?.InnerText ?? "").Trim();
-            if (!string.IsNullOrWhiteSpace(scoreText))
-            {
-                var m2 = System.Text.RegularExpressions.Regex.Match(
-                    scoreText, @"HT\s*[:\-]?\s*(\d+)\s*[-:]\s*(\d+)",
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase
-                );
-                if (m2.Success)
-                {
-                    return new HalfTimeScore(ParseIntSafe(m2.Groups[1].Value), ParseIntSafe(m2.Groups[2].Value));
-                }
-            }
-            return new HalfTimeScore(0, 0);
+            var goalNodes = holder.SelectNodes(".//div[contains(@class,'goals') or contains(@class,'score')]");
+            if (goalNodes != null && goalNodes.Count >= 2)
+                return new HalfTimeScore(ParseIntSafe(goalNodes[0].InnerText), ParseIntSafe(goalNodes[1].InnerText));
+
+            var text = Normalize(holder.InnerText);
+            var m = Regex.Match(text, @"(\d+)\s*[-:]\s*(\d+)");
+            if (m.Success)
+                return new HalfTimeScore(ParseIntSafe(m.Groups[1].Value), ParseIntSafe(m.Groups[2].Value));
         }
 
-        // Structured holders
-        var goalNodes = holder.SelectNodes(".//div[contains(@class,'goals') or contains(@class,'score')]");
-        if (goalNodes != null && goalNodes.Count >= 2)
+        // 2) Statarea-like: details > info > holder > goals goals
+        var infoHolderGoals = matchItemNode.SelectNodes(".//div[@class='details']//div[@class='info']//div[@class='holder']/div[@class='goals']");
+        if (infoHolderGoals != null && infoHolderGoals.Count >= 2)
         {
-            var host = ParseIntSafe(goalNodes[0].InnerText);
-            var guest = ParseIntSafe(goalNodes[1].InnerText);
-            return new HalfTimeScore(host, guest);
+            return new HalfTimeScore(ParseIntSafe(infoHolderGoals[0].InnerText), ParseIntSafe(infoHolderGoals[1].InnerText));
         }
 
-        // Try "1-0" inside the holder text
-        var text = HtmlEntity.DeEntitize(holder.InnerText ?? "").Trim();
-        var m = System.Text.RegularExpressions.Regex.Match(text, @"(\d+)\s*[-:]\s*(\d+)");
-        if (m.Success)
+        // 3) "HT x-y" inside a score/result text
+        var scoreTextNode = matchItemNode.SelectSingleNode(".//div[contains(@class,'score') or contains(@class,'result')]");
+        var scoreText = Normalize(scoreTextNode?.InnerText ?? "");
+        if (!string.IsNullOrWhiteSpace(scoreText))
         {
-            return new HalfTimeScore(ParseIntSafe(m.Groups[1].Value), ParseIntSafe(m.Groups[2].Value));
+            var m2 = Regex.Match(scoreText, @"HT\s*[:\-]?\s*(\d+)\s*[-:]\s*(\d+)", RegexOptions.IgnoreCase);
+            if (m2.Success)
+                return new HalfTimeScore(ParseIntSafe(m2.Groups[1].Value), ParseIntSafe(m2.Groups[2].Value));
         }
 
         return new HalfTimeScore(0, 0);
+    }
+
+    private static HalfTimeScore ReconcileHalfTimeWithActions(MatchItem mi)
+    {
+        if (mi == null) return new HalfTimeScore(0, 0);
+
+        // Count first-half goals from actions (<= 50' to include stoppage)
+        const int cutoff = 50;
+        bool Goalish(ActionKind k) => k == ActionKind.Goal || k == ActionKind.Penalty;
+
+        int fhHost = mi.Actions.Count(a =>
+            a.Side == TeamSide.Host && a.Minute.HasValue && a.Minute.Value <= cutoff && Goalish(a.Kind));
+
+        int fhGuest = mi.Actions.Count(a =>
+            a.Side == TeamSide.Guest && a.Minute.HasValue && a.Minute.Value <= cutoff && Goalish(a.Kind));
+
+        int parsedHost = mi.HalfTime.Host;
+        int parsedGuest = mi.HalfTime.Guest;
+
+        // If totals differ, trust parsed (maybe missing events)
+        if ((parsedHost + parsedGuest) != (fhHost + fhGuest))
+            return mi.HalfTime;
+
+        // If inverted, swap
+        if (parsedHost != fhHost && parsedGuest == fhHost && parsedHost == fhGuest)
+            return new HalfTimeScore(parsedGuest, parsedHost);
+
+        return mi.HalfTime;
     }
 
     private static ActionKind ClassToActionKind(string cls)
@@ -155,30 +184,33 @@ public static class MatchSeparatelyHelper
 
     private static (int? minute, string player) ParseMinuteAndPlayer(string raw)
     {
-        if (string.IsNullOrWhiteSpace(raw))
-            return (null, string.Empty);
+        var text = Normalize(raw);
 
-        // Supports: 45' Player, 45+2' Player, 90 + 3' Player
-        var m = System.Text.RegularExpressions.Regex.Match(
-            raw, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'\s*(.+?)\s*$"
-        );
-
+        // 45' Name / 45+2' Name / 90 + 3' Name
+        var m = Regex.Match(text, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'\s*(.+?)\s*$");
         if (m.Success)
         {
             int baseMin = int.Parse(m.Groups[1].Value);
             int extra   = string.IsNullOrEmpty(m.Groups[2].Value) ? 0 : int.Parse(m.Groups[2].Value);
-            var total   = baseMin + extra;
-            var player  = m.Groups[3].Value.Trim();
-            return (total, player);
+            return (baseMin + extra, m.Groups[3].Value.Trim());
         }
 
-        // Fallback: no minute parsed; treat entire string as player name
-        return (null, raw.Trim());
+        // Also accept "19'Name" (no space)
+        m = Regex.Match(text, @"^\s*(\d+)(?:\s*\+\s*(\d+))?\s*'(.+?)\s*$");
+        if (m.Success)
+        {
+            int baseMin = int.Parse(m.Groups[1].Value);
+            int extra   = string.IsNullOrEmpty(m.Groups[2].Value) ? 0 : int.Parse(m.Groups[2].Value);
+            return (baseMin + extra, m.Groups[3].Value.Trim());
+        }
+
+        // Last resort: treat as player
+        return (null, text);
     }
 
     private static int ParseIntSafe(string? s)
     {
-        if (int.TryParse((s ?? string.Empty).Trim(), out var v)) return v;
+        if (int.TryParse(Normalize(s ?? ""), out var v)) return v;
         return 0;
     }
 }
