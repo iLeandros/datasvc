@@ -34,6 +34,7 @@ public class TableDataItem
     public string? YourPrediction { get; set; }
     public string? Href { get; set; }
     public string? RowBackground { get; set; }
+    public MatchDetails Details { get; set; } // set after construction
     
 
     public TableDataItem() { }
