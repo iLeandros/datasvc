@@ -3032,6 +3032,21 @@ public static class LiveScoresFiles
                             {
                                 foreach (var m in msEl.EnumerateArray())
                                 {
+									var actions = new List<MatchAction>();
+									if (m.TryGetProperty("Action", out var actEl) && actEl.ValueKind == JsonValueKind.Array)
+									{
+									    foreach (var a in actEl.EnumerateArray())
+									    {
+									        var side   = (TeamSide)a.GetProperty("Side").GetInt32();
+									        var kind   = (ActionKind)a.GetProperty("Kind").GetInt32();
+									        int? minute = a.TryGetProperty("Minute", out var minEl) && minEl.ValueKind != JsonValueKind.Null
+									            ? minEl.GetInt32()
+									            : (int?)null;
+									        var player = a.GetProperty("Player").GetString() ?? "";
+									        actions.Add(new MatchAction(side, kind, minute, player));
+									    }
+									}
+									
                                     matches.Add(new LiveScoreItem(
                                         m.GetProperty("Time").GetString() ?? "",
                                         m.GetProperty("Status").GetString() ?? "",
@@ -3039,7 +3054,7 @@ public static class LiveScoresFiles
                                         m.GetProperty("HomeGoals").GetString() ?? "",
                                         m.GetProperty("AwayGoals").GetString() ?? "",
                                         m.GetProperty("AwayTeam").GetString() ?? "",
-										m.GetProperty("Action").GetString() ?? ""
+										actions
                                     ));
                                 }
                             }
