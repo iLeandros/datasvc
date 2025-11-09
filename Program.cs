@@ -3038,7 +3038,8 @@ public static class LiveScoresFiles
                                         m.GetProperty("HomeTeam").GetString() ?? "",
                                         m.GetProperty("HomeGoals").GetString() ?? "",
                                         m.GetProperty("AwayGoals").GetString() ?? "",
-                                        m.GetProperty("AwayTeam").GetString() ?? ""
+                                        m.GetProperty("AwayTeam").GetString() ?? "",
+										null
                                     ));
                                 }
                             }
