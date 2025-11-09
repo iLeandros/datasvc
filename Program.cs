@@ -2912,7 +2912,8 @@ public record LiveScoreItem(
     string HomeTeam,
     string HomeGoals,
     string AwayGoals,
-    string AwayTeam
+    string AwayTeam,
+	List<MatchAction> Actions { get; set; } = new();
 );
 
 public record LiveScoreGroup(
