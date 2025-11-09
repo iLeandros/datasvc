@@ -123,7 +123,8 @@ public static class LiveScoresParser
                 homeName,
                 homeGoals,
                 awayGoals,
-                awayName
+                awayName,
+                Actions
             ));
         }
 
