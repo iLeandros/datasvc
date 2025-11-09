@@ -117,6 +117,35 @@ public static class LiveScoresParser
 
             var Actions     = new List<MatchAction>();
 
+            // Actions inside this matchitem (top-level .action blocks)
+            var actions = item.SelectNodes(".//div[contains(concat(' ',normalize-space(@class),' '),' action ')]");
+            if (actions != null)
+            {
+                foreach (var a in actions)
+                {
+                    // Player text (only from .player node)
+                    var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
+                    var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+                    if (string.IsNullOrWhiteSpace(raw)) continue; // skip icon-only rows
+                  
+                    // Infer side from nearest host/guest container
+                    var side = SideFromAction(a);
+                   
+                    // Kind from the icon classes
+                    var icon = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+                    var classStr = (icon?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+                    var kind = ClassToActionKind(classStr);
+                 
+                    // "45+2' Player Name" → (47, "Player Name")
+                    var (minute, player) = ParseMinuteAndPlayer(raw);
+                    if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue; // still nothing? skip
+                 
+                    //matchData.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
+                    matchItem.Actions.Add(new MatchAction(side, kind, minute, player));
+
+                }
+            }
+
             list.Add(new LiveScoreItem(
                 time,
                 status,
