@@ -115,37 +115,42 @@ public static class LiveScoresParser
             var awayName  = Clean(awayNameNode);
             var awayGoals = Clean(awayGoalsNode);
 
-            var Actions     = new List<MatchAction>();
+            var actionsList = new List<MatchAction>();
 
-            // Actions inside this matchitem (top-level .action blocks)
-            var actions = m.SelectNodes(".//div[contains(concat(' ',normalize-space(@class),' '),' action ')]");
-            if (actions != null)
+            // Focus on the matchactions panel
+            var actionsRoot = m.SelectSingleNode(
+                ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
+            );
+            
+            var actionNodes = actionsRoot?
+                .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
+                ?? new HtmlNodeCollection(null);
+            
+            foreach (var a in actionNodes)
             {
-                foreach (var a in actions)
-                {
-                    // Player text (only from .player node)
-                    var playerNode = a.SelectSingleNode(".//*[contains(concat(' ',normalize-space(@class),' '),' player ')]");
-                    var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-                    if (string.IsNullOrWhiteSpace(raw)) continue; // skip icon-only rows
-                  
-                    // Infer side from nearest host/guest container
-                    var side = SideFromAction(a);
-                   
-                    // Kind from the icon classes
-                    var icon = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
-                    var classStr = (icon?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
-                    var kind = ClassToActionKind(classStr);
-                 
-                    // "45+2' Player Name" → (47, "Player Name")
-                    var (minute, player) = ParseMinuteAndPlayer(raw);
-                    if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue; // still nothing? skip
-                 
-                    //matchData.Matches.Last().Actions.Add(new MatchAction(side, kind, minute, player));
-                    Actions.Add(new MatchAction(side, kind, minute, player));
-
-                }
+                // Player text
+                var playerNode = a.SelectSingleNode(
+                    ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
+                );
+                var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+                if (string.IsNullOrWhiteSpace(raw)) continue;
+            
+                // Side
+                var side = SideFromAction(a); // works with your HTML
+            
+                // Icon → kind
+                var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+                var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+                var kind = ClassToActionKind(classStr);
+            
+                // Minute + player name
+                var (minute, player) = ParseMinuteAndPlayer(raw);
+                if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
+            
+                actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-
+            
+            // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
                 time,
                 status,
@@ -153,8 +158,9 @@ public static class LiveScoresParser
                 homeGoals,
                 awayGoals,
                 awayName,
-                Actions
+                actionsList
             ));
+
         }
 
         return list;
