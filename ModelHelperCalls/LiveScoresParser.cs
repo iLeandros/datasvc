@@ -115,6 +115,8 @@ public static class LiveScoresParser
             var awayName  = Clean(awayNameNode);
             var awayGoals = Clean(awayGoalsNode);
 
+            var Actions     = new List<MatchAction>();
+
             list.Add(new LiveScoreItem(
                 time,
                 status,
