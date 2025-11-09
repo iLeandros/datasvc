@@ -118,7 +118,7 @@ public static class LiveScoresParser
             var Actions     = new List<MatchAction>();
 
             // Actions inside this matchitem (top-level .action blocks)
-            var actions = item.SelectNodes(".//div[contains(concat(' ',normalize-space(@class),' '),' action ')]");
+            var actions = m.SelectNodes(".//div[contains(concat(' ',normalize-space(@class),' '),' action ')]");
             if (actions != null)
             {
                 foreach (var a in actions)
