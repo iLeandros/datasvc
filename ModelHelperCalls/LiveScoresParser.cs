@@ -119,11 +119,11 @@ public static class LiveScoresParser
 
             // Focus on the matchactions panel
             var actionsRoot = m.SelectSingleNode(
-                ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
+                ".//*[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
             );
             
             var actionNodes = actionsRoot?
-                .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
+                .SelectNodes(".//*[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
                 ?? new HtmlNodeCollection(null);
             
             foreach (var a in actionNodes)
