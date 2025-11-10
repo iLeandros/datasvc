@@ -118,7 +118,7 @@ public static class LiveScoresParser
             var awayGoals = Clean(awayGoalsNode);
 
             var actionsList = new List<MatchAction>();
-            /*
+            
             // Focus on the matchactions panel
             var actionsRoot = m.SelectSingleNode(
                 ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
@@ -152,7 +152,7 @@ public static class LiveScoresParser
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
             string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
-            */
+            
             //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, "wtf"));
             
