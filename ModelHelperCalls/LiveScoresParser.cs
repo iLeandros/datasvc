@@ -133,7 +133,7 @@ public static class LiveScoresParser
                     ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
                 );
                 var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-                if (string.IsNullOrWhiteSpace(raw)) continue;
+                //if (string.IsNullOrWhiteSpace(raw)) continue;
             
                 // Side
                 var side = SideFromAction(a); // works with your HTML
