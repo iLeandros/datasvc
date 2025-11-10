@@ -154,7 +154,7 @@ public static class LiveScoresParser
             string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
             
             //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, "wtf"));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, decoded));
             
             // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
