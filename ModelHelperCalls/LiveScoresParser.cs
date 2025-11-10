@@ -3,6 +3,8 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using HtmlAgilityPack;
 using System.Text.Json;
+using System.Net.Http;
+using System.Net.Http.Headers;
 using DataSvc.Models; // BarChart, MatchFactData
 
 namespace DataSvc.ModelHelperCalls;
@@ -99,8 +101,8 @@ public static class LiveScoresParser
     
         foreach (var m in matchNodes)
         {
-            // match id from <div class="match" id="1455348">
-            var matchId = m.GetAttributeValue("id", string.Empty);
+            // NEW: get match id from <div class="match" id="1455348">
+            var matchId = m.GetAttributeValue("id", string.Empty).Trim();
     
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
@@ -120,36 +122,56 @@ public static class LiveScoresParser
     
             var actionsList = new List<MatchAction>();
     
-            // 2) If no actions were found in the main HTML, hit the Ajax endpoint
+            // ---- 1) ORIGINAL LOGIC: parse any inline .matchactions on the page ----
+    
+            var actionsRoot = m.SelectSingleNode(
+                ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
+            );
+    
+            var actionNodes = actionsRoot?
+                .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
+                ?? new HtmlNodeCollection(null);
+    
+            foreach (var a in actionNodes)
+            {
+                // Player text
+                var playerNode = a.SelectSingleNode(
+                    ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
+                );
+                var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+    
+                // Side
+                var side = SideFromAction(a);
+    
+                // Icon → kind
+                var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+                var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+                var kind = ClassToActionKind(classStr);
+    
+                // Minute + player name
+                var (minute, player) = ParseMinuteAndPlayer(raw);
+                if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
+    
+                actionsList.Add(new MatchAction(side, kind, minute, player));
+            }
+    
+            // ---- 2) NEW: if no actions yet, hit the Ajax endpoint and parse that snippet ----
+    
             if (actionsList.Count == 0 && !string.IsNullOrEmpty(matchId))
             {
                 try
                 {
-                    using var http = new HttpClient();
-    
-                    // call your Ajax helper synchronously from this sync method
-                    var ajaxHtml = FetchMatchActionsHtmlAsync(
-                            http,
-                            matchId,
-                            dateIsoForReferrer: dateIso,        // optional, you can thread date in later if you want
-                            ct: CancellationToken.None)
-                        .GetAwaiter()
-                        .GetResult();
+                    var ajaxHtml = FetchMatchActionsHtml(matchId);
     
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
-                        // Some responses may still contain \u003C, just in case:
-                        var fixedHtml = ajaxHtml.Replace("\\u003C", "<").Replace("\\u003E", ">");
-    
                         var ajaxDoc = new HtmlDocument();
-                        ajaxDoc.LoadHtml(fixedHtml);
+                        ajaxDoc.LoadHtml(ajaxHtml);
     
-                        // The snippet might already be the inner of matchactions, or have its own wrapper
-                        var ajaxRoot = ajaxDoc.DocumentNode.SelectSingleNode(
-                            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
-                        ) ?? ajaxDoc.DocumentNode;
-    
-                        var ajaxNodes = ajaxRoot
+                        // The snippet you got with curl is already a bunch of <div class='action'> elements,
+                        // sometimes with a leading <div class='info'>, <div class='teamtitle'> etc.
+                        // So we can just treat the whole document node as the root and scan for .action.
+                        var ajaxNodes = ajaxDoc.DocumentNode
                             .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
                             ?? new HtmlNodeCollection(null);
     
@@ -167,8 +189,7 @@ public static class LiveScoresParser
                             var kind = ClassToActionKind(classStr);
     
                             var (minute, player) = ParseMinuteAndPlayer(raw);
-                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue)
-                                continue;
+                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
     
                             actionsList.Add(new MatchAction(side, kind, minute, player));
                         }
@@ -176,16 +197,15 @@ public static class LiveScoresParser
                 }
                 catch (Exception ex)
                 {
-                    // Don't bring down the whole day if actions fail, just log & move on
-                    Debug.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex.Message}");
+                    // Use Console.WriteLine so it shows up in `journalctl -u datasvc`
+                    Console.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex}");
                 }
             }
     
-            // REMOVE the debug fake actions now
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionsList.Count, matchId));
+            // ---- remove or keep your debug lines as you like ----
+            // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "furk"));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
     
-            // Construct LiveScoreItem (unchanged)
             list.Add(new LiveScoreItem(
                 time,
                 status,
@@ -203,15 +223,18 @@ public static class LiveScoresParser
     /// <summary>
     /// Fetches the HTML snippet for the livescore actions of a single match.
     /// </summary>
-    private static async Task<string> FetchMatchActionsHtmlAsync(
-        HttpClient http,
-        string matchId,
-        string? dateIsoForReferrer = null,
-        CancellationToken ct = default)
+    private static string FetchMatchActionsHtml(string matchId)
     {
+        // This mirrors the curl you just ran:
+        // POST https://www.statarea.com/actions/controller/
+        // Content-Type: application/x-www-form-urlencoded; charset=UTF-8
+        // body: object={"action":"getLivescoreMatchActions","matchid":"1455348"}
+    
+        using var http = new HttpClient();
+    
         var payloadObject = new
         {
-            action = "getLivescoreMatchActions",
+            action  = "getLivescoreMatchActions",
             matchid = matchId
         };
     
@@ -222,11 +245,14 @@ public static class LiveScoresParser
             new KeyValuePair<string, string>("object", json),
         });
     
-        using var req = new HttpRequestMessage(HttpMethod.Post, "https://www.statarea.com/actions/controller/")
+        using var req = new HttpRequestMessage(
+            HttpMethod.Post,
+            "https://www.statarea.com/actions/controller/")
         {
             Content = form
         };
     
+        req.Headers.Accept.Clear();
         req.Headers.Accept.ParseAdd("*/*");
         req.Headers.Add("X-Requested-With", "XMLHttpRequest");
         req.Headers.UserAgent.ParseAdd(
@@ -234,18 +260,15 @@ public static class LiveScoresParser
             "AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/142.0.0.0 Safari/537.36");
     
-        if (!string.IsNullOrWhiteSpace(dateIsoForReferrer))
-        {
-            req.Headers.Referrer = new Uri(
-                $"https://www.statarea.com/livescore/date/{dateIsoForReferrer.TrimEnd('/')}/");
-        }
+        // Optional; you can pass a date if you want the referrer to match
+        // req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
     
-        using var resp = await http.SendAsync(req, ct);
+        var resp = http.SendAsync(req).GetAwaiter().GetResult();
         resp.EnsureSuccessStatusCode();
     
-        return await resp.Content.ReadAsStringAsync(ct);
+        var html = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        return html;
     }
-
     
     private static TeamSide SideFromAction(HtmlNode actionNode)
         {
