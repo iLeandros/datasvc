@@ -121,7 +121,7 @@ public static class LiveScoresParser
             var awayGoals     = Clean(awayGoalsNode);
     
             var actionsList = new List<MatchAction>();
-    
+            /*
             // ---- 1) ORIGINAL LOGIC: parse any inline .matchactions on the page ----
     
             var actionsRoot = m.SelectSingleNode(
@@ -154,7 +154,7 @@ public static class LiveScoresParser
     
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-    
+            */
             // ---- 2) NEW: if no actions yet, hit the Ajax endpoint and parse that snippet ----
     
             if (actionsList.Count == 0 && !string.IsNullOrEmpty(matchId))
