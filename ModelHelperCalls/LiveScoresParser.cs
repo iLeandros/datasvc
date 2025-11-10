@@ -15,7 +15,7 @@ public static class LiveScoresParser
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
     /// </summary>
-    public static LiveScoreDay ParseDay(string html, string dateIso)
+    public static async Task<LiveScoreDay> ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
         //var htmlDesirialized = html.Replace("\\u003C", "<").Replace("\\u003E", ">");
@@ -61,7 +61,7 @@ public static class LiveScoresParser
         if (compNodes.Count == 0)
         {
             // No competition wrappers — parse any matches directly under the chosen block.
-            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
+            var matches = await ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
             if (matches.Count > 0)
                 groups.Add(new LiveScoreGroup("All matches", matches));
 
@@ -79,7 +79,7 @@ public static class LiveScoresParser
 
             // Matches are usually inside a .body container, but sometimes directly under comp.
             var body = comp.SelectSingleNode(".//div[contains(@class,'body')]") ?? comp;
-            var matches = ParseMatchesFromScope(body, dateIso);
+            var matches = await ParseMatchesFromScope(body, dateIso);
 
             // Only add groups that have a name or at least 1 match (to avoid empty noise)
             if (matches.Count > 0 || !string.IsNullOrWhiteSpace(compName))
@@ -91,7 +91,7 @@ public static class LiveScoresParser
 
     // ----------------- helpers -----------------
 
-    private static async List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope, string dateIso)
+    private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
 
