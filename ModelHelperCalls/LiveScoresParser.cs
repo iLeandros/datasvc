@@ -164,7 +164,7 @@ public static class LiveScoresParser
                     var client = new GetLiveMatchActionHelper();
                     //string matchId = "1455341"; // or any other id
                     var ajaxHtml = await client.GetLivescoreMatchActionsAsync(matchId, dateIso);
-    
+                    /*
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
                         var ajaxDoc = new HtmlDocument();
@@ -197,6 +197,7 @@ public static class LiveScoresParser
                         }
                         actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 22, "WTFFF"));
                     }
+                    */
                     actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 44, "WTFFF"));
                 }
                 catch (Exception ex)
