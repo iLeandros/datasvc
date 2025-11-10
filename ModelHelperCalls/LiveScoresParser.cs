@@ -17,7 +17,7 @@ public static class LiveScoresParser
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
     /// </summary>
-    public static LiveScoreDay ParseDay(string html, string dateIso)
+    public static async Task<LiveScoreDay> ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
         //var htmlDesirialized = html.Replace("\\u003C", "<").Replace("\\u003E", ">");
@@ -63,7 +63,7 @@ public static class LiveScoresParser
         if (compNodes.Count == 0)
         {
             // No competition wrappers — parse any matches directly under the chosen block.
-            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
+            var matches = await ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
             if (matches.Count > 0)
                 groups.Add(new LiveScoreGroup("All matches", matches));
 
@@ -81,7 +81,7 @@ public static class LiveScoresParser
 
             // Matches are usually inside a .body container, but sometimes directly under comp.
             var body = comp.SelectSingleNode(".//div[contains(@class,'body')]") ?? comp;
-            var matches = ParseMatchesFromScope(body, dateIso);
+            var matches = await ParseMatchesFromScope(body, dateIso);
 
             // Only add groups that have a name or at least 1 match (to avoid empty noise)
             if (matches.Count > 0 || !string.IsNullOrWhiteSpace(compName))
@@ -92,7 +92,7 @@ public static class LiveScoresParser
     }
 
     // ----------------- helpers -----------------
-   private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope, string dateIso)
+   private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
     
@@ -159,7 +159,7 @@ public static class LiveScoresParser
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 1111, "ARIS"));
             try
                 {
-                    var ajaxHtml = FetchMatchActionsHtml(matchId, dateIso);
+                    var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
     
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
@@ -222,7 +222,7 @@ public static class LiveScoresParser
     /// <summary>
     /// Fetches the HTML snippet for the livescore actions of a single match.
     /// </summary>
-    private static string FetchMatchActionsHtml(string matchId, string dateIso)
+    private static async Task<string> FetchMatchActionsHtml(string matchId, string dateIso)
     {
         // This mirrors the curl you just ran:
         // POST https://www.statarea.com/actions/controller/
@@ -262,10 +262,10 @@ public static class LiveScoresParser
         // Optional; you can pass a date if you want the referrer to match
         req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
     
-        var resp = http.SendAsync(req).GetAwaiter().GetResult();
+        var resp = await http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
     
-        var html = resp.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var html = await resp.Content.ReadAsStringAsync();
         return html;
     }
     
