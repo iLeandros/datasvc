@@ -15,7 +15,7 @@ public static class LiveScoresParser
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
     /// </summary>
-    public static async Task<LiveScoreDay> ParseDay(string html, string dateIso)
+    public static LiveScoreDay ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
         //var htmlDesirialized = html.Replace("\\u003C", "<").Replace("\\u003E", ">");
@@ -61,7 +61,7 @@ public static class LiveScoresParser
         if (compNodes.Count == 0)
         {
             // No competition wrappers — parse any matches directly under the chosen block.
-            var matches = await ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
+            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode);
             if (matches.Count > 0)
                 groups.Add(new LiveScoreGroup("All matches", matches));
 
@@ -79,7 +79,7 @@ public static class LiveScoresParser
 
             // Matches are usually inside a .body container, but sometimes directly under comp.
             var body = comp.SelectSingleNode(".//div[contains(@class,'body')]") ?? comp;
-            var matches = await ParseMatchesFromScope(body, dateIso);
+            var matches = ParseMatchesFromScope(body);
 
             // Only add groups that have a name or at least 1 match (to avoid empty noise)
             if (matches.Count > 0 || !string.IsNullOrWhiteSpace(compName))
@@ -90,54 +90,45 @@ public static class LiveScoresParser
     }
 
     // ----------------- helpers -----------------
-
-    private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
+   private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope)
     {
         var list = new List<LiveScoreItem>();
-
+    
         var matchNodes = scope.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' match ')]")
                          ?? new HtmlNodeCollection(null);
-
+    
         foreach (var m in matchNodes)
         {
             // match id from <div class="match" id="1455348">
-            var matchId = m.GetAttributeValue("id", string.Empty); // <- this is what you'll use for Ajax
-
+            var matchId = m.GetAttributeValue("id", string.Empty);
+    
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
             var status = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'status')]"));
-
+    
             // home
             var homeNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'name')]");
             var homeGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'hostteam')]//*[contains(@class,'goals')]");
-            //var homeName  = NormalizeTeam(Clean(homeNameNode));
-            var homeName  = Clean(homeNameNode);
-            var homeGoals = Clean(homeGoalsNode);
-
+            var homeName      = Clean(homeNameNode);
+            var homeGoals     = Clean(homeGoalsNode);
+    
             // away
             var awayNameNode  = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'name')]");
             var awayGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'goals')]");
-            //var awayName  = NormalizeTeam(Clean(awayNameNode));
-            var awayName  = Clean(awayNameNode);
-            var awayGoals = Clean(awayGoalsNode);
-
+            var awayName      = Clean(awayNameNode);
+            var awayGoals     = Clean(awayGoalsNode);
+    
             var actionsList = new List<MatchAction>();
-
-            // inside LiveScoresScraperService, after you know matchId & dateIso
-            var actionsHtml = await FetchMatchActionsHtmlAsync(
-                new HttpClient(),
-                matchId: matchId.ToString(),
-                dateIsoForReferrer: dateIso);
-            
-            // Focus on the matchactions panel
+    
+            // 1) Try to get actions from the main page's .matchactions (your original logic)
             var actionsRoot = m.SelectSingleNode(
                 ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
             );
-            
+    
             var actionNodes = actionsRoot?
                 .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
                 ?? new HtmlNodeCollection(null);
-            
+    
             foreach (var a in actionNodes)
             {
                 // Player text
@@ -145,28 +136,89 @@ public static class LiveScoresParser
                     ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
                 );
                 var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-                //if (string.IsNullOrWhiteSpace(raw)) continue;
-            
+    
                 // Side
-                var side = SideFromAction(a); // works with your HTML
-            
+                var side = SideFromAction(a);
+    
                 // Icon → kind
                 var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
                 var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
                 var kind = ClassToActionKind(classStr);
-            
+    
                 // Minute + player name
                 var (minute, player) = ParseMinuteAndPlayer(raw);
-                if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
-            
+                if (string.IsNullOrWhiteSpace(player) && !minute.HasValue)
+                    continue;
+    
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            //string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
-            
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "Burk"));
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsHtml));
-            
-            // later, when constructing LiveScoreItem:
+    
+            // 2) If no actions were found in the main HTML, hit the Ajax endpoint
+            if (actionsList.Count == 0 && !string.IsNullOrEmpty(matchId))
+            {
+                try
+                {
+                    using var http = new HttpClient();
+    
+                    // call your Ajax helper synchronously from this sync method
+                    var ajaxHtml = FetchMatchActionsHtmlAsync(
+                            http,
+                            matchId,
+                            dateIsoForReferrer: null,        // optional, you can thread date in later if you want
+                            ct: CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult();
+    
+                    if (!string.IsNullOrWhiteSpace(ajaxHtml))
+                    {
+                        // Some responses may still contain \u003C, just in case:
+                        var fixedHtml = ajaxHtml.Replace("\\u003C", "<").Replace("\\u003E", ">");
+    
+                        var ajaxDoc = new HtmlDocument();
+                        ajaxDoc.LoadHtml(fixedHtml);
+    
+                        // The snippet might already be the inner of matchactions, or have its own wrapper
+                        var ajaxRoot = ajaxDoc.DocumentNode.SelectSingleNode(
+                            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
+                        ) ?? ajaxDoc.DocumentNode;
+    
+                        var ajaxNodes = ajaxRoot
+                            .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
+                            ?? new HtmlNodeCollection(null);
+    
+                        foreach (var a in ajaxNodes)
+                        {
+                            var playerNode = a.SelectSingleNode(
+                                ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
+                            );
+                            var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+    
+                            var side = SideFromAction(a);
+    
+                            var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+                            var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+                            var kind = ClassToActionKind(classStr);
+    
+                            var (minute, player) = ParseMinuteAndPlayer(raw);
+                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue)
+                                continue;
+    
+                            actionsList.Add(new MatchAction(side, kind, minute, player));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Don't bring down the whole day if actions fail, just log & move on
+                    Debug.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex.Message}");
+                }
+            }
+    
+            // REMOVE the debug fake actions now
+            // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "furk"));
+            // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
+    
+            // Construct LiveScoreItem (unchanged)
             list.Add(new LiveScoreItem(
                 time,
                 status,
@@ -176,10 +228,8 @@ public static class LiveScoresParser
                 awayName,
                 actionsList
             ));
-
-
         }
-
+    
         return list;
     }
 
