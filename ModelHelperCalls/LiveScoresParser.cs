@@ -99,6 +99,11 @@ public static class LiveScoresParser
 
         foreach (var m in matchNodes)
         {
+            if (m.Contains("\\u003C") || html.TrimStart().StartsWith("\""))
+            {
+                // very rough, but works if the body is a JSON string
+                m = JsonSerializer.Deserialize<string>(m) ?? m;
+            }
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
             var status = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'status')]"));
