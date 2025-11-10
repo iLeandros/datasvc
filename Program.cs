@@ -2913,7 +2913,8 @@ public record LiveScoreItem(
     string HomeGoals,
     string AwayGoals,
     string AwayTeam,
-	List<MatchAction> Action
+	List<MatchAction> Action,
+	string MatchID
 );
 
 public record LiveScoreGroup(
@@ -3054,7 +3055,8 @@ public static class LiveScoresFiles
                                         m.GetProperty("HomeGoals").GetString() ?? "",
                                         m.GetProperty("AwayGoals").GetString() ?? "",
                                         m.GetProperty("AwayTeam").GetString() ?? "",
-										actions
+										actions,
+										m.GetProperty("MatchID").GetString() ?? "",
                                     ));
                                 }
                             }
