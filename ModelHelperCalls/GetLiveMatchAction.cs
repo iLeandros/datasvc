@@ -44,8 +44,8 @@ public class GetLiveMatchActionHelper
         request.Headers.Add("Origin", "https://www.statarea.com");
 
         // Use today's date in the referer URL (or hard-code if you prefer)
-        //var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
+        var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
 
         // User-Agent
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
