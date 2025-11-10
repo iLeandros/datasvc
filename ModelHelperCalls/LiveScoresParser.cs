@@ -182,7 +182,7 @@ public static class LiveScoresParser
             }
     
             // REMOVE the debug fake actions now
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, matchId));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionsList.Count, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
     
             // Construct LiveScoreItem (unchanged)
