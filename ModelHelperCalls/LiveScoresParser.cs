@@ -151,10 +151,10 @@ public static class LiveScoresParser
             
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
+            //string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
             
-            //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, decoded));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, m.InnerHtml));
             
             // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
