@@ -102,7 +102,7 @@ public static class LiveScoresParser
             if (m.InnerHtml.Contains("\\u003C") || m.InnerHtml.TrimStart().StartsWith("\""))
             {
                 // very rough, but works if the body is a JSON string
-                m.InnerHtml = JsonSerializer.Deserialize<string>(m) ?? m;
+                m.InnerHtml = JsonSerializer.Deserialize<string>(m) ?? m.InnerHtml;
             }
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
