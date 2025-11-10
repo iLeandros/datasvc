@@ -10,6 +10,7 @@ namespace DataSvc.ModelHelperCalls;
 // ---------- LiveScores: HTML parser ----------
 public static class LiveScoresParser
 {
+    private static readonly Uri ActionsUri = new Uri("https://www.statarea.com/actions/controller/");
     /// <summary>
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
@@ -99,6 +100,9 @@ public static class LiveScoresParser
 
         foreach (var m in matchNodes)
         {
+            // match id from <div class="match" id="1455348">
+            var matchId = m.GetAttributeValue("id", string.Empty); // <- this is what you'll use for Ajax
+
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
             var status = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'status')]"));
@@ -171,6 +175,57 @@ public static class LiveScoresParser
         }
 
         return list;
+    }
+
+    /// <summary>
+    /// Fetches the HTML snippet for the livescore actions of a single match.
+    /// </summary>
+    public static async Task<string> FetchMatchActionsHtmlAsync(
+        HttpClient http,
+        string matchId,
+        string? dateIsoForReferrer = null,
+        CancellationToken ct = default)
+    {
+        // Form body: action=getLivescoreMatchActions&matchid=1455348
+        using var form = new FormUrlEncodedContent(new[]
+        {
+            new KeyValuePair<string, string>("action",  "getLivescoreMatchActions"),
+            new KeyValuePair<string, string>("matchid", matchId),
+        });
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, ActionsUri)
+        {
+            Content = form
+        };
+
+        // These headers don't have to be perfect, but they help mimic the browser
+        req.Headers.Accept.Clear();
+        req.Headers.Accept.ParseAdd("*/*");
+
+        req.Headers.UserAgent.ParseAdd(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/120.0.0.0 Safari/537.36");
+
+        req.Headers.Add("X-Requested-With", "XMLHttpRequest");
+
+        if (!string.IsNullOrWhiteSpace(dateIsoForReferrer))
+        {
+            // e.g. https://www.statarea.com/livescore/date/2025-11-10/
+            req.Headers.Referrer = new Uri(
+                $"https://www.statarea.com/livescore/date/{dateIsoForReferrer.TrimEnd('/')}/");
+        }
+
+        using var resp = await http.SendAsync(
+            req,
+            HttpCompletionOption.ResponseHeadersRead,
+            ct);
+
+        resp.EnsureSuccessStatusCode();
+
+        // Server returns text/html; this is the snippet containing <div class="action">...</div>
+        var html = await resp.Content.ReadAsStringAsync(ct);
+        return html;
     }
     
     private static TeamSide SideFromAction(HtmlNode actionNode)
