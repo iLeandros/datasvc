@@ -120,39 +120,6 @@ public static class LiveScoresParser
     
             var actionsList = new List<MatchAction>();
     
-            // 1) Try to get actions from the main page's .matchactions (your original logic)
-            var actionsRoot = m.SelectSingleNode(
-                ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
-            );
-    
-            var actionNodes = actionsRoot?
-                .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
-                ?? new HtmlNodeCollection(null);
-    
-            foreach (var a in actionNodes)
-            {
-                // Player text
-                var playerNode = a.SelectSingleNode(
-                    ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
-                );
-                var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-    
-                // Side
-                var side = SideFromAction(a);
-    
-                // Icon → kind
-                var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
-                var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
-                var kind = ClassToActionKind(classStr);
-    
-                // Minute + player name
-                var (minute, player) = ParseMinuteAndPlayer(raw);
-                if (string.IsNullOrWhiteSpace(player) && !minute.HasValue)
-                    continue;
-    
-                actionsList.Add(new MatchAction(side, kind, minute, player));
-            }
-    
             // 2) If no actions were found in the main HTML, hit the Ajax endpoint
             if (actionsList.Count == 0 && !string.IsNullOrEmpty(matchId))
             {
@@ -215,7 +182,7 @@ public static class LiveScoresParser
             }
     
             // REMOVE the debug fake actions now
-            // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "furk"));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
     
             // Construct LiveScoreItem (unchanged)
