@@ -18,8 +18,8 @@ public static class LiveScoresParser
     public static LiveScoreDay ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
-        var htmlDesirialized = html.Replace("\\u003C", "<").Replace("\\u003E", ">");
-        doc.LoadHtml(htmlDesirialized);
+        //var htmlDesirialized = html.Replace("\\u003C", "<").Replace("\\u003E", ">");
+        doc.LoadHtml(html);
 
         var groups = new List<LiveScoreGroup>();
 
@@ -91,7 +91,7 @@ public static class LiveScoresParser
 
     // ----------------- helpers -----------------
 
-    private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope)
+    private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
 
@@ -122,6 +122,12 @@ public static class LiveScoresParser
             var awayGoals = Clean(awayGoalsNode);
 
             var actionsList = new List<MatchAction>();
+
+            // inside LiveScoresScraperService, after you know matchId & dateIso
+            var actionsHtml = await FetchMatchActionsHtmlAsync(
+                _httpClient,
+                matchId: match.Id.ToString(),
+                dateIsoForReferrer: dateIso);
             
             // Focus on the matchactions panel
             var actionsRoot = m.SelectSingleNode(
@@ -158,7 +164,7 @@ public static class LiveScoresParser
             //string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
             
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "furk"));
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot.InnerHtml));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsHtml));
             
             // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
