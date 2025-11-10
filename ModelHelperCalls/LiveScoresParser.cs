@@ -205,7 +205,10 @@ public static class LiveScoresParser
                     Console.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex}");
                     actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 32, ex.Message));
                 }
-            
+                finally
+                {
+                    actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 55, "WTFFF"));
+                }
             // ---- remove or keep your debug lines as you like ----
             //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 11, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
