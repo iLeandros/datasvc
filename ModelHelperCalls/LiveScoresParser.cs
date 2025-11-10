@@ -163,7 +163,7 @@ public static class LiveScoresParser
                     //var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
                     var client = new GetLiveMatchActionHelper();
                     //string matchId = "1455341"; // or any other id
-                    var ajaxHtml = await client.GetLivescoreMatchActionsAsync(matchId, dateIso);
+                    //var ajaxHtml = await client.GetLivescoreMatchActionsAsync(matchId, dateIso);
                     /*
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
