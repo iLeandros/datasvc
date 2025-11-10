@@ -149,8 +149,8 @@ public static class LiveScoresParser
             
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            actionsList.Add(new MatchAction(new TeamSide(), new ActionKind(), actionsRoot.ToList().Count, "count"));
-            actionsList.Add(new MatchAction(new TeamSide(), new ActionKind(), matchNodes.ToList().Count, "count"));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "actionNodesCount"));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, "matchNodesCount"));
             
             // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
