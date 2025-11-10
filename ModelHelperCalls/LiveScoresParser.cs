@@ -125,7 +125,7 @@ public static class LiveScoresParser
 
             // inside LiveScoresScraperService, after you know matchId & dateIso
             var actionsHtml = await FetchMatchActionsHtmlAsync(
-                _httpClient,
+                new HttpClient(),
                 matchId: match.Id.ToString(),
                 dateIsoForReferrer: dateIso);
             
