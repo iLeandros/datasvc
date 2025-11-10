@@ -203,53 +203,49 @@ public static class LiveScoresParser
     /// <summary>
     /// Fetches the HTML snippet for the livescore actions of a single match.
     /// </summary>
-    public static async Task<string> FetchMatchActionsHtmlAsync(
+    private static async Task<string> FetchMatchActionsHtmlAsync(
         HttpClient http,
         string matchId,
         string? dateIsoForReferrer = null,
         CancellationToken ct = default)
     {
-        // Form body: action=getLivescoreMatchActions&matchid=1455348
+        var payloadObject = new
+        {
+            action = "getLivescoreMatchActions",
+            matchid = matchId
+        };
+    
+        var json = JsonSerializer.Serialize(payloadObject);
+    
         using var form = new FormUrlEncodedContent(new[]
         {
-            new KeyValuePair<string, string>("action",  "getLivescoreMatchActions"),
-            new KeyValuePair<string, string>("matchid", matchId),
+            new KeyValuePair<string, string>("object", json),
         });
-
-        using var req = new HttpRequestMessage(HttpMethod.Post, ActionsUrl)
+    
+        using var req = new HttpRequestMessage(HttpMethod.Post, "https://www.statarea.com/actions/controller/")
         {
             Content = form
         };
-
-        // These headers don't have to be perfect, but they help mimic the browser
-        req.Headers.Accept.Clear();
+    
         req.Headers.Accept.ParseAdd("*/*");
-
+        req.Headers.Add("X-Requested-With", "XMLHttpRequest");
         req.Headers.UserAgent.ParseAdd(
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
             "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/120.0.0.0 Safari/537.36");
-
-        req.Headers.Add("X-Requested-With", "XMLHttpRequest");
-
+            "Chrome/142.0.0.0 Safari/537.36");
+    
         if (!string.IsNullOrWhiteSpace(dateIsoForReferrer))
         {
-            // e.g. https://www.statarea.com/livescore/date/2025-11-10/
             req.Headers.Referrer = new Uri(
                 $"https://www.statarea.com/livescore/date/{dateIsoForReferrer.TrimEnd('/')}/");
         }
-
-        using var resp = await http.SendAsync(
-            req,
-            HttpCompletionOption.ResponseHeadersRead,
-            ct);
-
+    
+        using var resp = await http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
-
-        // Server returns text/html; this is the snippet containing <div class="action">...</div>
-        var html = await resp.Content.ReadAsStringAsync(ct);
-        return html;
+    
+        return await resp.Content.ReadAsStringAsync(ct);
     }
+
     
     private static TeamSide SideFromAction(HtmlNode actionNode)
         {
