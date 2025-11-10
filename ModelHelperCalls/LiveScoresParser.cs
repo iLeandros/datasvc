@@ -191,6 +191,7 @@ public static class LiveScoresParser
     
                             actionsList.Add(new MatchAction(side, kind, minute, player));
                         }
+                        actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 22, "WTFFF"));
                     }
                 }
                 catch (Exception ex)
