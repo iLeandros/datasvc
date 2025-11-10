@@ -2,6 +2,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using HtmlAgilityPack;
+using System.Text.Json;
 using DataSvc.Models; // BarChart, MatchFactData
 
 namespace DataSvc.ModelHelperCalls;
