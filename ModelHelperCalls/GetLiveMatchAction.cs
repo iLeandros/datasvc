@@ -15,7 +15,7 @@ public class GetLiveMatchActionHelper
         _httpClient = httpClient ?? new HttpClient();
     }
 
-    public async Task<string> GetLivescoreMatchActionsAsync(string matchId)
+    public async Task<string> GetLivescoreMatchActionsAsync(string matchId, string dateIso)
     {
         // This matches: --data-urlencode 'object={"action":"getLivescoreMatchActions","matchid":"1455341"}'
         var payload = new
@@ -44,8 +44,8 @@ public class GetLiveMatchActionHelper
         request.Headers.Add("Origin", "https://www.statarea.com");
 
         // Use today's date in the referer URL (or hard-code if you prefer)
-        var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
+        //var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+        request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
 
         // User-Agent
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
