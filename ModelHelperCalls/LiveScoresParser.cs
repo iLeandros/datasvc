@@ -154,12 +154,15 @@ public static class LiveScoresParser
     
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            
+            */
             // ---- 2) NEW: if no actions yet, hit the Ajax endpoint and parse that snippet ----
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 1111, "ARIS"));
             try
                 {
-                    var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
+                    //var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
+                    var client = new GetLiveMatchActionHelper();
+                    //string matchId = "1455341"; // or any other id
+                    var ajaxHtml = await client.GetLivescoreMatchActionsAsync(matchId);
     
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
@@ -204,7 +207,7 @@ public static class LiveScoresParser
             // ---- remove or keep your debug lines as you like ----
             //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 11, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
-            */
+            
             list.Add(new LiveScoreItem(
                 time,
                 status,
