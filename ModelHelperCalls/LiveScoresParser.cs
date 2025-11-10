@@ -99,11 +99,6 @@ public static class LiveScoresParser
 
         foreach (var m in matchNodes)
         {
-            if (m.InnerHtml.Contains("\\u003C") || m.InnerHtml.TrimStart().StartsWith("\""))
-            {
-                // very rough, but works if the body is a JSON string
-                m.InnerHtml = JsonSerializer.Deserialize<string>(m) ?? m.InnerHtml;
-            }
             // time & status live in .startblock
             var time   = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'time')]"));
             var status = Clean(m.SelectSingleNode(".//*[contains(@class,'startblock')]//*[contains(@class,'status')]"));
@@ -156,9 +151,9 @@ public static class LiveScoresParser
             
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            
+            string decoded = JsonSerializer.Deserialize<string>(m.InnerHtml);
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, m.InnerHtml));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, decoded));
             
             // later, when constructing LiveScoreItem:
             list.Add(new LiveScoreItem(
