@@ -16,7 +16,8 @@ public static class LiveScoresParser
     public static LiveScoreDay ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
-        doc.LoadHtml(html);
+        var htmlDesirialized = JsonSerializer.Deserialize<string>(html);
+        doc.LoadHtml(htmlDesirialized);
 
         var groups = new List<LiveScoreGroup>();
 
