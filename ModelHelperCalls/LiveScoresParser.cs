@@ -159,7 +159,7 @@ public static class LiveScoresParser
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 1111, "ARIS"));
             try
                 {
-                    var ajaxHtml = FetchMatchActionsHtml(matchId);
+                    var ajaxHtml = FetchMatchActionsHtml(matchId, dateIso);
     
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
@@ -222,7 +222,7 @@ public static class LiveScoresParser
     /// <summary>
     /// Fetches the HTML snippet for the livescore actions of a single match.
     /// </summary>
-    private static string FetchMatchActionsHtml(string matchId)
+    private static string FetchMatchActionsHtml(string matchId, string dateIso)
     {
         // This mirrors the curl you just ran:
         // POST https://www.statarea.com/actions/controller/
@@ -260,7 +260,7 @@ public static class LiveScoresParser
             "Chrome/142.0.0.0 Safari/537.36");
     
         // Optional; you can pass a date if you want the referrer to match
-        // req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
+        req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
     
         var resp = http.SendAsync(req).GetAwaiter().GetResult();
         resp.EnsureSuccessStatusCode();
