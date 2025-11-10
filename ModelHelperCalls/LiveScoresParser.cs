@@ -199,6 +199,7 @@ public static class LiveScoresParser
                 {
                     // Use Console.WriteLine so it shows up in `journalctl -u datasvc`
                     Console.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex}");
+                    actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 32, ex.Message));
                 }
             }
     
