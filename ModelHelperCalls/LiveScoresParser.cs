@@ -133,7 +133,7 @@ public static class LiveScoresParser
                     ".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]"
                 );
                 var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-                //if (string.IsNullOrWhiteSpace(raw)) continue;
+                if (string.IsNullOrWhiteSpace(raw)) continue;
             
                 // Side
                 var side = SideFromAction(a); // works with your HTML
@@ -149,7 +149,7 @@ public static class LiveScoresParser
             
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, "actionNodesCount"));
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, actionNodes.Count, actionsRoot.InnerHtml));
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, "matchNodesCount"));
             
             // later, when constructing LiveScoreItem:
