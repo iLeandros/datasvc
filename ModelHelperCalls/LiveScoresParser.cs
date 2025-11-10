@@ -154,7 +154,7 @@ public static class LiveScoresParser
     
                 actionsList.Add(new MatchAction(side, kind, minute, player));
             }
-            
+            */
             // ---- 2) NEW: if no actions yet, hit the Ajax endpoint and parse that snippet ----
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 1111, "ARIS"));
             try
@@ -200,7 +200,7 @@ public static class LiveScoresParser
                     Console.WriteLine($"[LiveScoresParser] Failed to fetch actions for match {matchId}: {ex}");
                     actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 32, ex.Message));
                 }
-            */
+            
             // ---- remove or keep your debug lines as you like ----
             actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 12, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
@@ -237,11 +237,11 @@ public static class LiveScoresParser
             matchid = matchId
         };
     
-        var json = JsonSerializer.Serialize(payloadObject);
+        //var json = JsonSerializer.Serialize(payloadObject);
     
         using var form = new FormUrlEncodedContent(new[]
         {
-            new KeyValuePair<string, string>("object", json),
+            new KeyValuePair<string, string>("object", payloadObject),
         });
     
         using var req = new HttpRequestMessage(
