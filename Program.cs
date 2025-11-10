@@ -2303,7 +2303,7 @@ public sealed class LiveScoresScraperService
 	        }
 	
 	        var dateIso = dateOnly.ToString("yyyy-MM-dd");
-	        var day = await LiveScoresParser.ParseDay(html, dateIso);
+	        var day = LiveScoresParser.ParseDay(html, dateIso);
 	        _store.Set(day);
 	        refreshed++;
 	    }
