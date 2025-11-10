@@ -156,7 +156,7 @@ public static class LiveScoresParser
             }
             */
             // ---- 2) NEW: if no actions yet, hit the Ajax endpoint and parse that snippet ----
-    
+            actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 1111, "ARIS"));
             try
                 {
                     var ajaxHtml = FetchMatchActionsHtml(matchId);
