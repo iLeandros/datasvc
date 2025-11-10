@@ -10,7 +10,7 @@ namespace DataSvc.ModelHelperCalls;
 // ---------- LiveScores: HTML parser ----------
 public static class LiveScoresParser
 {
-    private static readonly Uri ActionsUri = new Uri("https://www.statarea.com/actions/controller/");
+    private const string ActionsUrl = "https://www.statarea.com/actions/controller/";
     /// <summary>
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
@@ -216,7 +216,7 @@ public static class LiveScoresParser
             new KeyValuePair<string, string>("matchid", matchId),
         });
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, ActionsUri)
+        using var req = new HttpRequestMessage(HttpMethod.Post, ActionsUrl)
         {
             Content = form
         };
