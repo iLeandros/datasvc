@@ -91,7 +91,7 @@ public static class LiveScoresParser
 
     // ----------------- helpers -----------------
 
-    private static List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope, string dateIso)
+    private static async List<LiveScoreItem> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
 
