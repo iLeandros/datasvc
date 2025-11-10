@@ -61,7 +61,7 @@ public static class LiveScoresParser
         if (compNodes.Count == 0)
         {
             // No competition wrappers — parse any matches directly under the chosen block.
-            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode);
+            var matches = ParseMatchesFromScope(chosen ?? doc.DocumentNode, dateIso);
             if (matches.Count > 0)
                 groups.Add(new LiveScoreGroup("All matches", matches));
 
@@ -79,7 +79,7 @@ public static class LiveScoresParser
 
             // Matches are usually inside a .body container, but sometimes directly under comp.
             var body = comp.SelectSingleNode(".//div[contains(@class,'body')]") ?? comp;
-            var matches = ParseMatchesFromScope(body);
+            var matches = ParseMatchesFromScope(body, dateIso);
 
             // Only add groups that have a name or at least 1 match (to avoid empty noise)
             if (matches.Count > 0 || !string.IsNullOrWhiteSpace(compName))
