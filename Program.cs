@@ -2025,7 +2025,7 @@ public sealed class ParsedTipsService
         var dateKey = date.ToString("yyyy-MM-dd");
         var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
         var liveGroups = liveResponse != null
-            ? DtoMapper.Map(ToResponse(day))    // <— adapt to DTO shape
+            ? DtoMapper.Map(ToResponse(liveResponse))    // <— adapt to DTO shape
             : new ObservableCollection<LiveTableDataGroupDto>();
 
         // Build a fast lookup: "home|away" => live item
