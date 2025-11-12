@@ -2046,24 +2046,11 @@ public sealed class ParsedTipsService
                 {
                     liveByTeams.TryGetValue(TeamKey(item.HostTeam!, item.GuestTeam!), out live);
                 }
-
-				// CPU-bound analyze (TipAnalyzer expects DetailsItemDto)
-                var probs = await Task.Run(
-                    () => TipAnalyzer.Analyze(detailDto, item.HostTeam ?? "", item.GuestTeam ?? "", item.Tip),
-                    ct
-                ).ConfigureAwait(false);
-
-                // Map analyzer results → server DTO type
-                item.ProposedResults = probs?
-                    .Select(p => new TipAnalyzer.ProposedResult { Code = p.Code, Probability = p.Probability })
-                    .ToList();
-
-                var best = item.ProposedResults?
-                    .OrderByDescending(p => p.Probability)
-                    .FirstOrDefault();
-
-                if (!string.IsNullOrWhiteSpace(best?.Code))
-                    item.Tip = best!.Code;
+				
+				var probs = await Task.Run(() => TipAnalyzer.Analyze(detailDto, item.TeamOne, item.TeamTwo, item.Tip), ct).ConfigureAwait(false);
+				var tipCode = probs.OrderByDescending(p => p.Probability).FirstOrDefault();
+				item.ProposedResults = probs;
+				item.Tip = tipCode?.Code ?? item.Tip;
 
                 // Example of optional live-driven tweak (keep commented until you want it)
                 // if (live != null &&
