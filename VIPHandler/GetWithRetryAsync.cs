@@ -13,7 +13,7 @@ using DataSvc.Models;
 using DataSvc.ModelHelperCalls;
 using DataSvc.Models;
 
-namespace DataSvc.VIPHandler;
+namespace DataSvc.VIPHandler
 {
     public static class VIPHelper
     {
