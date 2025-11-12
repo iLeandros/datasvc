@@ -9,7 +9,7 @@ public class LiveTableDataItemDto
 {
     public string Time { get; set; }
     public string LiveTime { get; set; }
-    public icrosoft.Maui.Graphics.Color LiveTimeBgColor { get; set; } = icrosoft.Maui.Graphics.Colors.Black;
+    public Microsoft.Maui.Graphics.Color LiveTimeBgColor { get; set; } = Microsoft.Maui.Graphics.Colors.Black;
 
     public string HomeTeam { get; set; }
     public string HomeGoals { get; set; }
