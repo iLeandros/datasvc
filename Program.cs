@@ -2055,7 +2055,7 @@ public sealed class ParsedTipsService
 
                 // Map analyzer results → server DTO type
                 item.ProposedResults = probs?
-                    .Select(p => new ProposedResult { Code = p.Code, Probability = p.Probability })
+                    .Select(p => new TipAnalyzer.ProposedResult { Code = p.Code, Probability = p.Probability })
                     .ToList();
 
                 var best = item.ProposedResults?
