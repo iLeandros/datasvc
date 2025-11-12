@@ -2083,6 +2083,21 @@ public sealed class ParsedTipsService
                 // {
                 //     item.Tip = "Over 2.5";
                 // }
+				
+				// === Smarter fixture lookup ===
+				// Normalize the fixture’s teams and kickoff
+				var homeSet = FixtureHelper.TokenSet(item.TeamOne ?? string.Empty);
+				var awaySet = FixtureHelper.TokenSet(item.TeamTwo ?? string.Empty);
+				var homeKey = string.Join(' ', homeSet);
+				var awayKey = string.Join(' ', awaySet);
+				var fixtureKick = FixtureHelper.ParseKick(item.Time);
+				
+				// Candidate pool: close kickoff (±60 min). If time is missing on either side, we keep it permissive.
+				var candidates = liveIndex.Where(c => FixtureHelper.CloseKick(fixtureKick, c.Kick, minutes: 60));
+				
+				(double score, dynamic pick)? best = null;
+
+				
             }
         }
     }
