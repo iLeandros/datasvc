@@ -1,0 +1,77 @@
+using System.Linq;
+using DataSvc.ModelHelperCalls;
+using System;
+using System.Collections.Generic;
+using System.Text;
+using DataSvc.Models;
+
+namespace DataSvc.MainHelpers;
+
+    public class FixtureHelper
+    {
+        public static readonly string[] TeamStopwords = new[]
+{
+            "fc","cf","sc","ac","ca","afc","u","u21","ii","2","w","women","ladies",
+            "club","de","cd","atletico","atl","sport","sports","sp","deportivo","sd",
+            "united","city","team","sv","ifs","bk","fk","ik","sk","as","aas","cs","nk"
+        };
+
+        private static string RemoveDiacritics(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return string.Empty;
+            var norm = s.Normalize(System.Text.NormalizationForm.FormD);
+            var sb = new StringBuilder(norm.Length);
+            foreach (var ch in norm)
+            {
+                var uc = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+                if (uc != System.Globalization.UnicodeCategory.NonSpacingMark)
+                    sb.Append(ch);
+            }
+            return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
+
+        public static string Canon(string? s)
+        {
+            s ??= string.Empty;
+            s = RemoveDiacritics(s.ToLowerInvariant());
+            // replace punctuation with spaces, collapse whitespace
+            var cleaned = new string(s.Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());
+            var tokens = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .Where(t => !TeamStopwords.Contains(t))
+                .ToArray();
+            return string.Join(' ', tokens);
+        }
+
+        public static HashSet<string> TokenSet(string s) =>
+            Canon(s).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToHashSet();
+
+        public static double Jaccard(HashSet<string> a, HashSet<string> b)
+        {
+            if (a.Count == 0 && b.Count == 0) return 1.0;
+            int inter = a.Intersect(b).Count();
+            int union = a.Count + b.Count - inter;
+            return union == 0 ? 0 : (double)inter / union;
+        }
+
+        // Replace your current JaroWinkler proxy with this:
+        public static double JaroWinkler(string s1, string s2)
+        {
+            // Distinct characters → HashSet<string> so it matches Jaccard<string>
+            var a = new HashSet<string>(s1.Distinct().Select(c => c.ToString()));
+            var b = new HashSet<string>(s2.Distinct().Select(c => c.ToString()));
+            return Jaccard(a, b);
+        }
+
+        public static TimeSpan? ParseKick(string? hhmm)
+        {
+            if (TimeSpan.TryParse(hhmm, out var t)) return t;
+            return null;
+        }
+
+        public static bool CloseKick(TimeSpan? a, TimeSpan? b, int minutes = 30)
+        {
+            if (a is null || b is null) return true; // tolerate when time missing
+            return Math.Abs((a.Value - b.Value).TotalMinutes) <= minutes;
+        }
+
+    }
