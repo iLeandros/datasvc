@@ -1956,7 +1956,7 @@ public sealed class ParsedTipsService
                 if (item is null) continue;
 
                 // Dummy logic – you can change this later
-                item.Tip = $"DUMMY TIP: {item.HostTeam} vs {item.GuestTeam}";
+                item.Tip = $"Und";
             }
         }
     }
