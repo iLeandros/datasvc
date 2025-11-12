@@ -1,15 +1,16 @@
 using System.Linq;
 using DataSvc.ModelHelperCalls;
 using DataSvc.Models;
+using System.Globalization;
 using Microsoft.Maui.Graphics;
 
 namespace DataSvc.MainHelpers;
 
 public static class EvaluationHelper
 {
-    private static Color EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away)
+    private static Microsoft.Maui.Graphics.Color EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away)
     {
-        if (home < 0 || away < 0 || live is null) return Colors.Black;
+        if (home < 0 || away < 0 || live is null) return Microsoft.Maui.Graphics.Colors.Black;
     
         // --- normalize tip cheaply ---
         // Upper, trim, remove spaces, unify BTTS->BTS
@@ -39,30 +40,30 @@ public static class EvaluationHelper
     
             // --- Early resolution rules ---
             // Over: if already above the threshold at any time => permanently won.
-            if (isOver && total > thr) return Colors.Green;
+            if (isOver && total > thr) return Microsoft.Maui.Graphics.Colors.Green;
     
             // Under: if already above the threshold at any time => permanently lost.
-            if (!isOver && total > thr) return Colors.Red;
+            if (!isOver && total > thr) return Microsoft.Maui.Graphics.Colors.Red;
     
             // For HT markets: only judge at/before HT; otherwise pending.
             if (isHTMarket)
             {
-                if (!minute.HasValue) return Colors.Black; // no clock yet
+                if (!minute.HasValue) return Microsoft.Maui.Graphics.Colors.Black; // no clock yet
                 bool atHT = string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase)
                             || minute.Value >= 45; // treat 45+ as HT boundary
     
-                if (!atHT) return Colors.Black; // still pending before HT whistle
+                if (!atHT) return Microsoft.Maui.Graphics.Colors.Black; // still pending before HT whistle
     
                 // decide at HT whistle
-                return isOver ? (total > thr ? Colors.Green : Colors.Red)
-                              : (total < thr ? Colors.Green : Colors.Red);
+                return isOver ? (total > thr ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red)
+                              : (total < thr ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red);
             }
     
             // Full-time O/U: decide at FT if not early-resolved
-            if (!isFinal) return Colors.Black;
+            if (!isFinal) return Microsoft.Maui.Graphics.Colors.Black;
     
-            return isOver ? (total > thr ? Colors.Green : Colors.Red)
-                          : (total < thr ? Colors.Green : Colors.Red);
+            return isOver ? (total > thr ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red)
+                          : (total < thr ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red);
         }
     
         // ---------- Other markets ----------
@@ -75,13 +76,13 @@ public static class EvaluationHelper
             {
                 // 1X2 — evaluate only at full time
                 case "HTS": 
-                    if(home > 0) return Colors.Green;
+                    if(home > 0) return Microsoft.Maui.Graphics.Colors.Green;
                     break;
                 case "GTS": 
-                    if(away > 0) return Colors.Green;
+                    if(away > 0) return Microsoft.Maui.Graphics.Colors.Green;
                     break;
                 case "BTS": 
-                    if (home > 0 && away > 0) return Colors.Green;
+                    if (home > 0 && away > 0) return Microsoft.Maui.Graphics.Colors.Green;
                     break;
             }
         }
@@ -89,37 +90,37 @@ public static class EvaluationHelper
         switch (ts)
         {
             // 1X2 — evaluate only at full time
-            case "1": return isFinal ? (home > away ? Colors.Green : Colors.Red) : Colors.Black;
-            case "X": return isFinal ? (home == away ? Colors.Green : Colors.Red) : Colors.Black;
-            case "2": return isFinal ? (away > home ? Colors.Green : Colors.Red) : Colors.Black;
+            case "1": return isFinal ? (home > away ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
+            case "X": return isFinal ? (home == away ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
+            case "2": return isFinal ? (away > home ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
     
             // Double chance — evaluate only at full time
-            case "1X": return isFinal ? (home >= away ? Colors.Green : Colors.Red) : Colors.Black;
-            case "X2": return isFinal ? (away >= home ? Colors.Green : Colors.Red) : Colors.Black;
-            case "12": return isFinal ? (home != away ? Colors.Green : Colors.Red) : Colors.Black;
+            case "1X": return isFinal ? (home >= away ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
+            case "X2": return isFinal ? (away >= home ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
+            case "12": return isFinal ? (home != away ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Red) : Microsoft.Maui.Graphics.Colors.Black;
     
             // Both teams to score — green as soon as both have scored; red at FT if not
             case "BTS":
-                if (home > 0 && away > 0) return Colors.Green;
-                return isFinal ? Colors.Red : Colors.Black;
+                if (home > 0 && away > 0) return Microsoft.Maui.Graphics.Colors.Green;
+                return isFinal ? Microsoft.Maui.Graphics.Colors.Red : Microsoft.Maui.Graphics.Colors.Black;
     
             // Only one team scores — red as soon as both score; otherwise green only at FT if one stayed 0
             case "OTS":
-                if (home > 0 && away > 0) return Colors.Red;
-                return isFinal ? Colors.Green : Colors.Black;
+                if (home > 0 && away > 0) return Microsoft.Maui.Graphics.Colors.Red;
+                return isFinal ? Microsoft.Maui.Graphics.Colors.Green : Microsoft.Maui.Graphics.Colors.Black;
     
             // Home team to score — green as soon as they score; red at FT if never
             case "HTS":
-                if (home > 0) return Colors.Green;
-                return isFinal ? Colors.Red : Colors.Black;
+                if (home > 0) return Microsoft.Maui.Graphics.Colors.Green;
+                return isFinal ? Microsoft.Maui.Graphics.Colors.Red : Microsoft.Maui.Graphics.Colors.Black;
     
             // Guest/Away team to score — same early-green idea
             case "GTS":
-                if (away > 0) return Colors.Green;
-                return isFinal ? Colors.Red : Colors.Black;
+                if (away > 0) return Microsoft.Maui.Graphics.Colors.Green;
+                return isFinal ? Microsoft.Maui.Graphics.Colors.Red : Microsoft.Maui.Graphics.Colors.Black;
     
             default:
-                return Colors.Black;
+                return Microsoft.Maui.Graphics.Colors.Black;
         }
     }
     private static bool TryParseThreshold(ReadOnlySpan<char> s, out double thr)
