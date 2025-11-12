@@ -1958,95 +1958,92 @@ public sealed class ParsedTipsService
         _live         = live;
     }
 
-        public void ApplyTipsForDate(DateOnly date, ObservableCollection<TableDataGroup>? groups)
-	    {
-	        if (groups is null || groups.Count == 0) return;
-	
-	        // 0) Materialize livescores for the date (from in-memory store)
-	        //    We go through JSON just to exercise the requested helper.
-	        var key = date.ToString("yyyy-MM-dd");
-	        var liveDay = _live.Get(key); // Program.cs already exposes /data/livescores from this store
-	        var liveGroups = new ObservableCollection<LiveTableDataGroupDto>();
-	        if (liveDay is not null)
-	        {
-	            // serialize store day -> json -> parse with helper -> typed groups
-	            var liveJson = JsonSerializer.Serialize(liveDay);
-	            liveGroups = ParseLivescoresJson(liveJson);
-	        }
-	
-	        // Build a fast lookup: "home|away" => LiveTableDataItemDto
-	        var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
-	        foreach (var g in liveGroups)
-	        {
-	            foreach (var m in g)
-	            {
-	                var keyTeams = TeamKey(m.HomeTeam, m.AwayTeam);
-	                if (!liveByTeams.ContainsKey(keyTeams))
-	                    liveByTeams[keyTeams] = m;
-	            }
-	        }
-	
-	        // 1) Collect & normalize hrefs present in parsed data
-	        var hrefs = groups
-	            .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
-	            .Select(i => i?.Href)
-	            .Where(h => !string.IsNullOrWhiteSpace(h))
-	            .Select(DetailsStore.Normalize)
-	            .Distinct(StringComparer.OrdinalIgnoreCase)
-	            .ToArray();
-	
-	        if (hrefs.Length == 0) return;
-	
-	        // 2) Build a lookup of href -> details record
-	        var detailsByHref = new Dictionary<string, DetailsRecord?>(StringComparer.OrdinalIgnoreCase);
-	        foreach (var h in hrefs)
-	            detailsByHref[h] = _details.Get(h);
-	
-	        // 3) Walk parsed items and (a) match details, (b) match livescores by teams, (c) set Tip
-	        foreach (var group in groups)
-	        {
-	            if (group?.Items is null) continue;
-	
-	            foreach (var item in group.Items)
-	            {
-	                if (item is null) continue;
-	                var href = item.Href;
-	                if (string.IsNullOrWhiteSpace(href)) continue;
-	
-	                var norm = DetailsStore.Normalize(href);
-	                detailsByHref.TryGetValue(norm, out var rec);
-	
-	                // optional: pick up live info for this fixture by team names
-	                LiveTableDataItemDto? live = null;
-	                if (!string.IsNullOrWhiteSpace(item.HostTeam) && !string.IsNullOrWhiteSpace(item.GuestTeam))
-	                {
-	                    var tk = TeamKey(item.HostTeam!, item.GuestTeam!);
-	                    liveByTeams.TryGetValue(tk, out live);
-	                }
-	
-	                // ---- DUMMY: set the tip whenever we found details (you can also gate on 'live != null' if you want) ----
-	                if (rec is not null)
-	                {
-	                    item.Tip = "Und";
-	
-	                    // Example of how you'd use livescores next:
-	                    // if (live != null && int.TryParse(live.HomeGoals, out var hg) && int.TryParse(live.AwayGoals, out var ag))
-	                    //     item.Tip = (hg + ag) >= 3 ? "Over 2.5" : "Und";
-	                }
-	            }
-	        }
-	
-	        // --- local helper ---
-	        static string TeamKey(string home, string away)
-	            => NormalizeTeam(home) + "|" + NormalizeTeam(away);
-	
-	        static string NormalizeTeam(string s)
-	            => (s ?? "").Trim().ToLowerInvariant();
-	    }
-	}
+	public void ApplyTipsForDate(DateOnly date, ObservableCollection<TableDataGroup>? groups)
+    {
+        if (groups is null || groups.Count == 0) return;
 
+        // 0) Materialize livescores for the date (from in-memory store)
+        //    We go through JSON just to exercise the requested helper.
+        var key = date.ToString("yyyy-MM-dd");
+        var liveDay = _live.Get(key); // Program.cs already exposes /data/livescores from this store
+        var liveGroups = new ObservableCollection<LiveTableDataGroupDto>();
+        if (liveDay is not null)
+        {
+            // serialize store day -> json -> parse with helper -> typed groups
+            var liveJson = JsonSerializer.Serialize(liveDay);
+            liveGroups = ParseLivescoresJson(liveJson);
+        }
 
+        // Build a fast lookup: "home|away" => LiveTableDataItemDto
+        var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
+        foreach (var g in liveGroups)
+        {
+            foreach (var m in g)
+            {
+                var keyTeams = TeamKey(m.HomeTeam, m.AwayTeam);
+                if (!liveByTeams.ContainsKey(keyTeams))
+                    liveByTeams[keyTeams] = m;
+            }
+        }
 
+        // 1) Collect & normalize hrefs present in parsed data
+        var hrefs = groups
+            .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+            .Select(i => i?.Href)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Select(DetailsStore.Normalize)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (hrefs.Length == 0) return;
+
+        // 2) Build a lookup of href -> details record
+        var detailsByHref = new Dictionary<string, DetailsRecord?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in hrefs)
+            detailsByHref[h] = _details.Get(h);
+
+        // 3) Walk parsed items and (a) match details, (b) match livescores by teams, (c) set Tip
+        foreach (var group in groups)
+        {
+            if (group?.Items is null) continue;
+
+            foreach (var item in group.Items)
+            {
+                if (item is null) continue;
+                var href = item.Href;
+                if (string.IsNullOrWhiteSpace(href)) continue;
+
+                var norm = DetailsStore.Normalize(href);
+                detailsByHref.TryGetValue(norm, out var rec);
+
+                // optional: pick up live info for this fixture by team names
+                LiveTableDataItemDto? live = null;
+                if (!string.IsNullOrWhiteSpace(item.HostTeam) && !string.IsNullOrWhiteSpace(item.GuestTeam))
+                {
+                    var tk = TeamKey(item.HostTeam!, item.GuestTeam!);
+                    liveByTeams.TryGetValue(tk, out live);
+                }
+
+                // ---- DUMMY: set the tip whenever we found details (you can also gate on 'live != null' if you want) ----
+                if (rec is not null)
+                {
+                    item.Tip = "Und";
+
+                    // Example of how you'd use livescores next:
+                    // if (live != null && int.TryParse(live.HomeGoals, out var hg) && int.TryParse(live.AwayGoals, out var ag))
+                    //     item.Tip = (hg + ag) >= 3 ? "Over 2.5" : "Und";
+                }
+            }
+        }
+
+        // --- local helper ---
+        static string TeamKey(string home, string away)
+            => NormalizeTeam(home) + "|" + NormalizeTeam(away);
+
+        static string NormalizeTeam(string s)
+            => (s ?? "").Trim().ToLowerInvariant();
+    }
+	
 	private static ObservableCollection<LiveTableDataGroupDto> ParseLivescoresJson(string json)
     {
         var dto = JsonSerializer.Deserialize<LiveScoresResponse>(
