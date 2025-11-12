@@ -2058,7 +2058,7 @@ public sealed class ParsedTipsService
                     .Select(p => new ProposedResult { Code = p.Code, Probability = p.Probability })
                     .ToList();
 
-                var best = item.ProposedResults?
+                var best = item.probs?
                     .OrderByDescending(p => p.Probability)
                     .FirstOrDefault();
 
