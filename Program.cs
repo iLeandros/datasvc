@@ -2002,6 +2002,7 @@ public sealed class ParsedTipsService
         foreach (var h in hrefs)
             detailsByHref[h] = _details.Get(h);
 
+		var ct = new CancellationTokenSource();
         // 3) Walk parsed items and (a) match details, (b) match livescores by teams, (c) set Tip
         foreach (var group in groups)
         {
