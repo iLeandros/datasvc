@@ -2000,7 +2000,7 @@ public sealed class ParsedTipsService
                 else
                 {
                     // optional: leave as-is, or indicate missing details
-                    // item.Tip = item.Tip ?? "—";
+                    item.Tip = item.Tip ?? "—";
                 }
             }
         }
