@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using System.Collections.Concurrent;
 using DataSvc.Models;
 using DataSvc.ModelHelperCalls;
+using DataSvc.VIPHandler;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Net;
@@ -1939,7 +1940,8 @@ public sealed class SnapshotPerDateStore
     }
 }
 
-// ---------- Parsed tips editing service (joined with details by href) ----------
+// Joins parsed items to details by href for a given date, then edits item.Tip.
+// Currently dummy: when a matching details record exists -> Tip = "Und".
 public sealed class ParsedTipsService
 {
     private readonly SnapshotPerDateStore _perDateStore;
@@ -1951,15 +1953,11 @@ public sealed class ParsedTipsService
         _details      = details;
     }
 
-    /// <summary>
-    /// For the given date, join parsed items to details by href, then edit Tip.
-    /// Current dummy behavior: if a matching details record exists -> Tip = "Und".
-    /// </summary>
     public void ApplyTipsForDate(DateOnly date, System.Collections.ObjectModel.ObservableCollection<TableDataGroup>? groups)
     {
         if (groups is null || groups.Count == 0) return;
 
-        // Build a normalized set of hrefs present in parsed data (fast membership lookups)
+        // 1) Collect & normalize all hrefs present in the parsed data for that date
         var hrefs = groups
             .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
             .Select(i => i?.Href)
@@ -1970,44 +1968,32 @@ public sealed class ParsedTipsService
 
         if (hrefs.Length == 0) return;
 
-        // Create a lookup of href -> "has details" (we only need presence to do the dummy tip)
-        var hasDetails = new HashSet<string>(
-            hrefs.Select(h =>
-            {
-                var rec = _details.Get(h); // store.Get() normalizes internally
-                return rec?.Href;          // may be null if not present
-            })
-            .Where(h => !string.IsNullOrWhiteSpace(h))!
-            .Select(h => h!),
-            StringComparer.OrdinalIgnoreCase
-        );
+        // 2) Build a lookup of href -> DetailsRecord (or null if absent)
+        //    If you prefer typed DetailsItemDto, you can map here as well.
+        var detailsByHref = new Dictionary<string, DetailsRecord?>(StringComparer.OrdinalIgnoreCase);
+        foreach (var h in hrefs)
+            detailsByHref[h] = _details.Get(h); // Get() normalizes internally
 
-        // Walk the parsed items again and set Tip if a matching details href exists
+        // 3) Walk the parsed items again and set Tip when a details match exists
         foreach (var group in groups)
         {
             if (group?.Items is null) continue;
 
             foreach (var item in group.Items)
             {
-                if (item?.Href is null) continue;
+                var href = item?.Href;
+                if (string.IsNullOrWhiteSpace(href)) continue;
 
-                var norm = DetailsStore.Normalize(item.Href);
-                if (hasDetails.Contains(norm))
+                var norm = DetailsStore.Normalize(href);
+                if (detailsByHref.TryGetValue(norm, out var rec) && rec is not null)
                 {
-                    // ---- DUMMY LOGIC for now ----
-                    item.Tip = "Und";
-                }
-                else
-                {
-                    // optional: leave as-is, or indicate missing details
-                    item.Tip = item.Tip ?? "—";
+                    // ---- DUMMY for now; replace with real logic based on rec.Payload -> DetailsItemDto ----
+                    item!.Tip = "Und";
                 }
             }
         }
     }
 }
-
-
 
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
 
