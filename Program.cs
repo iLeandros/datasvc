@@ -2028,7 +2028,7 @@ public sealed class ParsedTipsService
                 if (rec is not null)
                 {
                     item.Tip = "Und";
-
+					item.IsVipMatch = true;
                     // Example of how you'd use livescores next:
                     // if (live != null && int.TryParse(live.HomeGoals, out var hg) && int.TryParse(live.AwayGoals, out var ag))
                     //     item.Tip = (hg + ag) >= 3 ? "Over 2.5" : "Und";
@@ -3015,7 +3015,8 @@ public static class GetStartupMainTableDataGroup2024
                                     "Beta",
                                     hrefs,
                                     Colors.LightGray,
-									null
+									null,
+									false
                                 ));
                             }
 							
