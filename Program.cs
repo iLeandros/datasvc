@@ -30,6 +30,7 @@ using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
 using DataSvc.MainHelpers; // MainHelpers
 using DataSvc.Likes; // MainHelpers
 using DataSvc.Services; // Services
+using DataSvc.Analyzer;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
