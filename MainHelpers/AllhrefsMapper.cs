@@ -98,4 +98,68 @@ public static class AllhrefsMapper
             teamStandingsHtml = preferTeamStandingsHtml ? p.TeamStandingsHtml : null
         };
     }
+    
+    public static DetailsItemDto MapDetailsRecordToDetailsItemDto(DetailsRecord rec)
+    {
+        var p = rec.Payload ?? new DetailsPayload(
+            null, null, null, null, null, null, null, null
+        );
+
+        var teamsInfo      = TeamsInfoParser.Parse(p.TeamsInfoHtml);
+        var matchBetween   = MatchBetweenHelper.GetMatchDataBetween(p.MatchBetweenHtml ?? string.Empty);
+        var recentSeparate = MatchSeparatelyHelper.GetMatchDataSeparately(p.TeamMatchesSeparateHtml ?? string.Empty);
+
+        var rawBarCharts = BarChartsParser.GetBarChartsData(p.TeamsBetStatisticsHtml ?? string.Empty);
+        var barCharts = rawBarCharts?.Select(b => new BarChartDto
+        {
+            Title = b.Title,
+            HalfContainerId = b.HalfContainerId,
+            Items = b.ToList()
+        }).ToList();
+
+        var matchFacts = MatchFactsParser.GetMatchFacts(p.FactsHtml);
+
+        var win = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(p.LastTeamsMatchesHtml ?? string.Empty);
+        var lastTeamsWinrate = (win is null)
+            ? null
+            : new WinrateDto
+              {
+                  Wins   = new[] { win[0,0], win[0,1] },
+                  Draws  = new[] { win[1,0], win[1,1] },
+                  Losses = new[] { win[2,0], win[2,1] }
+              };
+
+        var teamStats  = GetTeamStatisticsHelper.GetTeamsStatistics(p.TeamsStatisticsHtml ?? string.Empty);
+        var standings  = TeamStandingsHelper.GetTeamStandings(p.TeamStandingsHtml ?? string.Empty);
+
+        return new DetailsItemDto
+        {
+            Href           = rec.Href,
+            LastUpdatedUtc = rec.LastUpdatedUtc,
+
+            TeamsInfo      = teamsInfo,
+            TeamsInfoHtml  = null,
+
+            MatchDataBetween = matchBetween,
+            MatchBetweenHtml = null,
+
+            RecentMatchesSeparate     = recentSeparate,
+            RecentMatchesSeparateHtml = null,
+
+            BarCharts              = barCharts,
+            TeamsBetStatisticsHtml = null,
+
+            MatchFacts = matchFacts,
+            FactsHtml  = null,
+
+            LastTeamsWinrate     = lastTeamsWinrate,
+            LastTeamsMatchesHtml = null,
+
+            TeamsStatistics     = teamStats,
+            TeamsStatisticsHtml = null,
+
+            TeamStandings     = standings,
+            TeamStandingsHtml = null
+        };
+    }
 }
