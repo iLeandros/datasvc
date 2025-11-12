@@ -1999,7 +1999,7 @@ public sealed class ParsedTipsService
         if (hrefs.Length == 0) return;
 
         // 2) Build a lookup of href -> details record
-        var detailsByHref = new Dictionary<string, DetailsRecord?>(StringComparer.OrdinalIgnoreCase);
+        var detailsByHref = new Dictionary<string, DetailsItemDto?>(StringComparer.OrdinalIgnoreCase);
         foreach (var h in hrefs)
             detailsByHref[h] = _details.Get(h);
 
