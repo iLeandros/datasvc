@@ -2047,7 +2047,7 @@ public sealed class ParsedTipsService
                     liveByTeams.TryGetValue(TeamKey(item.HostTeam!, item.GuestTeam!), out live);
                 }
 				
-				var probs = await Task.Run(() => TipAnalyzer.Analyze(detailDto, item.TeamOne, item.TeamTwo, item.Tip), ct).ConfigureAwait(false);
+				var probs = await Task.Run(() => TipAnalyzer.Analyze(detailDto, item.HostTeam, item.GuestTeam, item.Tip), ct).ConfigureAwait(false);
 				var tipCode = probs.OrderByDescending(p => p.Probability).FirstOrDefault();
 				item.ProposedResults = probs;
 				item.Tip = tipCode?.Code ?? item.Tip;
