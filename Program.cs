@@ -1985,6 +1985,29 @@ public sealed class ParsedTipsService
         PropertyNameCaseInsensitive = true
     };
 
+	private static LiveScoresResponse ToResponse(LiveScoreDay day)
+	{
+	    return new LiveScoresResponse
+	    {
+	        Date = day.Date,
+	        Groups = day.Groups?.Select(g => new LiveScoreGroupResponse
+	        {
+	            Competition = g.Competition,
+	            Matches = g.Matches?.Select(m => new LiveScoreItemResponse
+	            {
+	                Time = m.Time,
+	                Status = m.Status,
+	                HomeTeam = m.HomeTeam,
+	                HomeGoals = m.HomeGoals,
+	                AwayGoals = m.AwayGoals,
+	                AwayTeam = m.AwayTeam,
+	                Action = m.Action,     // same type in both models
+	                MatchID = m.MatchID
+	            }).ToList() ?? new List<LiveScoreItemResponse>()
+	        }).ToList() ?? new List<LiveScoreGroupResponse>()
+	    };
+	}
+
     /// <summary>
     /// Apply tips for the given date:
     ///  - read live scores from LiveScoresStore and map to LiveTableDataGroupDto
@@ -2002,7 +2025,7 @@ public sealed class ParsedTipsService
         var dateKey = date.ToString("yyyy-MM-dd");
         var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
         var liveGroups = liveResponse != null
-            ? DtoMapper.Map(liveResponse) // → ObservableCollection<LiveTableDataGroupDto>
+            ? DtoMapper.Map(ToResponse(day))    // <— adapt to DTO shape
             : new ObservableCollection<LiveTableDataGroupDto>();
 
         // Build a fast lookup: "home|away" => live item
