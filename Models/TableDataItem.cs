@@ -36,7 +36,8 @@ public class TableDataItem
     public string? Href { get; set; }
     public string? RowBackground { get; set; }
     public MatchDetails Details { get; set; } // set after construction
-    public List<ProposedResult> ProposedResults;
+    public List<ProposedResult> ProposedResults { get; set; }
+    public bool IsVipMatch { get; set; }
     
 
     public TableDataItem() { }
@@ -48,7 +49,7 @@ public class TableDataItem
         string? likePositive, string? likeNegative, long serverComputedLikes, string serverComputedLikesFormatted,
         string? coef1, string? coef2, string? coef3, string? coef4, string? coef5,
         string? coef6, string? coef7, string? coef8, string? coef9, string? coef10, string? coef11,
-        string version, string? href, string rowBackground, List<ProposedResult> proposedResults)
+        string version, string? href, string rowBackground, List<ProposedResult> proposedResults, bool isVipMatch)
     {
         Flag = flag;
         BackgroundTipColour = backgroundTipColour;
@@ -70,5 +71,6 @@ public class TableDataItem
         Href = href;
         RowBackground = rowBackground;
         ProposedResults = proposedResults;
+        IsVipMatch = isVipMatch;
     }
 }
