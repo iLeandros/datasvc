@@ -2051,7 +2051,7 @@ public sealed class ParsedTipsService
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
         );
 
-        return ModelHelperCalls.DtoMapper.Map(dto); // returns groups/items ready for UI/logic
+        return DtoMapper.Map(dto); // returns groups/items ready for UI/logic
     }
 }
 
