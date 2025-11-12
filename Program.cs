@@ -108,6 +108,9 @@ builder.Services.AddHostedService<Top10RefreshJob>();
 builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddHostedService<PerDateRefreshJob>();
 
+// NEW: parsed tips editor
+builder.Services.AddSingleton<ParsedTipsService>();
+
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -478,6 +481,7 @@ app.MapGet("/data/refresh-window", async (
         ok = errors.Count == 0
     });
 });
+/*
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
@@ -485,6 +489,24 @@ app.MapGet("/data/parsed/date/{date}", (string date) =>
     return perDateStore.TryGet(d, out var snap) && snap.Payload is not null
         ? Results.Ok(snap.Payload.TableDataGroup)
         : Results.NotFound(new { error = "snapshot not found; refresh first", date });
+});
+*/
+
+// GET /data/parsed/date/{date}
+app.MapGet("/data/parsed/date/{date}", (
+    string date,
+    [FromServices] SnapshotPerDateStore perDateStore,
+    [FromServices] ParsedTipsService tipsService) =>
+{
+    var d = DateOnly.Parse(date);
+
+    if (!perDateStore.TryGet(d, out var snap) || snap.Payload is null)
+        return Results.NotFound(new { error = "snapshot not found; refresh first", date });
+
+    var groups = snap.Payload.TableDataGroup;
+    tipsService.ApplyDummyTips(groups);
+
+    return Results.Ok(groups);
 });
 
 // GET /data/html/date/{date}
@@ -1916,6 +1938,30 @@ public sealed class SnapshotPerDateStore
         }
     }
 }
+
+// ---------- Parsed tips editing service ----------
+public sealed class ParsedTipsService
+{
+    // Simple dummy mutation: overwrite every item's Tip
+    public void ApplyDummyTips(System.Collections.ObjectModel.ObservableCollection<TableDataGroup>? groups)
+    {
+        if (groups is null) return;
+
+        foreach (var group in groups)
+        {
+            if (group?.Items is null) continue;
+
+            foreach (var item in group.Items)
+            {
+                if (item is null) continue;
+
+                // Dummy logic – you can change this later
+                item.Tip = $"DUMMY TIP: {item.HostTeam} vs {item.GuestTeam}";
+            }
+        }
+    }
+}
+
 
 
 public record DataSnapshot(DateTimeOffset LastUpdatedUtc, bool Ready, DataPayload? Payload, string? Error);
