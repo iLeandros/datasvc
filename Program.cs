@@ -2016,7 +2016,7 @@ public sealed class ParsedTipsService
                 if (string.IsNullOrWhiteSpace(href)) continue;
 
                 var norm = DetailsStore.Normalize(href);
-                detailsByHref.TryGetValue(norm, out var rec);
+                detailsByHref.TryGetValue(norm, out var detail);
 
                 // optional: pick up live info for this fixture by team names
                 LiveTableDataItemDto? live = null;
@@ -2027,13 +2027,13 @@ public sealed class ParsedTipsService
                 }
 
                 // ---- DUMMY: set the tip whenever we found details (you can also gate on 'live != null' if you want) ----
-                if (rec is not null)
+                if (detail is not null)
                 {
                     //item.Tip = "Und";
 					item.IsVipMatch = true;
 
 					// CPU work off UI
-					var probs = await Task.Run(() => TipAnalyzer.Analyze(detail, item.TeamOne, item.TeamTwo, item.Tip), ct).ConfigureAwait(false);
+					var probs = await Task.Run(() => TipAnalyzer.Analyze(detail, item.HostTeam, item.HostTeam, item.Tip), ct).ConfigureAwait(false);
 					var tipCode = probs.OrderByDescending(p => p.Probability).FirstOrDefault();
 					item.ProposedResults = probs;
 					item.Tip = tipCode?.Code ?? item.Tip;
