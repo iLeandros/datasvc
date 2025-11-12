@@ -2877,7 +2877,8 @@ public static class GetStartupMainTableDataGroup2024
                                     likesandvotes[10].InnerText,
                                     "Beta",
                                     hrefs,
-                                    Colors.LightGray
+                                    Colors.LightGray,
+									null
                                 ));
                             }
 							
