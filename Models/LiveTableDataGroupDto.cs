@@ -9,9 +9,9 @@ namespace DataSvc.Models;
 public class LiveTableDataGroupDto : ObservableCollection<LiveTableDataItemDto>
 {
     public string Title { get; }
-    public Color HeaderColor { get; }
+    public Microsoft.Maui.Graphics.Color HeaderColor { get; }
 
-    public LiveTableDataGroupDto(Color headerColor, string title, ObservableCollection<LiveTableDataItemDto> items)
+    public LiveTableDataGroupDto(Microsoft.Maui.Graphics.Color headerColor, string title, ObservableCollection<LiveTableDataItemDto> items)
         : base(items ?? new ObservableCollection<LiveTableDataItemDto>())
     {
         HeaderColor = headerColor;
