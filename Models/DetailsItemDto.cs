@@ -36,4 +36,7 @@ public sealed class DetailsItemDto
     // Team standings
     public TeamStandingsTableDto? TeamStandings { get; set; }
     public string? TeamStandingsHtml { get; set; }
+
+    // Chart segments (e.g., for possession)
+    public List<ChartSegment>? ChartSegments { get; set; }
 }
