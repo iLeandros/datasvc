@@ -2055,13 +2055,9 @@ public sealed class ParsedTipsService
 	            {
 	                item.IsVipMatch = true;
 	
-	                // Run analyzer on CPU threadpool; pass Host & Guest correctly
-	                var probs = await Task.Run(
-	                    () => TipAnalyzer.Analyze(detailDto, item.HostTeam ?? "", item.GuestTeam ?? "", item.Tip),
-	                    ct
-	                ).ConfigureAwait(false);
+					var probs = await Task.Run(() => TipAnalyzer.Analyze(detailDto, item.HostTeam, item.HostTeam, item.Tip), ct).ConfigureAwait(false);
 	
-	                var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
+	                var tipCode = probs.OrderByDescending(p => p.Probability).FirstOrDefault();
 	                item.ProposedResults = probs;
 	                item.Tip = tipCode?.Code ?? item.Tip;
 	
