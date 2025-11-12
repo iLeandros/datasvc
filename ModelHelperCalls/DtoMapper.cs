@@ -44,21 +44,21 @@ namespace DataSvc.ModelHelperCalls
                 }
     
                 if (items.Count > 0)
-                    groups.Add(new LiveTableDataGroupDto(Colors.DarkSlateGray, g.Competition, items));
+                    groups.Add(new LiveTableDataGroupDto(Microsoft.Maui.Graphics.Colors.DarkSlateGray, g.Competition, items));
             }
     
             return groups;
         }
     
-        private static Color LiveStatusColor(string status)
+        private static Microsoft.Maui.Graphics.Color LiveStatusColor(string status)
         {
-            if (string.IsNullOrWhiteSpace(status)) return Colors.Black;
+            if (string.IsNullOrWhiteSpace(status)) return Microsoft.Maui.Graphics.Colors.Black;
             var s = status.Trim().ToLowerInvariant();
-            if (s == "pen") return Colors.Red;
-            if (s == "et") return Colors.DarkRed;
-            if (s == "ht") return Colors.Orange;
-            if (s.Any(char.IsDigit)) return Colors.DarkGreen; // in-play minutes
-            return Colors.Black; // fin/awrd/post/sched/canc
+            if (s == "pen") return Microsoft.Maui.Graphics.Colors.Red;
+            if (s == "et") return Microsoft.Maui.Graphics.Colors.DarkRed;
+            if (s == "ht") return Microsoft.Maui.Graphics.Colors.Orange;
+            if (s.Any(char.IsDigit)) return Microsoft.Maui.Graphics.Colors.DarkGreen; // in-play minutes
+            return Microsoft.Maui.Graphics.Colors.Black; // fin/awrd/post/sched/canc
         }
     }
 }
