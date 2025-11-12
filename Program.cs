@@ -1999,7 +1999,7 @@ public sealed class ParsedTipsService
         if (hrefs.Length == 0) return;
 
         // 2) Build a lookup of href -> details record
-        var detailsByHref = new Dictionary<string, DetailsItemDto?>(StringComparer.OrdinalIgnoreCase);
+        var detailsByHref = new Dictionary<string, DetailsRecord?>(StringComparer.OrdinalIgnoreCase);
         foreach (var h in hrefs)
             detailsByHref[h] = _details.Get(h);
 
@@ -2043,14 +2043,14 @@ public sealed class ParsedTipsService
                 }
             }
         }
-
-        // --- local helper ---
-        static string TeamKey(string home, string away)
-            => NormalizeTeam(home) + "|" + NormalizeTeam(away);
-
-        static string NormalizeTeam(string s)
-            => (s ?? "").Trim().ToLowerInvariant();
     }
+
+	// --- local helper ---
+    static string TeamKey(string home, string away)
+        => NormalizeTeam(home) + "|" + NormalizeTeam(away);
+
+    static string NormalizeTeam(string s)
+        => (s ?? "").Trim().ToLowerInvariant();
 	
 	private static ObservableCollection<LiveTableDataGroupDto> ParseLivescoresJson(string json)
     {
