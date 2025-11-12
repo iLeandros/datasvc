@@ -1958,7 +1958,7 @@ public sealed class ParsedTipsService
         _live         = live;
     }
 
-	public void ApplyTipsForDate(DateOnly date, ObservableCollection<TableDataGroup>? groups)
+	public async void ApplyTipsForDate(DateOnly date, ObservableCollection<TableDataGroup>? groups)
     {
         if (groups is null || groups.Count == 0) return;
 
@@ -2027,8 +2027,14 @@ public sealed class ParsedTipsService
                 // ---- DUMMY: set the tip whenever we found details (you can also gate on 'live != null' if you want) ----
                 if (rec is not null)
                 {
-                    item.Tip = "Und";
+                    //item.Tip = "Und";
 					item.IsVipMatch = true;
+
+					// CPU work off UI
+					var probs = await Task.Run(() => TipAnalyzer.Analyze(detail, item.TeamOne, item.TeamTwo, item.Tip), ct).ConfigureAwait(false);
+					var tipCode = probs.OrderByDescending(p => p.Probability).FirstOrDefault();
+					item.ProposedResults = probs;
+					item.Tip = tipCode?.Code ?? item.Tip;
                     // Example of how you'd use livescores next:
                     // if (live != null && int.TryParse(live.HomeGoals, out var hg) && int.TryParse(live.AwayGoals, out var ag))
                     //     item.Tip = (hg + ag) >= 3 ? "Over 2.5" : "Und";
