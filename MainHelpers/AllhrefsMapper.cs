@@ -106,7 +106,7 @@ public static class AllhrefsMapper
             null, null, null, null, null, null, null, null
         );
 
-        var teamsInfo      = TeamsInfoParser.Parse(p.TeamsInfoHtml);
+        var teamsInfo      = TeamsInfoParserDto.Parse(p.TeamsInfoHtml);
         var matchBetween   = MatchBetweenHelper.GetMatchDataBetween(p.MatchBetweenHtml ?? string.Empty);
         var recentSeparate = MatchSeparatelyHelper.GetMatchDataSeparately(p.TeamMatchesSeparateHtml ?? string.Empty);
 
