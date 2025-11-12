@@ -1,6 +1,7 @@
 // AllhrefsMapper.cs
 using System.Linq;
 using DataSvc.ModelHelperCalls;
+using DataSvc.Models;
 
 namespace DataSvc.MainHelpers;
 
