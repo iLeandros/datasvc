@@ -504,7 +504,7 @@ app.MapGet("/data/parsed/date/{date}", (
         return Results.NotFound(new { error = "snapshot not found; refresh first", date });
 
     var groups = snap.Payload.TableDataGroup;
-    tipsService.ApplyDummyTips(groups);
+    tipsService.ApplyTipsForDate(d, groups);
 
     return Results.Ok(groups);
 });
@@ -1939,24 +1939,69 @@ public sealed class SnapshotPerDateStore
     }
 }
 
-// ---------- Parsed tips editing service ----------
+// ---------- Parsed tips editing service (joined with details by href) ----------
 public sealed class ParsedTipsService
 {
-    // Simple dummy mutation: overwrite every item's Tip
-    public void ApplyDummyTips(System.Collections.ObjectModel.ObservableCollection<TableDataGroup>? groups)
-    {
-        if (groups is null) return;
+    private readonly SnapshotPerDateStore _perDateStore;
+    private readonly DetailsStore _details;
 
+    public ParsedTipsService(SnapshotPerDateStore perDateStore, DetailsStore details)
+    {
+        _perDateStore = perDateStore;
+        _details      = details;
+    }
+
+    /// <summary>
+    /// For the given date, join parsed items to details by href, then edit Tip.
+    /// Current dummy behavior: if a matching details record exists -> Tip = "Und".
+    /// </summary>
+    public void ApplyTipsForDate(DateOnly date, System.Collections.ObjectModel.ObservableCollection<TableDataGroup>? groups)
+    {
+        if (groups is null || groups.Count == 0) return;
+
+        // Build a normalized set of hrefs present in parsed data (fast membership lookups)
+        var hrefs = groups
+            .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+            .Select(i => i?.Href)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Select(DetailsStore.Normalize)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (hrefs.Length == 0) return;
+
+        // Create a lookup of href -> "has details" (we only need presence to do the dummy tip)
+        var hasDetails = new HashSet<string>(
+            hrefs.Select(h =>
+            {
+                var rec = _details.Get(h); // store.Get() normalizes internally
+                return rec?.Href;          // may be null if not present
+            })
+            .Where(h => !string.IsNullOrWhiteSpace(h))!
+            .Select(h => h!),
+            StringComparer.OrdinalIgnoreCase
+        );
+
+        // Walk the parsed items again and set Tip if a matching details href exists
         foreach (var group in groups)
         {
             if (group?.Items is null) continue;
 
             foreach (var item in group.Items)
             {
-                if (item is null) continue;
+                if (item?.Href is null) continue;
 
-                // Dummy logic – you can change this later
-                item.Tip = $"Und";
+                var norm = DetailsStore.Normalize(item.Href);
+                if (hasDetails.Contains(norm))
+                {
+                    // ---- DUMMY LOGIC for now ----
+                    item.Tip = "Und";
+                }
+                else
+                {
+                    // optional: leave as-is, or indicate missing details
+                    // item.Tip = item.Tip ?? "—";
+                }
             }
         }
     }
