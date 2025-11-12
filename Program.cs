@@ -2001,30 +2001,13 @@ public sealed class ParsedTipsService
 	    foreach (var h in hrefs)
 	        detailsByHref[h] = _details.Get(h); // Get() normalizes internally
 	
-	    // 2b) Map RECORDS -> DTOs: href -> DetailsItemDto
-	    //     This is the key change that fixes CS1503.
-	    var detailsDtoByHref = new Dictionary<string, DetailsItemDto>(StringComparer.OrdinalIgnoreCase);
-	    foreach (var kvp in detailsByHref)
-	    {
-	        if (kvp.Value is null) continue;
-	
-	        // Use your existing mapper that shapes what /data/details/item returns.
-	        // All "prefer*Html" flags are false so we return parsed objects, not raw HTML.
-	        var dto = AllhrefsMapper.MapDetailsRecordToAllhrefsItem(
-	            kvp.Value,
-	            preferTeamsInfoHtml:       false,
-	            preferMatchBetweenHtml:    false,
-	            preferSeparateMatchesHtml: false,
-	            preferBetStatsHtml:        false,
-	            preferFactsHtml:           false,
-	            preferLastTeamsHtml:       false,
-	            preferTeamsStatisticsHtml: false,
-	            preferTeamStandingsHtml:   false
-	        );
-	
-	        if (dto is not null)
-	            detailsDtoByHref[kvp.Key] = dto;
-	    }
+	    // 2b) RECORDS -> DTOs
+		var detailsDtoByHref = new Dictionary<string, DetailsItemDto>(StringComparer.OrdinalIgnoreCase);
+		foreach (var (href, rec) in detailsByHref)
+		{
+		    if (rec is null) continue;
+		    detailsDtoByHref[href] = AllhrefsMapper.MapDetailsRecordToDetailsItemDto(rec);
+		}
 	
 	    // 3) Walk parsed items and:
 	    //    (a) match details DTO by href,
@@ -2054,16 +2037,19 @@ public sealed class ParsedTipsService
 	            if (detailDto is not null)
 	            {
 	                item.IsVipMatch = true;
-	
-					// Run analyzer on CPU threadpool; pass Host & Guest correctly
-	                var probs = await Task.Run(
-	                    () => TipAnalyzer.Analyze(detailDto, item.HostTeam ?? "", item.GuestTeam ?? "", item.Tip),
-	                    ct
-	                ).ConfigureAwait(false);
-	
-	                var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
-	                item.ProposedResults = probs;
-	                item.Tip = tipCode?.Code ?? item.Tip;
+					
+				    var probs = await Task.Run(
+				        () => TipAnalyzer.Analyze(detailDto, item.HostTeam ?? "", item.GuestTeam ?? "", item.Tip),
+				        ct
+				    ).ConfigureAwait(false);
+				
+				    // Convert analyzer results → your server DTO type
+				    item.ProposedResults = probs?
+				        .Select(p => new DataSvc.Models.ProposedResult { Code = p.Code, Probability = p.Probability })
+				        .ToList();
+				
+				    var tipCode = item.ProposedResults?.OrderByDescending(p => p.Probability).FirstOrDefault();
+				    item.Tip = tipCode?.Code ?? item.Tip;
 	
 	                // Example if you want to fold live info in later:
 	                // if (live != null &&
