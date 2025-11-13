@@ -41,7 +41,7 @@ public class TableDataItem
     public bool IsVipMatch { get; set; }
     public bool IsLocked { get; set; } = false;
     public bool TipIsVisible { get; set; } = false;
-    public Microsoft.Maui.Graphics.Color BackgroundColor = Microsoft.Maui.Graphics.Colors.LightGray; // Default to LightGray
+    public Microsoft.Maui.Graphics.Color BackgroundColor { get; set; } = Microsoft.Maui.Graphics.Colors.LightGray; // Default to LightGray
     
 
     public TableDataItem() { }
