@@ -2186,6 +2186,7 @@ public sealed class ParsedTipsService
 				    item.IsLocked = false;
 				    item.TipIsVisible = true;
 				}
+				/*
 				if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
 				    unlockIndex.TryGetValue(item.Href, out var watchedAtUtc) &&
 				    (nowUtc - watchedAtUtc) <= sixHours)
@@ -2202,6 +2203,7 @@ public sealed class ParsedTipsService
 				        item.TipIsVisible = true;
 				    }
 				}
+				*/
             }
         }
     }
