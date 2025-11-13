@@ -2091,6 +2091,8 @@ public sealed class ParsedTipsService
 				item.ProposedResults = probs;
 				item.Tip = tipCode?.Code ?? item.Tip;
 
+				var backgroundTipColour = item.BackgroundTipColour;
+
                 // Example of optional live-driven tweak (keep commented until you want it)
                 // if (live != null &&
                 //     int.TryParse(live.HomeGoals, out var hg) &&
@@ -2153,10 +2155,10 @@ public sealed class ParsedTipsService
 				string srcAway = matched?.Item?.AwayGoals ?? item.GuestScore;
 				
 				// parse them
-				if (TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
+				if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
 				{
 				    // pass the LIVE dto so IsFinal/clock come from live
-				    backgroundTipColour = EvaluateTipColor(matched?.Item, item, home, away);
+				    backgroundTipColour = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
 				}
 				else
 				{
