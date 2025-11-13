@@ -2169,8 +2169,8 @@ public sealed class ParsedTipsService
 				// IMPORTANT: property sets on UI thread
 				item.Tip = tipCode?.Code ?? item.Tip;
 				
-				item.ScoreTeamOne = scoreOne;
-				item.ScoreTeamTwo = scoreTwo;
+				item.HostScore = scoreOne;
+				item.GuestScore = scoreTwo;
 				
 				item.BackgroundTipColour = backgroundTipColour;
 				//Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
