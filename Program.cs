@@ -2052,8 +2052,8 @@ public sealed class ParsedTipsService
 	        x.Item,
 	        HomeKey = FixtureHelper.Canon(x.Item.HomeTeam ?? string.Empty), // helper you added
 	        AwayKey = FixtureHelper.Canon(x.Item.AwayTeam ?? string.Empty),
-	        HomeSet = FixtureHelper.TokenSet(x.Item.HomeTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
-	        AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
+	        HomeSet = ToSet(FixtureHelper.TokenSet(x.Item.HomeTeam ?? string.Empty)),
+			AwaySet = ToSet(FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty)),
 	        Kick = SafeParseKick(x.Item.Time) // "HH:mm" -> TimeSpan? (nullable)
 	    }).ToList();
 	
@@ -2126,8 +2126,8 @@ public sealed class ParsedTipsService
 	
 	            // === Smarter fixture lookup ===
 	            // Normalize the fixture’s teams and kickoff
-	            var homeSet = (FixtureHelper.TokenSet(item.HostTeam ?? string.Empty) ?? Enumerable.Empty<string>());
-	            var awaySet = (FixtureHelper.TokenSet(item.GuestTeam ?? string.Empty) ?? Enumerable.Empty<string>());
+	            var homeSet = ToSet(FixtureHelper.TokenSet(item.HostTeam ?? string.Empty));
+				var awaySet = ToSet(FixtureHelper.TokenSet(item.GuestTeam ?? string.Empty));
 	            var homeKey = string.Join(' ', homeSet);
 	            var awayKey = string.Join(' ', awaySet);
 	            var fixtureKick = SafeParseKick(item.Time); // nullable
@@ -2249,6 +2249,10 @@ public sealed class ParsedTipsService
 	        }
 	    }
 	}
+
+	static HashSet<string> ToSet(IEnumerable<string>? src)
+	    => src is HashSet<string> hs ? hs
+	       : new HashSet<string>(src ?? Array.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
     // ---- local safe helper (keeps your variable names unchanged) ----
     static TimeSpan? SafeParseKick(string? time)
