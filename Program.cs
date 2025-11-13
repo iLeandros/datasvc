@@ -2218,13 +2218,13 @@ public sealed class ParsedTipsService
 	            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
 	            if (tipCode?.Probability is double p && p > 0.90)
 	            {
-	                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.Goldenrod;
+	                item.BackgroundColor = AppColors.Goldenrod;
 	                item.IsLocked = true;
 	                item.TipIsVisible = false;
 	            }
 	            else
 	            {
-	                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.White;
+	                item.BackgroundColor = AppColors.White;
 	                item.IsLocked = false;
 	                item.TipIsVisible = true;
 	            }
@@ -3255,7 +3255,7 @@ public static class GetStartupMainTableDataGroup2024
                                     AppColors.LightGray,
 									null,
 									false,
-									Microsoft.Maui.Graphics.Colors.LightGray
+									AppColors.LightGray
                                 ));
                             }
 							
