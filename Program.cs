@@ -2253,9 +2253,6 @@ public sealed class ParsedTipsService
         try { return FixtureHelper.ParseKick(time); }
         catch { return null; }
     }
-
-    static string TeamKey(string? home, string? away)
-        => (home ?? string.Empty).Trim().ToLowerInvariant() + "|" + (away ?? string.Empty).Trim().ToLowerInvariant();
 	
     /// <summary>
     /// Reads /var/lib/datasvc/details/{yyyy-MM-dd}.json, returns href→DetailsItemDto.
