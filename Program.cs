@@ -2162,7 +2162,7 @@ public sealed class ParsedTipsService
 				}
 				else
 				{
-				    backgroundTipColour = Microsoft.Maui.Graphics.Colors.Black; // still pending / no numbers yet
+				    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
 				}
             }
         }
