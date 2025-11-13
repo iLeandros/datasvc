@@ -38,6 +38,8 @@ public class TableDataItem
     public MatchDetails Details { get; set; } // set after construction
     public List<TipAnalyzer.ProposedResult> ProposedResults { get; set; }
     public bool IsVipMatch { get; set; }
+    public bool IsLocked { get; set; } = false;
+    public bool TipIsVisible { get; set; } = false;
     
 
     public TableDataItem() { }
