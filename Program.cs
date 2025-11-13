@@ -2043,7 +2043,7 @@ public sealed class ParsedTipsService
 		    AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty),
 		    Kick = FixtureHelper.ParseKick(x.Item.Time)                     // "HH:mm" -> TimeSpan?
 		}).ToList();
-
+		/*
         // Build a fast lookup: "home|away" => live item
         var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
         foreach (var g in allLiveResults)
@@ -2057,7 +2057,7 @@ public sealed class ParsedTipsService
                     liveByTeams[k] = m;
             }
         }
-
+		*/
         // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
         var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
 
@@ -2092,15 +2092,6 @@ public sealed class ParsedTipsService
 				item.Tip = tipCode?.Code ?? item.Tip;
 
 				var backgroundTipColour = item.BackgroundTipColour;
-
-                // Example of optional live-driven tweak (keep commented until you want it)
-                // if (live != null &&
-                //     int.TryParse(live.HomeGoals, out var hg) &&
-                //     int.TryParse(live.AwayGoals, out var ag) &&
-                //     (hg + ag) >= 3)
-                // {
-                //     item.Tip = "Over 2.5";
-                // }
 				
 				// === Smarter fixture lookup ===
 				// Normalize the fixture’s teams and kickoff
