@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Microsoft.Maui.Graphics;
 using DataSvc.Analyzer;
 
 namespace DataSvc.Models;
@@ -40,6 +41,7 @@ public class TableDataItem
     public bool IsVipMatch { get; set; }
     public bool IsLocked { get; set; } = false;
     public bool TipIsVisible { get; set; } = false;
+    private Microsoft.Maui.Graphics.Color backgroundColor = Microsoft.Maui.Graphics.Colors.LightGray; // Default to LightGray
     
 
     public TableDataItem() { }
