@@ -2164,6 +2164,44 @@ public sealed class ParsedTipsService
 				{
 				    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
 				}
+
+				//PENDING QEUE
+				// IMPORTANT: property sets on UI thread
+				item.Tip = tipCode?.Code ?? item.Tip;
+				
+				item.ScoreTeamOne = scoreOne;
+				item.ScoreTeamTwo = scoreTwo;
+				
+				item.BackgroundTipColour = backgroundTipColour;
+				//Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
+				if (tipCode?.Probability is double p && p > 0.90)
+				{
+				    item.BackgroundColor = Microsoft.Maui.Graphics.Colors.Goldenrod;
+				    item.IsLocked = true;
+				    item.TipIsVisible = false;
+				}
+				else
+				{
+				    item.BackgroundColor = Microsoft.Maui.Graphics.Colors.White;
+				    item.IsLocked = false;
+				    item.TipIsVisible = true;
+				}
+				if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
+				    unlockIndex.TryGetValue(item.Href, out var watchedAtUtc) &&
+				    (nowUtc - watchedAtUtc) <= sixHours)
+				{
+				    item.IsLocked = false;
+				    item.TipIsVisible = true;
+				}
+				if(date.HasValue)
+				{
+				    if(date.Value < serverDateConverted)
+				    {
+				        // past date—unlock everything
+				        item.IsLocked = false;
+				        item.TipIsVisible = true;
+				    }
+				}
             }
         }
     }
