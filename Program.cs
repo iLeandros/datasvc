@@ -2046,7 +2046,7 @@ public sealed class ParsedTipsService
 		
         // Build a fast lookup: "home|away" => live item
         var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
-		/*
+		
         foreach (var g in allLiveResults)
         {
             if (g is null) continue;
@@ -2058,7 +2058,7 @@ public sealed class ParsedTipsService
                     liveByTeams[k] = m;
             }
         }
-		*/
+		
         // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
         var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
 
@@ -2160,7 +2160,7 @@ public sealed class ParsedTipsService
 				//PENDING QEUE
 				// IMPORTANT: property sets on UI thread
 				//item.Tip = tipCode?.Code ?? item.Tip;
-				item.Tip = "WTF";
+				item.Tip = "HMT";
 				
 				item.HostScore = scoreOne;
 				item.GuestScore = scoreTwo;
