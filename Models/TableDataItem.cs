@@ -55,7 +55,7 @@ public class TableDataItem
         string? coef1, string? coef2, string? coef3, string? coef4, string? coef5,
         string? coef6, string? coef7, string? coef8, string? coef9, string? coef10, string? coef11,
         string version, string? href, string rowBackground, List<TipAnalyzer.ProposedResult> proposedResults, bool isVipMatch,
-        Microsoft.Maui.Graphics.Color backgroundColor)
+        string backgroundColor)
     {
         Flag = flag;
         BackgroundTipColour = backgroundTipColour;
