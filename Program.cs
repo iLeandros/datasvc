@@ -2043,9 +2043,10 @@ public sealed class ParsedTipsService
 		    AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty),
 		    Kick = FixtureHelper.ParseKick(x.Item.Time)                     // "HH:mm" -> TimeSpan?
 		}).ToList();
-		/*
+		
         // Build a fast lookup: "home|away" => live item
         var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
+		/*
         foreach (var g in allLiveResults)
         {
             if (g is null) continue;
