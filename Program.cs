@@ -2159,7 +2159,8 @@ public sealed class ParsedTipsService
 
 				//PENDING QEUE
 				// IMPORTANT: property sets on UI thread
-				item.Tip = tipCode?.Code ?? item.Tip;
+				//item.Tip = tipCode?.Code ?? item.Tip;
+				item.Tip = "WTF";
 				
 				item.HostScore = scoreOne;
 				item.GuestScore = scoreTwo;
