@@ -3700,14 +3700,22 @@ public sealed class DetailsRefreshService
 		    .Where(h => !string.IsNullOrWhiteSpace(h))
 		    .Distinct(StringComparer.OrdinalIgnoreCase)
 		    .ToArray();
-		*/
+		
         var firstGroup = snap.Payload!.TableDataGroup.FirstOrDefault();
 		var hrefs = (firstGroup?.Items ?? new ObservableCollection<TableDataItem>())
 		    .Select(i => i.Href)
 		    .Where(h => !string.IsNullOrWhiteSpace(h))
 		    .Distinct(StringComparer.OrdinalIgnoreCase)
 		    .ToArray();
+		*/
+		var hrefs = snap.Payload!.TableDataGroup
+		    .SelectMany(g => g.Items)
+		    .Select(i => i.Href)
+		    .Where(h => !string.IsNullOrWhiteSpace(h))
+		    .Distinct(StringComparer.OrdinalIgnoreCase)
+		    .ToArray();
 
+		
         var records = hrefs
             .Select(h => _details.Get(h))
             .Where(r => r is not null)
