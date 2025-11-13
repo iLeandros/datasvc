@@ -2021,7 +2021,7 @@ public sealed class ParsedTipsService
         CancellationToken ct = default)
     {
         if (groups is null || groups.Count == 0) return;
-
+		/*
         // ---------- 0) Livescores for the date (from in-memory store) ----------
         var dateKey = date.ToString("yyyy-MM-dd");
         var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
@@ -2061,6 +2061,51 @@ public sealed class ParsedTipsService
 		
         // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
         var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
+		*/
+		// ---------- 0) Livescores for the date (from in-memory store) ----------
+	    var dateKey = date.ToString("yyyy-MM-dd");
+	    var liveDay = _live.Get(dateKey); // LiveScoreDay
+	    var allLiveResults = liveDay != null
+	        ? DtoMapper.Map(ToResponse(liveDay)) // => ObservableCollection<LiveTableDataGroupDto>
+	        : new ObservableCollection<LiveTableDataGroupDto>();
+	
+	    // Flatten & pre-index live fixtures with normalized keys (defensive)
+	    var teamMatches = allLiveResults
+	        .SelectMany(g => g.Select(i => new { Group = g, Item = i }))
+	        .ToList();
+	
+	    var liveIndex = teamMatches.Select(x =>
+	    {
+	        var home = x.Item?.HomeTeam ?? string.Empty;
+	        var away = x.Item?.AwayTeam ?? string.Empty;
+	        return new
+	        {
+	            x.Group,
+	            x.Item,
+	            HomeKey = FixtureHelper.Canon(home),
+	            AwayKey = FixtureHelper.Canon(away),
+	            HomeSet = FixtureHelper.TokenSet(home) ?? Enumerable.Empty<string>(),
+	            AwaySet = FixtureHelper.TokenSet(away) ?? Enumerable.Empty<string>(),
+	            Kick = SafeParseKick(x.Item?.Time) // might be null
+	        };
+	    }).ToList();
+	
+	    // Simple "home|away" lookup too (fast path)
+	    var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
+	    foreach (var g in allLiveResults)
+	    {
+	        if (g is null) continue;
+	        foreach (var m in g)
+	        {
+	            if (m is null) continue;
+	            var k = TeamKey(m.HomeTeam, m.AwayTeam);
+	            if (!liveByTeams.ContainsKey(k))
+	                liveByTeams[k] = m;
+	        }
+	    }
+	
+	    // ---------- 1) Load per-date details JSON (already in DetailsItemDto shape) ----------
+	    var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
 
         // ---------- 2) Walk parsed items and join ----------
         foreach (var group in groups)
