@@ -2016,238 +2016,239 @@ public sealed class ParsedTipsService
     ///  - for every parsed item: join by href, analyze, set Tip/ProposedResults/IsVipMatch
     /// </summary>
     public async Task ApplyTipsForDate(
-        DateOnly date,
-        ObservableCollection<TableDataGroup>? groups,
-        CancellationToken ct = default)
-{
-    if (groups is null || groups.Count == 0) return;
-
-    // ---------- 0) Livescores for the date (from in-memory store) ----------
-    var dateKey = date.ToString("yyyy-MM-dd");
-    var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
-
-    var allLiveResults = new ObservableCollection<LiveTableDataGroupDto>();
-    try
-    {
-        allLiveResults = liveResponse != null
-            ? DtoMapper.Map(ToResponse(liveResponse))    // <— adapt to DTO shape
-            : new ObservableCollection<LiveTableDataGroupDto>();
-    }
-    catch (Exception ex)
-    {
-        // make livescores optional — never crash tips
-        Console.WriteLine($"[Tips] Live mapping failed for {dateKey}: {ex.Message}");
-        allLiveResults = new ObservableCollection<LiveTableDataGroupDto>();
-    }
-
-    var teamMatches = allLiveResults
-        .Where(g => g is not null)
-        .SelectMany(g => g.Select(i => new { Group = g, Item = i }))
-        .Where(x => x.Item is not null)
-        .ToList();
-
-    var liveIndex = teamMatches.Select(x => new
-    {
-        x.Group,
-        x.Item,
-        HomeKey = FixtureHelper.Canon(x.Item.HomeTeam ?? string.Empty), // helper you added
-        AwayKey = FixtureHelper.Canon(x.Item.AwayTeam ?? string.Empty),
-        HomeSet = FixtureHelper.TokenSet(x.Item.HomeTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
-        AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
-        Kick = SafeParseKick(x.Item.Time) // "HH:mm" -> TimeSpan? (nullable)
-    }).ToList();
-
-    // Build a fast lookup: "home|away" => live item
-    var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
-
-    foreach (var g in allLiveResults)
-    {
-        if (g is null) continue;
-        foreach (var m in g)
-        {
-            if (m is null) continue;
-            var k = TeamKey(m.HomeTeam, m.AwayTeam);
-            if (!liveByTeams.ContainsKey(k))
-                liveByTeams[k] = m;
-        }
-    }
-
-    // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
-    var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
-
-    // ---------- 2) Walk parsed items and join ----------
-    foreach (var group in groups)
-    {
-        if (group?.Items is null) continue;
-
-        foreach (var item in group.Items)
-        {
-            if (item is null) continue;
-
-            var href = item.Href;
-            if (string.IsNullOrWhiteSpace(href)) continue;
-
-            var normHref = DetailsStore.Normalize(href);
-            if (!detailsByHref.TryGetValue(normHref, out var detailDto) || detailDto is null)
-                continue; // no details for this match
-
-            item.IsVipMatch = true;
-
-            // Optional: pick up livescore by teams (ready for future rules)
-            LiveTableDataItemDto? live = null;
-            if (!string.IsNullOrWhiteSpace(item.HostTeam) && !string.IsNullOrWhiteSpace(item.GuestTeam))
-            {
-                liveByTeams.TryGetValue(TeamKey(item.HostTeam!, item.GuestTeam!), out live);
-            }
-
-            // ---- Analyzer (defensive) ----
-            List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probs = null;
-            try
-            {
-                var hostSafe = item.HostTeam ?? string.Empty;
-                var guestSafe = item.GuestTeam ?? string.Empty;
-
-                probs = await Task.Run(
-                    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip),
-                    ct
-                ).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Tips] Analyze failed for href={normHref}, '{item.HostTeam}' vs '{item.GuestTeam}': {ex.Message}");
-                probs = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
-            }
-
-            var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
-            item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
-            item.Tip = tipCode?.Code ?? item.Tip;
-
-            var backgroundTipColour = item.BackgroundTipColour;
-
-            // === Smarter fixture lookup ===
-            // Normalize the fixture’s teams and kickoff
-            var homeSet = (FixtureHelper.TokenSet(item.HostTeam ?? string.Empty) ?? Enumerable.Empty<string>());
-            var awaySet = (FixtureHelper.TokenSet(item.GuestTeam ?? string.Empty) ?? Enumerable.Empty<string>());
-            var homeKey = string.Join(' ', homeSet);
-            var awayKey = string.Join(' ', awaySet);
-            var fixtureKick = SafeParseKick(item.Time); // nullable
-
-            // Candidate pool: close kickoff (±60 min). If time is missing on either side, keep it permissive.
-            var candidates = liveIndex.Where(c =>
-                fixtureKick is null || c.Kick is null || FixtureHelper.CloseKick(fixtureKick.Value, c.Kick.Value, minutes: 60));
-
-            (double score, dynamic pick)? best = null;
-
-            foreach (var c in candidates)
-            {
-                try
-                {
-                    // Compare both orientations (in case some feeds swap home/away)
-                    var jHome = Math.Max(FixtureHelper.Jaccard(homeSet, c.HomeSet), FixtureHelper.Jaccard(homeSet, c.AwaySet));
-                    var jAway = Math.Max(FixtureHelper.Jaccard(awaySet, c.AwaySet), FixtureHelper.Jaccard(awaySet, c.HomeSet));
-
-                    // small orientation bonus if home-home & away-away match better
-                    var orientBonus =
-                        (FixtureHelper.Jaccard(homeSet, c.HomeSet) + FixtureHelper.Jaccard(awaySet, c.AwaySet)) >
-                        (FixtureHelper.Jaccard(homeSet, c.AwaySet) + FixtureHelper.Jaccard(awaySet, c.HomeSet)) ? 0.05 : 0.0;
-
-                    // lightweight string-level fuzz bonus
-                    var fuzzy = Math.Max(
-                            (FixtureHelper.JaroWinkler(homeKey, c.HomeKey) + FixtureHelper.JaroWinkler(awayKey, c.AwayKey)) / 2.0,
-                            (FixtureHelper.JaroWinkler(homeKey, c.AwayKey) + FixtureHelper.JaroWinkler(awayKey, c.HomeKey)) / 2.0
-                        ) * 0.3;
-
-                    var score = (jHome + jAway) / 2.0 + orientBonus + fuzzy; // 0..1
-                    if (best is null || score > best.Value.score)
-                        best = (score, c);
-                }
-                catch (Exception ex)
-                {
-                    // protect against any unexpected nulls in c.*
-                    Console.WriteLine($"[Tips] Candidate scoring failed: {ex.Message}");
-                }
-            }
-
-            var matched = (best is { score: > 0.55 }) ? best.Value.pick : null;
-
-            // Compute color off-thread, but APPLY on UI
-            string? scoreOne = item.HostScore, scoreTwo = item.GuestScore;
-            if (matched is not null)
-            {
-                try
-                {
-                    scoreOne = matched.Item.HomeGoals?.ToString() ?? scoreOne;
-                    scoreTwo = matched.Item.AwayGoals?.ToString() ?? scoreTwo;
-                    item.HostTeam = matched.Item.HomeTeam ?? item.HostTeam;
-                    item.GuestTeam = matched.Item.AwayTeam ?? item.GuestTeam;
-                }
-                catch { /* keep previous values if anything is off */ }
-            }
-
-            string srcHome = (matched?.Item?.HomeGoals ?? item.HostScore) ?? string.Empty;
-            string srcAway = (matched?.Item?.AwayGoals ?? item.GuestScore) ?? string.Empty;
-
-            // parse them
-            try
-            {
-                if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
-                {
-                    // pass the LIVE dto so IsFinal/clock come from live
-                    backgroundTipColour = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
-                }
-                else
-                {
-                    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[Tips] EvaluateTipColor failed for href={normHref}: {ex.Message}");
-                backgroundTipColour = AppColors.Black;
-            }
-
-            //PENDING QEUE
-            // IMPORTANT: property sets on UI thread
-            //item.Tip = tipCode?.Code ?? item.Tip;
-            item.Tip = "NTM";
-
-            item.HostScore = scoreOne;
-            item.GuestScore = scoreTwo;
-
-            item.BackgroundTipColour = backgroundTipColour;
-            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
-            if (tipCode?.Probability is double p && p > 0.90)
-            {
-                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.Goldenrod;
-                item.IsLocked = true;
-                item.TipIsVisible = false;
-            }
-            else
-            {
-                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.White;
-                item.IsLocked = false;
-                item.TipIsVisible = true;
-            }
-            /*
-            if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
-                unlockIndex.TryGetValue(item.Href, out var watchedAtUtc) &&
-                (nowUtc - watchedAtUtc) <= sixHours)
-            {
-                item.IsLocked = false;
-                item.TipIsVisible = true;
-            }
-            if(date.HasValue)
-            {
-                if(date.Value < serverDateConverted)
-                {
-                    // past date—unlock everything
-                    item.IsLocked = false;
-                    item.TipIsVisible = true;
-                }
-            }
-            */
-        }
-    }
+	        DateOnly date,
+	        ObservableCollection<TableDataGroup>? groups,
+	        CancellationToken ct = default)
+	{
+	    if (groups is null || groups.Count == 0) return;
+	
+	    // ---------- 0) Livescores for the date (from in-memory store) ----------
+	    var dateKey = date.ToString("yyyy-MM-dd");
+	    var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
+	
+	    var allLiveResults = new ObservableCollection<LiveTableDataGroupDto>();
+	    try
+	    {
+	        allLiveResults = liveResponse != null
+	            ? DtoMapper.Map(ToResponse(liveResponse))    // <— adapt to DTO shape
+	            : new ObservableCollection<LiveTableDataGroupDto>();
+	    }
+	    catch (Exception ex)
+	    {
+	        // make livescores optional — never crash tips
+	        Console.WriteLine($"[Tips] Live mapping failed for {dateKey}: {ex.Message}");
+	        allLiveResults = new ObservableCollection<LiveTableDataGroupDto>();
+	    }
+	
+	    var teamMatches = allLiveResults
+	        .Where(g => g is not null)
+	        .SelectMany(g => g.Select(i => new { Group = g, Item = i }))
+	        .Where(x => x.Item is not null)
+	        .ToList();
+	
+	    var liveIndex = teamMatches.Select(x => new
+	    {
+	        x.Group,
+	        x.Item,
+	        HomeKey = FixtureHelper.Canon(x.Item.HomeTeam ?? string.Empty), // helper you added
+	        AwayKey = FixtureHelper.Canon(x.Item.AwayTeam ?? string.Empty),
+	        HomeSet = FixtureHelper.TokenSet(x.Item.HomeTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
+	        AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty) ?? Enumerable.Empty<string>(),
+	        Kick = SafeParseKick(x.Item.Time) // "HH:mm" -> TimeSpan? (nullable)
+	    }).ToList();
+	
+	    // Build a fast lookup: "home|away" => live item
+	    var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
+	
+	    foreach (var g in allLiveResults)
+	    {
+	        if (g is null) continue;
+	        foreach (var m in g)
+	        {
+	            if (m is null) continue;
+	            var k = TeamKey(m.HomeTeam, m.AwayTeam);
+	            if (!liveByTeams.ContainsKey(k))
+	                liveByTeams[k] = m;
+	        }
+	    }
+	
+	    // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
+	    var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
+	
+	    // ---------- 2) Walk parsed items and join ----------
+	    foreach (var group in groups)
+	    {
+	        if (group?.Items is null) continue;
+	
+	        foreach (var item in group.Items)
+	        {
+	            if (item is null) continue;
+	
+	            var href = item.Href;
+	            if (string.IsNullOrWhiteSpace(href)) continue;
+	
+	            var normHref = DetailsStore.Normalize(href);
+	            if (!detailsByHref.TryGetValue(normHref, out var detailDto) || detailDto is null)
+	                continue; // no details for this match
+	
+	            item.IsVipMatch = true;
+	
+	            // Optional: pick up livescore by teams (ready for future rules)
+	            LiveTableDataItemDto? live = null;
+	            if (!string.IsNullOrWhiteSpace(item.HostTeam) && !string.IsNullOrWhiteSpace(item.GuestTeam))
+	            {
+	                liveByTeams.TryGetValue(TeamKey(item.HostTeam!, item.GuestTeam!), out live);
+	            }
+	
+	            // ---- Analyzer (defensive) ----
+	            List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probs = null;
+	            try
+	            {
+	                var hostSafe = item.HostTeam ?? string.Empty;
+	                var guestSafe = item.GuestTeam ?? string.Empty;
+	
+	                probs = await Task.Run(
+	                    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip),
+	                    ct
+	                ).ConfigureAwait(false);
+	            }
+	            catch (Exception ex)
+	            {
+	                Console.WriteLine($"[Tips] Analyze failed for href={normHref}, '{item.HostTeam}' vs '{item.GuestTeam}': {ex.Message}");
+	                probs = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+	            }
+	
+	            var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
+	            item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+	            item.Tip = tipCode?.Code ?? item.Tip;
+	
+	            var backgroundTipColour = item.BackgroundTipColour;
+	
+	            // === Smarter fixture lookup ===
+	            // Normalize the fixture’s teams and kickoff
+	            var homeSet = (FixtureHelper.TokenSet(item.HostTeam ?? string.Empty) ?? Enumerable.Empty<string>());
+	            var awaySet = (FixtureHelper.TokenSet(item.GuestTeam ?? string.Empty) ?? Enumerable.Empty<string>());
+	            var homeKey = string.Join(' ', homeSet);
+	            var awayKey = string.Join(' ', awaySet);
+	            var fixtureKick = SafeParseKick(item.Time); // nullable
+	
+	            // Candidate pool: close kickoff (±60 min). If time is missing on either side, keep it permissive.
+	            var candidates = liveIndex.Where(c =>
+	                fixtureKick is null || c.Kick is null || FixtureHelper.CloseKick(fixtureKick.Value, c.Kick.Value, minutes: 60));
+	
+	            (double score, dynamic pick)? best = null;
+	
+	            foreach (var c in candidates)
+	            {
+	                try
+	                {
+	                    // Compare both orientations (in case some feeds swap home/away)
+	                    var jHome = Math.Max(FixtureHelper.Jaccard(homeSet, c.HomeSet), FixtureHelper.Jaccard(homeSet, c.AwaySet));
+	                    var jAway = Math.Max(FixtureHelper.Jaccard(awaySet, c.AwaySet), FixtureHelper.Jaccard(awaySet, c.HomeSet));
+	
+	                    // small orientation bonus if home-home & away-away match better
+	                    var orientBonus =
+	                        (FixtureHelper.Jaccard(homeSet, c.HomeSet) + FixtureHelper.Jaccard(awaySet, c.AwaySet)) >
+	                        (FixtureHelper.Jaccard(homeSet, c.AwaySet) + FixtureHelper.Jaccard(awaySet, c.HomeSet)) ? 0.05 : 0.0;
+	
+	                    // lightweight string-level fuzz bonus
+	                    var fuzzy = Math.Max(
+	                            (FixtureHelper.JaroWinkler(homeKey, c.HomeKey) + FixtureHelper.JaroWinkler(awayKey, c.AwayKey)) / 2.0,
+	                            (FixtureHelper.JaroWinkler(homeKey, c.AwayKey) + FixtureHelper.JaroWinkler(awayKey, c.HomeKey)) / 2.0
+	                        ) * 0.3;
+	
+	                    var score = (jHome + jAway) / 2.0 + orientBonus + fuzzy; // 0..1
+	                    if (best is null || score > best.Value.score)
+	                        best = (score, c);
+	                }
+	                catch (Exception ex)
+	                {
+	                    // protect against any unexpected nulls in c.*
+	                    Console.WriteLine($"[Tips] Candidate scoring failed: {ex.Message}");
+	                }
+	            }
+	
+	            var matched = (best is { score: > 0.55 }) ? best.Value.pick : null;
+	
+	            // Compute color off-thread, but APPLY on UI
+	            string? scoreOne = item.HostScore, scoreTwo = item.GuestScore;
+	            if (matched is not null)
+	            {
+	                try
+	                {
+	                    scoreOne = matched.Item.HomeGoals?.ToString() ?? scoreOne;
+	                    scoreTwo = matched.Item.AwayGoals?.ToString() ?? scoreTwo;
+	                    item.HostTeam = matched.Item.HomeTeam ?? item.HostTeam;
+	                    item.GuestTeam = matched.Item.AwayTeam ?? item.GuestTeam;
+	                }
+	                catch { /* keep previous values if anything is off */ }
+	            }
+	
+	            string srcHome = (matched?.Item?.HomeGoals ?? item.HostScore) ?? string.Empty;
+	            string srcAway = (matched?.Item?.AwayGoals ?? item.GuestScore) ?? string.Empty;
+	
+	            // parse them
+	            try
+	            {
+	                if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
+	                {
+	                    // pass the LIVE dto so IsFinal/clock come from live
+	                    backgroundTipColour = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
+	                }
+	                else
+	                {
+	                    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
+	                }
+	            }
+	            catch (Exception ex)
+	            {
+	                Console.WriteLine($"[Tips] EvaluateTipColor failed for href={normHref}: {ex.Message}");
+	                backgroundTipColour = AppColors.Black;
+	            }
+	
+	            //PENDING QEUE
+	            // IMPORTANT: property sets on UI thread
+	            //item.Tip = tipCode?.Code ?? item.Tip;
+	            item.Tip = "NTM";
+	
+	            item.HostScore = scoreOne;
+	            item.GuestScore = scoreTwo;
+	
+	            item.BackgroundTipColour = backgroundTipColour;
+	            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
+	            if (tipCode?.Probability is double p && p > 0.90)
+	            {
+	                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.Goldenrod;
+	                item.IsLocked = true;
+	                item.TipIsVisible = false;
+	            }
+	            else
+	            {
+	                item.BackgroundColor = Microsoft.Maui.Graphics.Colors.White;
+	                item.IsLocked = false;
+	                item.TipIsVisible = true;
+	            }
+	            /*
+	            if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
+	                unlockIndex.TryGetValue(item.Href, out var watchedAtUtc) &&
+	                (nowUtc - watchedAtUtc) <= sixHours)
+	            {
+	                item.IsLocked = false;
+	                item.TipIsVisible = true;
+	            }
+	            if(date.HasValue)
+	            {
+	                if(date.Value < serverDateConverted)
+	                {
+	                    // past date—unlock everything
+	                    item.IsLocked = false;
+	                    item.TipIsVisible = true;
+	                }
+	            }
+	            */
+	        }
+	    }
+	}
 
     // ---- local safe helper (keeps your variable names unchanged) ----
     static TimeSpan? SafeParseKick(string? time)
