@@ -9,7 +9,7 @@ namespace DataSvc.MainHelpers;
 
 public static class EvaluationHelper
 {
-    private static Microsoft.Maui.Graphics.Color EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away)
+    public static Microsoft.Maui.Graphics.Color EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away)
     {
         if (home < 0 || away < 0 || live is null) return Microsoft.Maui.Graphics.Colors.Black;
     
@@ -124,7 +124,7 @@ public static class EvaluationHelper
                 return Microsoft.Maui.Graphics.Colors.Black;
         }
     }
-    private static bool TryParseThreshold(ReadOnlySpan<char> s, out double thr)
+    public static bool TryParseThreshold(ReadOnlySpan<char> s, out double thr)
         => double.TryParse(s, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out thr);
 
     public static int? TimeStringToMinutes(string s)
@@ -158,14 +158,14 @@ public static class EvaluationHelper
         // Fallback: first digits anywhere ("23’" -> 23). If none, push to end.
         return int.TryParse(new string(t.Where(char.IsDigit).ToArray()), out var v) ? v : int.MaxValue;
     }
-    private static bool OUHolds(System.Text.RegularExpressions.Match ouMatch, int total)
+    public static bool OUHolds(System.Text.RegularExpressions.Match ouMatch, int total)
     {
         var kind = ouMatch.Groups["kind"].Value; // "O" or "U"
         var thr = double.Parse(ouMatch.Groups["thr"].Value, CultureInfo.InvariantCulture);
         //Debug.WriteLine($"Evaluating O/U tip: {kind}{thr}, total={total}");
         return kind == "O" ? total > thr : total < thr; // Over strictly greater; Under strictly less
     }
-    private static bool IsFinal(string? status)
+    public static bool IsFinal(string? status)
     {
         if (string.IsNullOrWhiteSpace(status)) return false;
         var s = status.Trim().ToLowerInvariant();
@@ -174,7 +174,7 @@ public static class EvaluationHelper
         return s is "fin" or "ft" or "ended" or "finished" or "awrd" or "post" or "canc";
     }
 
-    private static bool TryGetScores(string? s1, string? s2, out int home, out int away)
+    public static bool TryGetScores(string? s1, string? s2, out int home, out int away)
     {
         home = away = -1;
     
