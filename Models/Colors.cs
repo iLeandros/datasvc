@@ -1,5 +1,5 @@
 namespace DataSvc.Models;
-public static class Colors
+public static class AppColors
 {
     public static readonly string Green = "Green";
     public static readonly string Red = "Red";
