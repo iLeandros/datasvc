@@ -2025,13 +2025,28 @@ public sealed class ParsedTipsService
         // ---------- 0) Livescores for the date (from in-memory store) ----------
         var dateKey = date.ToString("yyyy-MM-dd");
         var liveResponse = _live.Get(dateKey); // your store returns the API-shaped model
-        var liveGroups = liveResponse != null
+        var allLiveResults = liveResponse != null
             ? DtoMapper.Map(ToResponse(liveResponse))    // <— adapt to DTO shape
             : new ObservableCollection<LiveTableDataGroupDto>();
 
+		var teamMatches = allLiveResults
+		    .SelectMany(g => g.Select(i => new { Group = g, Item = i }))
+		    .ToList();
+
+		var liveIndex = teamMatches.Select(x => new
+		{
+		    x.Group,
+		    x.Item,
+		    HomeKey = FixtureHelper.Canon(x.Item.HomeTeam ?? string.Empty), // helper you added
+		    AwayKey = FixtureHelper.Canon(x.Item.AwayTeam ?? string.Empty),
+		    HomeSet = FixtureHelper.TokenSet(x.Item.HomeTeam ?? string.Empty),
+		    AwaySet = FixtureHelper.TokenSet(x.Item.AwayTeam ?? string.Empty),
+		    Kick = FixtureHelper.ParseKick(x.Item.Time)                     // "HH:mm" -> TimeSpan?
+		}).ToList();
+
         // Build a fast lookup: "home|away" => live item
         var liveByTeams = new Dictionary<string, LiveTableDataItemDto>(StringComparer.OrdinalIgnoreCase);
-        foreach (var g in liveGroups)
+        foreach (var g in allLiveResults)
         {
             if (g is null) continue;
             foreach (var m in g)
@@ -2094,7 +2109,7 @@ public sealed class ParsedTipsService
 				var fixtureKick = FixtureHelper.ParseKick(item.Time);
 				
 				// Candidate pool: close kickoff (±60 min). If time is missing on either side, we keep it permissive.
-				var candidates = liveIndex.Where(c => FixtureHelper.CloseKick(fixtureKick, c.Kick, minutes: 60));
+				var candidates = live.Where(c => FixtureHelper.CloseKick(fixtureKick, c.Kick, minutes: 60));
 				
 				(double score, dynamic pick)? best = null;
 
