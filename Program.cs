@@ -2291,8 +2291,8 @@ public sealed class ParsedTipsService
 	            }
 	
 	            // Map analyzer results to your server DTO type (if your TableDataItem expects it)
-	            var mapped = (probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>())
-	                .Select(p => new ProposedResult { Code = p.Code, Probability = p.Probability })
+	            var mapped = (probs ?? new List<TipAnalyzer.ProposedResult>())
+	                .Select(p => new TipAnalyzer.ProposedResult { Code = p.Code, Probability = p.Probability })
 	                .ToList();
 	
 	            item.ProposedResults = mapped;
@@ -2317,35 +2317,26 @@ public sealed class ParsedTipsService
 	            LiveTableDataItemDto? matchedItem = null;
 	
 	            foreach (var c in candidates)
-	            {
-	                // Compare both orientations (in case feeds swap home/away)
-	                var jHome = Math.Max(
-	                    FixtureHelper.Jaccard(homeSet, c.HomeSet),
-	                    FixtureHelper.Jaccard(homeSet, c.AwaySet));
-	                var jAway = Math.Max(
-	                    FixtureHelper.Jaccard(awaySet, c.AwaySet),
-	                    FixtureHelper.Jaccard(awaySet, c.HomeSet));
-	
-	                // Orientation bonus if home-home & away-away match better
-	                var orientBonus =
-	                    (FixtureHelper.Jaccard(homeSet, c.HomeSet) + FixtureHelper.Jaccard(awaySet, c.AwaySet)) >
-	                    (FixtureHelper.Jaccard(homeSet, c.AwaySet) + FixtureHelper.Jaccard(awaySet, c.HomeSet))
-	                    ? 0.05 : 0.0;
-	
-	                // Lightweight fuzzy bonus
-	                var fuzzy = Math.Max(
-	                        (FixtureHelper.JaroWinkler(homeKey, c.HomeKey) + FixtureHelper.JaroWinkler(awayKey, c.AwayKey)) / 2.0,
-	                        (FixtureHelper.JaroWinkler(homeKey, c.AwayKey) + FixtureHelper.JaroWinkler(awayKey, c.HomeKey)) / 2.0
-	                    ) * 0.3;
-	
-	                var score = (jHome + jAway) / 2.0 + orientBonus + fuzzy; // 0..1
-	
-	                if (score > bestScore)
-	                {
-	                    bestScore = score;
-	                    matchedItem = c.Item;
-	                }
-	            }
+				{
+				    // Compare both orientations (in case some feeds swap home/away)
+				    var jHome = Math.Max(FixtureHelper.Jaccard(homeSet, c.HomeSet), FixtureHelper.Jaccard(homeSet, c.AwaySet));
+				    var jAway = Math.Max(FixtureHelper.Jaccard(awaySet, c.AwaySet), FixtureHelper.Jaccard(awaySet, c.HomeSet));
+				
+				    // small orientation bonus if home-home & away-away match better
+				    var orientBonus =
+				        (FixtureHelper.Jaccard(homeSet, c.HomeSet) + FixtureHelper.Jaccard(awaySet, c.AwaySet)) >
+				        (FixtureHelper.Jaccard(homeSet, c.AwaySet) + FixtureHelper.Jaccard(awaySet, c.HomeSet)) ? 0.05 : 0.0;
+				
+				    // lightweight string-level fuzz bonus
+				    var fuzzy = Math.Max(
+				        (FixtureHelper.JaroWinkler(homeKey, c.HomeKey) + FixtureHelper.JaroWinkler(awayKey, c.AwayKey)) / 2.0,
+				        (FixtureHelper.JaroWinkler(homeKey, c.AwayKey) + FixtureHelper.JaroWinkler(awayKey, c.HomeKey)) / 2.0
+				    ) * 0.3;
+				
+				    var score = (jHome + jAway) / 2.0 + orientBonus + fuzzy; // 0..1
+				    if (best is null || score > best.Value.score)
+				        best = (score, c);
+				}
 	
 	            // Only accept a match if it's strong enough
 	            LiveTableDataItemDto? matched = (bestScore > 0.55) ? matchedItem : null;
@@ -2377,13 +2368,13 @@ public sealed class ParsedTipsService
 	                }
 	                else
 	                {
-	                    backgroundTipColour = DataSvc.Models.Colors.Black; // pending / no numbers yet
+	                    backgroundTipColour = AppColors.Black; // pending / no numbers yet
 	                }
 	            }
 	            catch (Exception ex)
 	            {
 	                Console.WriteLine($"[Tips] Evaluate color failed for href={normHref}: {ex.Message}");
-	                backgroundTipColour = DataSvc.Models.Colors.Black;
+	                backgroundTipColour = AppColors.Black;
 	            }
 	
 	            item.HostScore = scoreOne;
