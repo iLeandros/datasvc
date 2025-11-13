@@ -3072,13 +3072,13 @@ public static class GetStartupMainTableDataGroup2024
                                 .Descendants("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "").Contains("value"));
 
-                            var backgroundtipcolor = Models.Colors.Colors.Black;
+                            var backgroundtipcolor = Colors.Colors.Black;
                             if (tip != null)
                             {
                                 var tipClass = tip.Attributes["class"].Value;
-                                if (tipClass == "value success") backgroundtipcolor = Models.Colors.Colors.Green;
-                                else if (tipClass == "value failed") backgroundtipcolor = Models.Colors.Colors.Red;
-                                else backgroundtipcolor = Models.Colors.Colors.Black;
+                                if (tipClass == "value success") backgroundtipcolor = Colors.Colors.Green;
+                                else if (tipClass == "value failed") backgroundtipcolor = Colors.Colors.Red;
+                                else backgroundtipcolor = Colors.Colors.Black;
                             }
 
                             var likebutton = matchItem.Descendants("div")
@@ -3144,7 +3144,7 @@ public static class GetStartupMainTableDataGroup2024
                                     likesandvotes[10].InnerText,
                                     "Beta",
                                     hrefs,
-                                    Models.Colors.Colors.LightGray,
+                                    Colors.Colors.LightGray,
 									null,
 									false
                                 ));
