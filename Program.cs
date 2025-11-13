@@ -2109,7 +2109,7 @@ public sealed class ParsedTipsService
 				var fixtureKick = FixtureHelper.ParseKick(item.Time);
 				
 				// Candidate pool: close kickoff (±60 min). If time is missing on either side, we keep it permissive.
-				var candidates = live.Where(c => FixtureHelper.CloseKick(fixtureKick, c.Kick, minutes: 60));
+				var candidates = liveIndex.Where(c => FixtureHelper.CloseKick(fixtureKick, c.Kick, minutes: 60));
 				
 				(double score, dynamic pick)? best = null;
 
