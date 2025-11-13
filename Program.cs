@@ -3195,7 +3195,8 @@ public static class GetStartupMainTableDataGroup2024
                                     hrefs,
                                     AppColors.LightGray,
 									null,
-									false
+									false,
+									Microsoft.Maui.Graphics.Colors.LightGray
                                 ));
                             }
 							
