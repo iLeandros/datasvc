@@ -22,6 +22,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using MySqlConnector;
+using Microsoft.Maui.Graphics;
 using Dapper;
 using System.Linq;
 using System.IO.Compression;
@@ -2086,8 +2087,8 @@ public sealed class ParsedTipsService
 				
 				// === Smarter fixture lookup ===
 				// Normalize the fixture’s teams and kickoff
-				var homeSet = FixtureHelper.TokenSet(item.TeamOne ?? string.Empty);
-				var awaySet = FixtureHelper.TokenSet(item.TeamTwo ?? string.Empty);
+				var homeSet = FixtureHelper.TokenSet(item.HostTeam ?? string.Empty);
+				var awaySet = FixtureHelper.TokenSet(item.GuestTeam ?? string.Empty);
 				var homeKey = string.Join(' ', homeSet);
 				var awayKey = string.Join(' ', awaySet);
 				var fixtureKick = FixtureHelper.ParseKick(item.Time);
@@ -2097,7 +2098,55 @@ public sealed class ParsedTipsService
 				
 				(double score, dynamic pick)? best = null;
 
+				foreach (var c in candidates)
+				{
+				    // Compare both orientations (in case some feeds swap home/away)
+				    var jHome = Math.Max(FixtureHelper.Jaccard(homeSet, c.HomeSet), FixtureHelper.Jaccard(homeSet, c.AwaySet));
+				    var jAway = Math.Max(FixtureHelper.Jaccard(awaySet, c.AwaySet), FixtureHelper.Jaccard(awaySet, c.HomeSet));
 				
+				    // small orientation bonus if home-home & away-away match better
+				    var orientBonus =
+				        (FixtureHelper.Jaccard(homeSet, c.HomeSet) + FixtureHelper.Jaccard(awaySet, c.AwaySet)) >
+				        (FixtureHelper.Jaccard(homeSet, c.AwaySet) + FixtureHelper.Jaccard(awaySet, c.HomeSet)) ? 0.05 : 0.0;
+				
+				    // lightweight string-level fuzz bonus
+				    var fuzzy = Math.Max(
+				        (FixtureHelper.JaroWinkler(homeKey, c.HomeKey) + FixtureHelper.JaroWinkler(awayKey, c.AwayKey)) / 2.0,
+				        (FixtureHelper.JaroWinkler(homeKey, c.AwayKey) + FixtureHelper.JaroWinkler(awayKey, c.HomeKey)) / 2.0
+				    ) * 0.3;
+				
+				    var score = (jHome + jAway) / 2.0 + orientBonus + fuzzy; // 0..1
+				    if (best is null || score > best.Value.score)
+				        best = (score, c);
+				}
+				
+				var matched = (best is { score: > 0.55 }) ? best.Value.pick : null;
+
+				// Compute color off-thread, but APPLY on UI
+				string? scoreOne = item.HostScore , scoreTwo = item.GuestScore ;
+				if (matched is not null)
+				{
+				    scoreOne = matched.Item.HomeGoals?.ToString() ?? scoreOne;
+				    scoreTwo = matched.Item.AwayGoals?.ToString() ?? scoreTwo;
+				    item.HostTeam = matched.Item.HomeTeam ?? item.HostTeam;
+				    item.GuestTeam = matched.Item.AwayTeam ?? item.GuestTeam;
+				    //Debug.WriteLine($"Matched fixture {item.TeamOne} vs {item.TeamTwo} (tip {item.Tip})" +
+				    //    $" to live {matched.Item.HomeTeam} vs {matched.Item.AwayTeam} at {matched.Item.Time}");
+				}
+				
+				string srcHome = matched?.Item?.HomeGoals ?? item.HostScore;
+				string srcAway = matched?.Item?.AwayGoals ?? item.GuestScore;
+				
+				// parse them
+				if (TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
+				{
+				    // pass the LIVE dto so IsFinal/clock come from live
+				    backgroundTipColour = EvaluateTipColor(matched?.Item, item, home, away);
+				}
+				else
+				{
+				    backgroundTipColour = Microsoft.Maui.Graphics.Colors.Black; // still pending / no numbers yet
+				}
             }
         }
     }
