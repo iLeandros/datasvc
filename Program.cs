@@ -424,6 +424,7 @@ app.MapPost("/data/refresh-window", async (
 	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
+	[FromServices] ParsedTipsService tips,        // <-- add this
     CancellationToken ct) =>
 {
     var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
@@ -433,6 +434,7 @@ app.MapPost("/data/refresh-window", async (
     var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
         store:  perDateStore,
         cfg:    cfg,
+		tips:   tips,           // <-- pass it through
 		hourUtc: hour,
         center: center,
         back:   back,
@@ -459,6 +461,7 @@ app.MapGet("/data/refresh-window", async (
 	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
+	[FromServices] ParsedTipsService tips,
     CancellationToken ct) =>
 {
     var center = date is null ? ScraperConfig.TodayLocal() : DateOnly.Parse(date);
@@ -468,6 +471,7 @@ app.MapGet("/data/refresh-window", async (
     var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
         store: perDateStore,
         cfg:   cfg,
+		tips:   tips,
 		hourUtc: hour,
         center: center,
         back:   back,
@@ -562,6 +566,7 @@ app.MapGet("/data/refresh-date/{date}", async (
     [FromQuery] int? hour,                                // optional hour 0..23
     [FromServices] SnapshotPerDateStore perDateStore,     // <-- inject store
     [FromServices] IConfiguration cfg,
+	[FromServices] ParsedTipsService tips,
     CancellationToken ct) =>
 {
     try
@@ -570,6 +575,12 @@ app.MapGet("/data/refresh-date/{date}", async (
 
         // pass the hour through; null means "use current UTC hour"
         var snap = await ScraperService.FetchOneDateAsync(d, cfg, hour, ct);
+
+		// Apply tips once, on refresh
+        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
+        {
+            await tips.ApplyTipsForDate(d, groups, ct);
+        }
 
         perDateStore.Set(d, snap);
 
