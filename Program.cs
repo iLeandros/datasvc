@@ -484,7 +484,7 @@ app.MapGet("/data/refresh-window", async (
         ok = errors.Count == 0
     });
 });
-/*
+
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
@@ -493,7 +493,7 @@ app.MapGet("/data/parsed/date/{date}", (string date) =>
         ? Results.Ok(snap.Payload.TableDataGroup)
         : Results.NotFound(new { error = "snapshot not found; refresh first", date });
 });
-
+/*
 
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (
@@ -511,7 +511,7 @@ app.MapGet("/data/parsed/date/{date}", (
 
     return Results.Ok(groups);
 });
-*/
+
 
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", async (
@@ -531,7 +531,7 @@ app.MapGet("/data/parsed/date/{date}", async (
 
     return Results.Ok(groups);
 });
-
+*/
 
 // GET /data/html/date/{date}
 app.MapGet("/data/html/date/{date}", (string date) =>
@@ -2740,17 +2740,21 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
     private readonly SnapshotPerDateStore _store;
     private readonly ILogger<PerDateRefreshJob> _log;
     private readonly IConfiguration _cfg;          // <-- inject cfg
+	private readonly ParsedTipsService _tips;    // <-- add
+	
     private Timer? _timer;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
     public PerDateRefreshJob(
         SnapshotPerDateStore store,
         ILogger<PerDateRefreshJob> log,
-        IConfiguration cfg)                       // <-- DI will supply this
+        IConfiguration cfg
+		ParsedTipsService tips)                       // <-- DI will supply this
     {
         _store = store;
         _log = log;
         _cfg = cfg;
+		_tips = tips;
     }
 
     public Task StartAsync(CancellationToken ct)
@@ -2772,6 +2776,7 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
             var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
 			    store: _store,
 			    cfg:   _cfg,
+				tips:   _tips, 
 			    hourUtc: hourUtc,     // << use the current hour
 			    center: center,
 			    back:   3,
@@ -2808,6 +2813,7 @@ public static class BulkRefresh
     	RefreshWindowAsync(
         SnapshotPerDateStore store,
         IConfiguration cfg,
+		ParsedTipsService tips,          // <-- new
         int? hourUtc = null,
         DateOnly? center = null, int back = 3, int ahead = 3,
         CancellationToken ct = default)
@@ -2826,6 +2832,12 @@ public static class BulkRefresh
 
                 // Use the FetchOneDateAsync overload that takes IConfiguration
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
+
+				// Enrich: apply tips ONCE here, before putting it into the store
+		        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
+		        {
+		            await tips.ApplyTipsForDate(d, groups, ct);
+		        }
 
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
