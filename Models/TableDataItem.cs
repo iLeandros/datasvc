@@ -15,6 +15,7 @@ public class TableDataItem
     [JsonPropertyName("ScoreTeamTwo")] public string? GuestScore { get; set; }
     [JsonPropertyName("TeamTwo")] public string? GuestTeam { get; set; }
 
+    public string? VIPTip { get; set; }
     [JsonPropertyName("Tip")] public string? Tip { get; set; }
     [JsonPropertyName("Like")] public string? LikeButtonImage { get; set; }
     [JsonPropertyName("Dislike")] public string? DislikeButtonImage { get; set; }
