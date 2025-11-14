@@ -113,7 +113,7 @@ builder.Services.AddHostedService<PerDateRefreshJob>();
 
 // NEW: parsed tips editor
 builder.Services.AddSingleton<ParsedTipsService>();
-builder.Services.AddHostedService<ParsedTipsRefreshJob>();
+//builder.Services.AddHostedService<ParsedTipsRefreshJob>();
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -574,13 +574,13 @@ app.MapGet("/data/refresh-date/{date}", async (
 
         // pass the hour through; null means "use current UTC hour"
         var snap = await ScraperService.FetchOneDateAsync(d, cfg, hour, ct);
-		/*
+		
 		// Apply tips once, on refresh
         if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
         {
             await tips.ApplyTipsForDate(d, groups, ct);
         }
-		*/
+		
         perDateStore.Set(d, snap);
 
         return Results.Ok(new {
@@ -2844,13 +2844,13 @@ public static class BulkRefresh
 
                 // Use the FetchOneDateAsync overload that takes IConfiguration
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
-				/*
+				
 				// Enrich: apply tips ONCE here, before putting it into the store
 		        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
 		        {
 		            await tips.ApplyTipsForDate(d, groups, ct);
 		        }
-				*/
+				
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
