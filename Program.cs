@@ -3332,7 +3332,7 @@ public static class GetStartupMainTableDataGroup2024
                                     hrefs,
                                     AppColors.LightGray,
 									null,
-									false,
+									true,
 									AppColors.LightGray
                                 ));
                             }
