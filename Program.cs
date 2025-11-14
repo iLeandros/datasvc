@@ -2748,7 +2748,7 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
     public PerDateRefreshJob(
         SnapshotPerDateStore store,
         ILogger<PerDateRefreshJob> log,
-        IConfiguration cfg
+        IConfiguration cfg,
 		ParsedTipsService tips)                       // <-- DI will supply this
     {
         _store = store;
