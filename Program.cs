@@ -2132,7 +2132,8 @@ public sealed class ParsedTipsService
 	
 	            var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
 	            item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
-	            item.Tip = tipCode?.Code ?? item.Tip;
+	            //item.Tip = tipCode?.Code ?? item.Tip;
+				item.VIPTip = tipCode?.Code ?? item.Tip;
 	
 	            var backgroundTipColour = item.BackgroundTipColour;
 	
@@ -2221,6 +2222,7 @@ public sealed class ParsedTipsService
 	            //PENDING QEUE
 	            // IMPORTANT: property sets on UI thread
 	            item.Tip = tipCode?.Code ?? item.Tip;
+				item.VIPTip = tipCode?.Code ?? item.Tip;
 	            //item.Tip = "NTM";
 	
 	            item.HostScore = scoreOne;
