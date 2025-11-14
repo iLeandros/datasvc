@@ -488,7 +488,7 @@ app.MapGet("/data/refresh-window", async (
         ok = errors.Count == 0
     });
 });
-/*
+
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
@@ -498,7 +498,6 @@ app.MapGet("/data/parsed/date/{date}", (string date) =>
         : Results.NotFound(new { error = "snapshot not found; refresh first", date });
 });
 /*
-
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (
     string date,
@@ -515,7 +514,7 @@ app.MapGet("/data/parsed/date/{date}", (
 
     return Results.Ok(groups);
 });
-*/
+
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", async (
     string date,
@@ -534,7 +533,7 @@ app.MapGet("/data/parsed/date/{date}", async (
 
     return Results.Ok(groups);
 });
-
+*/
 
 // GET /data/html/date/{date}
 app.MapGet("/data/html/date/{date}", (string date) =>
@@ -2844,13 +2843,13 @@ public static class BulkRefresh
 
                 // Use the FetchOneDateAsync overload that takes IConfiguration
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
-
+				/*
 				// Enrich: apply tips ONCE here, before putting it into the store
 		        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
 		        {
 		            await tips.ApplyTipsForDate(d, groups, ct);
 		        }
-
+				*/
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
