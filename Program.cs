@@ -2203,7 +2203,7 @@ public sealed class ParsedTipsService
 	            // parse them
 	            try
 	            {
-	                if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.Tip))
+	                if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.VIPTip))
 	                {
 	                    // pass the LIVE dto so IsFinal/clock come from live
 	                    backgroundTipColour = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
@@ -2221,7 +2221,7 @@ public sealed class ParsedTipsService
 	
 	            //PENDING QEUE
 	            // IMPORTANT: property sets on UI thread
-	            item.Tip = tipCode?.Code ?? item.Tip;
+	            //item.Tip = tipCode?.Code ?? item.Tip;
 				item.VIPTip = tipCode?.Code ?? item.Tip;
 	            //item.Tip = "NTM";
 	
