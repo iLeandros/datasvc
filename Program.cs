@@ -2091,7 +2091,7 @@ public sealed class ParsedTipsService
 	            if (!detailsByHref.TryGetValue(normHref, out var detailDto) || detailDto is null)
 	                continue; // no details for this match
 	
-	            item.IsVipMatch = true;
+	            //item.IsVipMatch = true;
 				//item.DetailsDto = detailDto;
 	
 	            // Optional: pick up livescore by teams (ready for future rules)
@@ -2222,12 +2222,14 @@ public sealed class ParsedTipsService
 	                item.BackgroundColor = AppColors.Goldenrod;
 	                item.IsLocked = true;
 	                item.TipIsVisible = false;
+					item.IsVipMatch = true;
 	            }
 	            else
 	            {
 	                item.BackgroundColor = AppColors.White;
 	                item.IsLocked = false;
 	                item.TipIsVisible = true;
+					item.IsVipMatch = false;
 	            }
 	            /*
 	            if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
