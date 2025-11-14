@@ -113,6 +113,7 @@ builder.Services.AddHostedService<PerDateRefreshJob>();
 
 // NEW: parsed tips editor
 builder.Services.AddSingleton<ParsedTipsService>();
+builder.Services.AddHostedService<ParsedTipsRefreshJob>();
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -573,13 +574,13 @@ app.MapGet("/data/refresh-date/{date}", async (
 
         // pass the hour through; null means "use current UTC hour"
         var snap = await ScraperService.FetchOneDateAsync(d, cfg, hour, ct);
-
+		/*
 		// Apply tips once, on refresh
         if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
         {
             await tips.ApplyTipsForDate(d, groups, ct);
         }
-
+		*/
         perDateStore.Set(d, snap);
 
         return Results.Ok(new {
@@ -2960,6 +2961,57 @@ public sealed class ScraperService
 	
 	    return snap;
 	}
+}
+
+// ---------- ParsedTips: background job ----------
+public sealed class ParsedTipsRefreshJob : BackgroundService
+{
+    private readonly SnapshotPerDateStore _perDate;
+    private readonly ParsedTipsService _tips;
+    private readonly SemaphoreSlim _gate = new(1, 1);
+
+    public ParsedTipsRefreshJob(
+        SnapshotPerDateStore perDateStore,
+        ParsedTipsService tips)
+    {
+        _perDate = perDateStore;
+        _tips = tips;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        // same 5-min cadence pattern as your other jobs
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        try
+        {
+            // initial run
+            await RunOnceSafe(stoppingToken);
+
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+                await RunOnceSafe(stoppingToken);
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task RunOnceSafe(CancellationToken ct)
+    {
+        if (!await _gate.WaitAsync(0, ct)) return;
+        try
+        {
+            var center = ScraperConfig.TodayLocal(); // you already use this for windows
+            foreach (var d in ScraperConfig.DateWindow(center, back: 3, ahead: 3))
+            {
+                if (!_perDate.TryGet(d, out var snap) || snap?.Payload?.TableDataGroup is null || snap.Payload.TableDataGroup.Count == 0)
+                    continue;
+
+                await _tips.ApplyTipsForDate(d, snap.Payload.TableDataGroup, ct); // exact signature in file
+            }
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
 }
 
 public sealed class RefreshJob : BackgroundService
