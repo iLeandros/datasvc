@@ -110,6 +110,7 @@ builder.Services.AddHostedService<Top10RefreshJob>();
 
 builder.Services.AddSingleton<SnapshotPerDateStore>();
 builder.Services.AddHostedService<PerDateRefreshJob>();
+builder.Services.AddSingleton<Top10PerDateStore>();  // <- NEW
 
 // NEW: parsed tips editor
 builder.Services.AddSingleton<ParsedTipsService>();
@@ -1041,6 +1042,47 @@ app.MapGet("/data/top10", ([FromServices] Top10Store store) =>
     var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
     return Results.Json(groups);
 });
+// GET /data/top10/date/{date}  (date must be in today±3)
+app.MapGet("/data/top10/date/{date}", (
+    string date,
+    [FromServices] Top10PerDateStore store) =>
+{
+    // enforce same window bounds as livescores
+    var center = ScraperConfig.TodayLocal();
+    var min = center.AddDays(-3);
+    var max = center.AddDays(+3);
+
+    if (!DateOnly.TryParse(date, out var d))
+        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
+
+    if (d < min || d > max)
+    {
+        return Results.BadRequest(new
+        {
+            message = "date outside allowed window (today±3)",
+            date = d.ToString("yyyy-MM-dd"),
+            allowed = new
+            {
+                from = min.ToString("yyyy-MM-dd"),
+                to   = max.ToString("yyyy-MM-dd")
+            }
+        });
+    }
+
+    var key = d.ToString("yyyy-MM-dd");
+    var snap = store.Get(key);
+    return (snap is null || snap.Payload is null)
+        ? Results.NotFound(new { message = "No top10 for date (yet)", date = key })
+        : Results.Json(snap.Payload.TableDataGroup);
+});
+
+// Optional: small status for debugging
+app.MapGet("/data/top10/dates", ([FromServices] Top10PerDateStore store) =>
+{
+    var center = ScraperConfig.TodayLocal();
+    return Results.Ok(new { center = center.ToString("yyyy-MM-dd"), dates = store.Dates() });
+});
+
 /*
 // Raw HTML snapshot of the main page
 app.MapGet("/data/html", ([FromServices] ResultStore store) =>
@@ -1947,6 +1989,38 @@ public sealed class ResultStore
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
 }
 
+// Stores one Top10 snapshot per date (local date key "yyyy-MM-dd")
+public sealed class Top10PerDateStore
+{
+    private readonly object _gate = new();
+    private readonly Dictionary<string, DataSnapshot> _byDate = new(StringComparer.Ordinal);
+
+    public void Set(string dateKey, DataSnapshot snap)
+    {
+        lock (_gate) _byDate[dateKey] = snap;
+    }
+
+    public DataSnapshot? Get(string dateKey)
+    {
+        lock (_gate) return _byDate.TryGetValue(dateKey, out var s) ? s : null;
+    }
+
+    public IReadOnlyList<string> Dates()
+    {
+        lock (_gate) return _byDate.Keys.OrderBy(x => x, StringComparer.Ordinal).ToList();
+    }
+
+    public int ShrinkTo(HashSet<string> keep)
+    {
+        lock (_gate)
+        {
+            var remove = _byDate.Keys.Where(k => !keep.Contains(k)).ToList();
+            foreach (var k in remove) _byDate.Remove(k);
+            return remove.Count;
+        }
+    }
+}
+
 // Stores one snapshot per date
 public sealed class SnapshotPerDateStore
 {
@@ -2562,13 +2636,13 @@ public sealed class Top10RefreshJob : BackgroundService
 {
     private readonly Top10ScraperService _svc;
     private readonly Top10Store _store;
+	private readonly Top10PerDateStore _perDate;   // <- NEW
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly TimeZoneInfo _tz;
 
-    public Top10RefreshJob(Top10ScraperService svc, Top10Store store)
+    public Top10RefreshJob(Top10ScraperService svc, Top10Store store, Top10PerDateStore perDate)
     {
-        _svc = svc;
-        _store = store;
+        _svc = svc; _store = store; _perDate = perDate;
         var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
         _tz = !string.IsNullOrWhiteSpace(tzId)
             ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
