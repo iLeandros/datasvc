@@ -2005,22 +2005,6 @@ public sealed class ResultStore
     public DataSnapshot? Current { get { lock (_gate) return _current; } }
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
 }
-static IReadOnlyList<string> ListDateKeysFromDir(string dir)
-{
-    if (!Directory.Exists(dir)) return Array.Empty<string>();
-    var keys = new List<string>();
-
-    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
-    {
-        var name = Path.GetFileNameWithoutExtension(f); // "yyyy-MM-dd"
-        if (DateOnly.TryParse(name, out _))
-            keys.Add(name);
-    }
-
-    // sort ascending by date string
-    keys.Sort(StringComparer.Ordinal);
-    return keys;
-}
 
 // Stores one snapshot per date
 public sealed class SnapshotPerDateStore
@@ -2439,6 +2423,19 @@ public static class TipsPerDateFiles
         try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
         catch { return null; }
     }
+	// NEW: list available date keys (yyyy-MM-dd), sorted
+    public static IReadOnlyList<string> ListDates()
+    {
+        if (!Directory.Exists(Dir)) return Array.Empty<string>();
+        var keys = new List<string>();
+        foreach (var f in Directory.EnumerateFiles(Dir, "*.json"))
+        {
+            var name = Path.GetFileNameWithoutExtension(f);
+            if (DateOnly.TryParse(name, out _)) keys.Add(name);
+        }
+        keys.Sort(StringComparer.Ordinal);
+        return keys;
+    }
 }
 
 // ---------- Top10 per-date files ----------
@@ -2460,6 +2457,20 @@ public static class Top10PerDateFiles
         if (!File.Exists(p)) return null;
         try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
         catch { return null; }
+    }
+	
+	// NEW
+    public static IReadOnlyList<string> ListDates()
+    {
+        if (!Directory.Exists(Dir)) return Array.Empty<string>();
+        var keys = new List<string>();
+        foreach (var f in Directory.EnumerateFiles(Dir, "*.json"))
+        {
+            var name = Path.GetFileNameWithoutExtension(f);
+            if (DateOnly.TryParse(name, out _)) keys.Add(name);
+        }
+        keys.Sort(StringComparer.Ordinal);
+        return keys;
     }
 }
 
