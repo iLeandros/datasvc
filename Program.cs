@@ -415,6 +415,31 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 
+// /data/tips/date/{yyyy-MM-dd}
+app.MapGet("/data/tips/date/{date}", (string date) =>
+{
+    if (!DateOnly.TryParse(date, out var d))
+        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
+
+    var snap = TipsPerDateFiles.Load(d);
+    if (snap?.Payload?.TableDataGroup is null)
+        return Results.NotFound(new { message = "No tips for date", date });
+
+    return Results.Json(snap.Payload.TableDataGroup);
+});
+
+// /data/top10/date/{yyyy-MM-dd}
+app.MapGet("/data/top10/date/{date}", (string date) =>
+{
+    if (!DateOnly.TryParse(date, out var d))
+        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
+
+    var snap = Top10PerDateFiles.Load(d);
+    if (snap?.Payload?.TableDataGroup is null)
+        return Results.NotFound(new { message = "No top10 for date", date });
+
+    return Results.Json(snap.Payload.TableDataGroup);
+});
 
 ///New bulk endpoints added
 // POST /data/refresh-window?date=YYYY-MM-DD&daysBack=3&daysAhead=3
@@ -2344,6 +2369,50 @@ public static class DataFiles
 }
 
 // ---------- Tips storage / service / job ----------
+// ---------- Tips per-date files ----------
+public static class TipsPerDateFiles
+{
+    public const string Dir = "/var/lib/datasvc/tips";
+    public static string PathFor(DateOnly d) => System.IO.Path.Combine(Dir, $"{d:yyyy-MM-dd}.json");
+
+    public static async Task SaveAsync(DateOnly d, DataSnapshot snap, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
+        await File.WriteAllTextAsync(PathFor(d), json, ct);
+    }
+
+    public static DataSnapshot? Load(DateOnly d)
+    {
+        var p = PathFor(d);
+        if (!File.Exists(p)) return null;
+        try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
+        catch { return null; }
+    }
+}
+
+// ---------- Top10 per-date files ----------
+public static class Top10PerDateFiles
+{
+    public const string Dir = "/var/lib/datasvc/top10";
+    public static string PathFor(DateOnly d) => System.IO.Path.Combine(Dir, $"{d:yyyy-MM-dd}.json");
+
+    public static async Task SaveAsync(DateOnly d, DataSnapshot snap, CancellationToken ct = default)
+    {
+        Directory.CreateDirectory(Dir);
+        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
+        await File.WriteAllTextAsync(PathFor(d), json, ct);
+    }
+
+    public static DataSnapshot? Load(DateOnly d)
+    {
+        var p = PathFor(d);
+        if (!File.Exists(p)) return null;
+        try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
+        catch { return null; }
+    }
+}
+
 public static class TipsFiles
 {
     public const string Dir  = "/var/lib/datasvc";
@@ -2384,29 +2453,65 @@ public sealed class TipsScraperService
     public TipsScraperService([FromServices] TipsStore store) => _store = store;
 
     public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            // Explicitly fetch the tips page
-            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/tips");
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+	{
+	    try
+	    {
+	        var center = ScraperConfig.TodayLocal();
+	        var dates = ScraperConfig.DateWindow(center, 3, 0);      // back:3, ahead:0
+	
+	        DataSnapshot? lastToday = null;
+	
+	        foreach (var d in dates)
+	        {
+	            ct.ThrowIfCancellationRequested();
+	
+	            var iso = d.ToString("yyyy-MM-dd");
+	            var url = $"https://www.statarea.com/tips/date/{iso}/";
+	
+	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
+	            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+	            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
+	
+	            var payload = new DataPayload(html, titles, table);
+	            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+	
+	            await TipsPerDateFiles.SaveAsync(d, snap, ct);
+	
+	            if (d == center)
+	                lastToday = snap;
+	        }
 
-            var payload = new DataPayload(html, titles, table);
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-            _store.Set(snap);
-            await TipsFiles.SaveAsync(snap);
-            return snap;
-        }
-        catch (Exception ex)
-        {
-            var last = _store.Current;
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-            _store.Set(snap);
-            await TipsFiles.SaveAsync(snap);
-            return snap;
-        }
-    }
+			// PRUNE: keep only day-3..today files in /var/lib/datasvc/top10
+            var keep = dates.Select(d => d.ToString("yyyy-MM-dd"))
+                            .ToHashSet(StringComparer.Ordinal);
+            PruneOldFiles(TipsPerDateFiles.Dir, keep);              // PRUNE
+			
+	        if (lastToday is not null)
+	        {
+	            _store.Set(lastToday);
+	            await TipsFiles.SaveAsync(lastToday);                 // keep current-day behavior
+	        }
+	
+	        return lastToday ?? new DataSnapshot(DateTimeOffset.UtcNow, false, null, "No today snapshot");
+	    }
+	    catch (Exception ex)
+	    {
+	        var last = _store.Current;
+	        var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
+	        _store.Set(snap);
+	        await TipsFiles.SaveAsync(snap);
+	        return snap;
+	    }
+	}
+	static void PruneOldFiles(string dir, HashSet<string> keep)
+	{
+	    if (!Directory.Exists(dir)) return;
+	    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
+	    {
+	        var name = System.IO.Path.GetFileNameWithoutExtension(f);
+	        if (!keep.Contains(name)) { try { File.Delete(f); } catch { } }
+	    }
+	}
 }
 
 public sealed class TipsRefreshJob : BackgroundService
@@ -2533,29 +2638,68 @@ public sealed class Top10ScraperService
     public Top10ScraperService([FromServices] Top10Store store) => _store = store;
 
     public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            // Explicitly fetch the top10 page
-            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo("https://www.statarea.com/toppredictions");
-            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
-
-            var payload = new DataPayload(html, titles, table);
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-            _store.Set(snap);
-            await Top10Files.SaveAsync(snap);
-            return snap;
-        }
-        catch (Exception ex)
-        {
-            var last = _store.Current;
-            var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-            _store.Set(snap);
-            await Top10Files.SaveAsync(snap);
-            return snap;
-        }
-    }
+	{
+	    try
+	    {
+	        var center = ScraperConfig.TodayLocal();                 // your existing helper
+	        var dates = ScraperConfig.DateWindow(center, 3, 0);      // back:3, ahead:0
+	
+	        DataSnapshot? lastToday = null;
+	
+	        foreach (var d in dates)
+	        {
+	            ct.ThrowIfCancellationRequested();
+	
+	            var iso = d.ToString("yyyy-MM-dd");
+	            var url = $"https://www.statarea.com/toppredictions/date/{iso}/";
+	
+	            // scrape that specific date
+	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
+	            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
+	            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
+	
+	            var payload = new DataPayload(html, titles, table);
+	            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
+	
+	            // save per-date file
+	            await Top10PerDateFiles.SaveAsync(d, snap, ct);
+	
+	            if (d == center)
+	                lastToday = snap; // keep "current day" as the in-memory Top10
+	        }
+			
+			// PRUNE: keep only day-3..today files in /var/lib/datasvc/top10
+            var keep = dates.Select(d => d.ToString("yyyy-MM-dd"))
+                            .ToHashSet(StringComparer.Ordinal);
+            PruneOldFiles(Top10PerDateFiles.Dir, keep);              // PRUNE
+			
+	        // keep legacy current-day store behavior
+	        if (lastToday is not null)
+	        {
+	            _store.Set(lastToday);
+	            await Top10Files.SaveAsync(lastToday);                // your existing single-file store
+	        }
+	
+	        return lastToday ?? new DataSnapshot(DateTimeOffset.UtcNow, false, null, "No today snapshot");
+	    }
+	    catch (Exception ex)
+	    {
+	        var last = _store.Current;
+	        var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
+	        _store.Set(snap);
+	        await Top10Files.SaveAsync(snap);
+	        return snap;
+	    }
+	}
+	static void PruneOldFiles(string dir, HashSet<string> keep)
+	{
+	    if (!Directory.Exists(dir)) return;
+	    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
+	    {
+	        var name = System.IO.Path.GetFileNameWithoutExtension(f);
+	        if (!keep.Contains(name)) { try { File.Delete(f); } catch { } }
+	    }
+	}
 }
 
 public sealed class Top10RefreshJob : BackgroundService
