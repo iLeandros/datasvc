@@ -415,6 +415,40 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 
+// GET /data/tips/dates  -> lists available per-date snapshots for Tips
+app.MapGet("/data/tips/dates", () =>
+{
+    var center = ScraperConfig.TodayLocal();
+    var dates  = ListDateKeysFromDir(TipsPerDateFiles.Dir);
+
+    return Results.Ok(new
+    {
+        window = new {
+            today = center.ToString("yyyy-MM-dd"),
+            from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
+            to    = center.ToString("yyyy-MM-dd")
+        },
+        dates  // array of "yyyy-MM-dd" strings present on disk (already pruned to day-3..today by the scraper)
+    });
+});
+
+// GET /data/top10/dates -> lists available per-date snapshots for Top10
+app.MapGet("/data/top10/dates", () =>
+{
+    var center = ScraperConfig.TodayLocal();
+    var dates  = ListDateKeysFromDir(Top10PerDateFiles.Dir);
+
+    return Results.Ok(new
+    {
+        window = new {
+            today = center.ToString("yyyy-MM-dd"),
+            from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
+            to    = center.ToString("yyyy-MM-dd")
+        },
+        dates
+    });
+});
+
 // /data/tips/date/{yyyy-MM-dd}
 app.MapGet("/data/tips/date/{date}", (string date) =>
 {
@@ -1970,6 +2004,22 @@ public sealed class ResultStore
     private DataSnapshot? _current;
     public DataSnapshot? Current { get { lock (_gate) return _current; } }
     public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
+}
+static IReadOnlyList<string> ListDateKeysFromDir(string dir)
+{
+    if (!Directory.Exists(dir)) return Array.Empty<string>();
+    var keys = new List<string>();
+
+    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
+    {
+        var name = Path.GetFileNameWithoutExtension(f); // "yyyy-MM-dd"
+        if (DateOnly.TryParse(name, out _))
+            keys.Add(name);
+    }
+
+    // sort ascending by date string
+    keys.Sort(StringComparer.Ordinal);
+    return keys;
 }
 
 // Stores one snapshot per date
