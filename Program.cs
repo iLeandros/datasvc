@@ -419,8 +419,6 @@ app.MapPost("/data/likes/recompute", async (
 app.MapGet("/data/tips/dates", () =>
 {
     var center = ScraperConfig.TodayLocal();
-    var dates  = ListDateKeysFromDir(TipsPerDateFiles.Dir);
-
     return Results.Ok(new
     {
         window = new {
@@ -428,16 +426,13 @@ app.MapGet("/data/tips/dates", () =>
             from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
             to    = center.ToString("yyyy-MM-dd")
         },
-        dates  // array of "yyyy-MM-dd" strings present on disk (already pruned to day-3..today by the scraper)
+        dates = TipsPerDateFiles.ListDates()
     });
 });
 
-// GET /data/top10/dates -> lists available per-date snapshots for Top10
 app.MapGet("/data/top10/dates", () =>
 {
     var center = ScraperConfig.TodayLocal();
-    var dates  = ListDateKeysFromDir(Top10PerDateFiles.Dir);
-
     return Results.Ok(new
     {
         window = new {
@@ -445,9 +440,10 @@ app.MapGet("/data/top10/dates", () =>
             from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
             to    = center.ToString("yyyy-MM-dd")
         },
-        dates
+        dates = Top10PerDateFiles.ListDates()
     });
 });
+
 
 // /data/tips/date/{yyyy-MM-dd}
 app.MapGet("/data/tips/date/{date}", (string date) =>
