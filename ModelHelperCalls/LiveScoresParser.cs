@@ -12,8 +12,8 @@ namespace DataSvc.ModelHelperCalls;
 // ---------- LiveScores: HTML parser ----------
 public static class LiveScoresParser
 {
-    //private const string ActionsUrl = "https://www.statarea.com/actions/controller/";
-    private const string ActionsUrl = "http://www.statarea.com/actions/controller/";
+    private const string ActionsUrl = "https://www.statarea.com/actions/controller/";
+    //private const string ActionsUrl = "http://www.statarea.com/actions/controller/";
     /// <summary>
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
