@@ -4282,7 +4282,7 @@ public sealed class DetailsScraperService
 	        var html = await res.Content.ReadAsStringAsync(linkedCts.Token);
 	        return ParseDetails(abs, html);
 	    }
-	    catch (HttpRequestException ex) when (allowHttp && IsTlsError(ex) && IsStatarea(abs))
+	    catch (HttpRequestException ex)
 	    {
 	        // fall through to HTTP retry below
 	    }
