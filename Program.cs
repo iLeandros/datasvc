@@ -2523,8 +2523,8 @@ public sealed class TipsScraperService
 	            ct.ThrowIfCancellationRequested();
 	
 	            var iso = d.ToString("yyyy-MM-dd");
-	            //var url = $"https://www.statarea.com/tips/date/{iso}/";
-				var url = $"http://www.statarea.com/tips/date/{iso}/";
+	            var url = $"https://www.statarea.com/tips/date/{iso}/";
+				//var url = $"http://www.statarea.com/tips/date/{iso}/";
 	
 	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
 	            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
@@ -2709,8 +2709,8 @@ public sealed class Top10ScraperService
 	            ct.ThrowIfCancellationRequested();
 	
 	            var iso = d.ToString("yyyy-MM-dd");
-	            //var url = $"https://www.statarea.com/toppredictions/date/{iso}/";
-				var url = $"http://www.statarea.com/toppredictions/date/{iso}/";
+	            var url = $"https://www.statarea.com/toppredictions/date/{iso}/";
+				//var url = $"http://www.statarea.com/toppredictions/date/{iso}/";
 	
 	            // scrape that specific date
 	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
@@ -2864,8 +2864,8 @@ public sealed class LiveScoresScraperService
     {
         // Statarea typically supports date query; we try param first, fallback to plain page.
         var iso = localDay.ToString("yyyy-MM-dd");
-        //return $"https://www.statarea.com/livescore/date/{iso}/";
-		return $"http://www.statarea.com/livescore/date/{iso}/";
+        return $"https://www.statarea.com/livescore/date/{iso}/";
+		//return $"http://www.statarea.com/livescore/date/{iso}/";
     }
 
     public async Task<(int Refreshed, DateTimeOffset LastUpdatedUtc)> FetchAndStoreAsync(CancellationToken ct = default)
@@ -3323,15 +3323,15 @@ public class GetStartupMainPageFullInfo2024
     public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
     {
         url ??= Environment.GetEnvironmentVariable("DATA_SOURCE_URL")
-                ?? "http://www.statarea.com/predictions";//"https://www.statarea.com/predictions";
+                ?? "https://www.statarea.com/predictions";
 
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
         req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
         req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
         req.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
-        //req.Headers.Referrer = new Uri("https://www.statarea.com/");
-		req.Headers.Referrer = new Uri("http://www.statarea.com/");
+        req.Headers.Referrer = new Uri("https://www.statarea.com/");
+		//req.Headers.Referrer = new Uri("http://www.statarea.com/");
 
         using var res = await http.SendAsync(req);
         res.EnsureSuccessStatusCode();
@@ -3798,17 +3798,17 @@ public sealed class DetailsStore
 	        return abs.AbsoluteUri;
 	
 	    // Protocol-relative (//host/...)
-	    if (s.StartsWith("//")) return "http:" + s;//return "https:" + s;
+	    if (s.StartsWith("//")) return "https:" + s;
 	
 	    // Host without scheme
 	    if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase) ||
 	        s.StartsWith("statarea.com", StringComparison.OrdinalIgnoreCase))
-	        //return "https://" + s.TrimStart('/');
-			return "http://" + s.TrimStart('/');
+	        return "https://" + s.TrimStart('/');
+			//return "http://" + s.TrimStart('/');
 	
 	    // Site-relative
-	    //var baseUri = new Uri("https://www.statarea.com/");
-	    var baseUri = new Uri("http://www.statarea.com/");
+	    var baseUri = new Uri("https://www.statarea.com/");
+	    //var baseUri = new Uri("http://www.statarea.com/");
 	    if (!s.StartsWith("/")) s = "/" + s;
 	    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
 	}
@@ -4229,8 +4229,8 @@ public sealed class DetailsScraperService
 	    req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
 	    req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
 	    req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
-	    //req.Headers.Referrer = new Uri("https://www.statarea.com/");
-		req.Headers.Referrer = new Uri("http://www.statarea.com/");
+	    req.Headers.Referrer = new Uri("https://www.statarea.com/");
+		//req.Headers.Referrer = new Uri("http://www.statarea.com/");
 	
 	    using var res = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, linkedCts.Token);
 	    res.EnsureSuccessStatusCode();
