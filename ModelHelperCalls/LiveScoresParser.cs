@@ -12,7 +12,8 @@ namespace DataSvc.ModelHelperCalls;
 // ---------- LiveScores: HTML parser ----------
 public static class LiveScoresParser
 {
-    private const string ActionsUrl = "https://www.statarea.com/actions/controller/";
+    //private const string ActionsUrl = "https://www.statarea.com/actions/controller/";
+    private const string ActionsUrl = "http://www.statarea.com/actions/controller/";
     /// <summary>
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
@@ -262,7 +263,8 @@ public static class LiveScoresParser
     
         using var req = new HttpRequestMessage(
             HttpMethod.Post,
-            "https://www.statarea.com/actions/controller/")
+            "http://www.statarea.com/actions/controller/")
+            //"https://www.statarea.com/actions/controller/")
         {
             Content = form
         };
@@ -276,7 +278,8 @@ public static class LiveScoresParser
             "Chrome/142.0.0.0 Safari/537.36");
     
         // Optional; you can pass a date if you want the referrer to match
-        req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
+        //req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
+        req.Headers.Referrer = new Uri($"http://www.statarea.com/livescore/date/{dateIso}/");
     
         var resp = await http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
