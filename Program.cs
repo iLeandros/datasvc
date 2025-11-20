@@ -4288,9 +4288,7 @@ public sealed class DetailsScraperService
 	    }
 	
 	    // ---------- 2) Retry over HTTP (strictly for statarea.com) ----------
-	    if (allowHttp && IsStatarea(abs))
-	    {
-	        var httpUri = ToHttp(abs);
+	    var httpUri = ToHttp(abs);
 	        using var req2 = new HttpRequestMessage(HttpMethod.Get, httpUri)
 	        {
 	            // Be pragmatic over plain HTTP: don't force h2
@@ -4307,7 +4305,6 @@ public sealed class DetailsScraperService
 	        res2.EnsureSuccessStatusCode();
 	        var html2 = await res2.Content.ReadAsStringAsync(linkedCts.Token);
 	        return ParseDetails(abs, html2);
-	    }
 	
 	    // If we got here, rethrow the original error behavior
 	    // (let upstream error handling/logging report it)
