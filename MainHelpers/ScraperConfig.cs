@@ -7,7 +7,7 @@ static class ScraperConfig
         ?? "/var/lib/datasvc";
 
     public static readonly string BaseAddress = Environment.GetEnvironmentVariable("DATA_SOURCE_BASE")
-        ?? "http://www.statarea.com/predictions";//"https://www.statarea.com/predictions";
+        ?? "https://www.statarea.com/predictions";
 
     public static readonly string TimeZone = Environment.GetEnvironmentVariable("SCRAPER_TZ")
         ?? "Europe/Brussels";
