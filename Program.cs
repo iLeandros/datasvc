@@ -3319,7 +3319,51 @@ public class GetStartupMainPageFullInfo2024
         UseCookies = true,
         CookieContainer = Cookies
     }) { Timeout = TimeSpan.FromSeconds(60) };
+	
+	public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
+	{
+	    url ??= Environment.GetEnvironmentVariable("DATA_SOURCE_URL")
+	            ?? "https://www.statarea.com/predictions";
+	
+	    var allowHttp = Environment.GetEnvironmentVariable("ALLOW_HTTP_STATAREA") == "1";
+	    var target = new Uri(url);
+	
+	    // 1) Try HTTPS as-is
+	    try
+	    {
+	        using var req = new HttpRequestMessage(HttpMethod.Get, target);
+	        req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
+	        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+	        req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
+	        req.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
+	        req.Headers.Referrer = new Uri("https://www.statarea.com/");
+	
+	        using var res = await http.SendAsync(req);
+	        res.EnsureSuccessStatusCode();
+	        return await res.Content.ReadAsStringAsync();
+	    }
+	    catch (HttpRequestException ex) when (allowHttp &&
+	        (ex.InnerException is System.Security.Authentication.AuthenticationException ||
+	         ex.Message.Contains("SSL", StringComparison.OrdinalIgnoreCase) ||
+	         ex.Message.Contains("certificate", StringComparison.OrdinalIgnoreCase)))
+	    {
+	        // 2) Fallback ONLY for Statarea, ONLY if enabled
+	        var host = target.Host.ToLowerInvariant();
+	        if (host.EndsWith("statarea.com"))
+	        {
+	            var httpUri = new UriBuilder(target) { Scheme = "http", Port = -1 }.Uri;
+	            Console.WriteLine($"[scraper] TLS error for {target}; falling back to {httpUri}");
+	            using var req2 = new HttpRequestMessage(HttpMethod.Get, httpUri);
+	            req2.Headers.Referrer = new Uri("http://www.statarea.com/");
+	            using var res2 = await http.SendAsync(req2);
+	            res2.EnsureSuccessStatusCode();
+	            return await res2.Content.ReadAsStringAsync();
+	        }
+	        throw; // different host -> don't bypass
+	    }
+	}
 
+	/*
     public static async Task<string> GetStartupMainPageFullInfo(string? url = null)
     {
         url ??= Environment.GetEnvironmentVariable("DATA_SOURCE_URL")
@@ -3327,7 +3371,7 @@ public class GetStartupMainPageFullInfo2024
 
         var req = new HttpRequestMessage(HttpMethod.Get, url);
         req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
-        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8");
+        req.Headers.TryAddWithoutValidation("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,//*;q=0.8");
         req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
         req.Headers.TryAddWithoutValidation("Upgrade-Insecure-Requests", "1");
         req.Headers.Referrer = new Uri("https://www.statarea.com/");
@@ -3337,6 +3381,7 @@ public class GetStartupMainPageFullInfo2024
         res.EnsureSuccessStatusCode();
         return await res.Content.ReadAsStringAsync();
     }
+	*/
 }
 
 public static class GetStartupMainTitlesAndHrefs2024
