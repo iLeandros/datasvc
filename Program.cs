@@ -3342,10 +3342,7 @@ public class GetStartupMainPageFullInfo2024
 	        res.EnsureSuccessStatusCode();
 	        return await res.Content.ReadAsStringAsync();
 	    }
-	    catch (HttpRequestException ex) when (allowHttp &&
-	        (ex.InnerException is System.Security.Authentication.AuthenticationException ||
-	         ex.Message.Contains("SSL", StringComparison.OrdinalIgnoreCase) ||
-	         ex.Message.Contains("certificate", StringComparison.OrdinalIgnoreCase)))
+	    catch (HttpRequestException ex)
 	    {
 	        // 2) Fallback ONLY for Statarea, ONLY if enabled
 	        var host = target.Host.ToLowerInvariant();
