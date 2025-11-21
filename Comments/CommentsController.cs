@@ -35,6 +35,10 @@ public sealed class CommentsController : ControllerBase
         public DateTime CreatedAtUtc { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
         public bool IsDeleted { get; set; }
+
+        // NEW
+        public string? DisplayName { get; set; }
+        public string? AvatarUrl  { get; set; }
     }
 
     // ===== Helpers (mirrors LikesController) =====
@@ -182,9 +186,12 @@ public sealed class CommentsController : ControllerBase
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
-                   c.is_deleted AS IsDeleted
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl
               FROM comments c
-              JOIN matches  m ON m.match_id = c.match_id
+              JOIN matches  m  ON m.match_id = c.match_id
+         LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.comment_id = @cid;",
             new { cid = commentId }, tx);
 
@@ -228,12 +235,15 @@ public sealed class CommentsController : ControllerBase
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
-                   c.is_deleted AS IsDeleted
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl
               FROM comments c
-              JOIN matches  m ON m.match_id = c.match_id
+              JOIN matches  m  ON m.match_id = c.match_id
+         LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.match_id = @mid
-               AND ( @beforeId IS NULL OR c.comment_id < @beforeId )
-             ORDER BY c.comment_id DESC
+               AND (@beforeId IS NULL OR c.comment_id < @beforeId)
+          ORDER BY c.comment_id DESC
              LIMIT @take;",
             new { mid = matchId.Value, beforeId, take });
 
