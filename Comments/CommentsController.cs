@@ -111,6 +111,10 @@ public sealed class CommentsController : ControllerBase
     [Consumes("application/json")]
     public async Task<IActionResult> Post([FromBody] PostCommentRequest req, CancellationToken ct)
     {
+        // --- rate limits ---
+        const int MAX_PER_MATCH_PER_MIN = 3;
+        const int MAX_PER_HOUR_GLOBAL = 60;
+        
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
             return BadRequest(new { error = "href is required" });
         if (string.IsNullOrWhiteSpace(req.Text))
@@ -164,6 +168,36 @@ public sealed class CommentsController : ControllerBase
                 new { matchUtc, mid = matchId }, tx);
         }
 
+        var nowCheckParams = new { uid = userId, mid = matchId };
+
+        // burst on same match
+        var lastMinuteCount = await conn.ExecuteScalarAsync<int>(@"
+            SELECT COUNT(*) FROM comments
+             WHERE user_id=@uid AND match_id=@mid
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 60 SECOND;", nowCheckParams, tx);
+        
+        if (lastMinuteCount >= MAX_PER_MATCH_PER_MIN)
+            return StatusCode(429, new { error = "Too many comments on this thread. Try again in a minute." });
+        
+        // global pace
+        var lastHourCount = await conn.ExecuteScalarAsync<int>(@"
+            SELECT COUNT(*) FROM comments
+             WHERE user_id=@uid
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 HOUR;", new { uid = userId }, tx);
+        
+        if (lastHourCount >= MAX_PER_HOUR_GLOBAL)
+            return StatusCode(429, new { error = "You’ve hit the hourly comment limit. Please slow down." });
+        
+        // duplicate guard (same text on same match within 30s)
+        var isDup = await conn.ExecuteScalarAsync<int>(@"
+            SELECT 1 FROM comments
+             WHERE user_id=@uid AND match_id=@mid AND text=@text
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 30 SECOND
+             LIMIT 1;", new { uid = userId, mid = matchId, text = req.Text.Trim() }, tx);
+        
+        if (isDup == 1)
+            return Conflict(new { error = "Duplicate comment detected. Please wait a bit or edit your text." });
+        
         // 2) Insert the comment
         const string insertSql = @"
             INSERT INTO comments (match_id, user_id, text)
