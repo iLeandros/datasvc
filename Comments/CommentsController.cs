@@ -243,7 +243,8 @@ public sealed class CommentsController : ControllerBase
 
     // PUT /v1/comments/{id}
     // Only the author can edit. Returns the updated comment.
-    [HttpPut("{id:ulong}")]
+    //[HttpPut("{id:ulong}")]
+    [HttpPut("{id}")]
     [Authorize]
     [Consumes("application/json")]
     public async Task<IActionResult> Edit([FromRoute] ulong id, [FromBody] EditCommentRequest req, CancellationToken ct)
@@ -284,7 +285,8 @@ public sealed class CommentsController : ControllerBase
 
     // DELETE /v1/comments/{id}
     // Soft-delete. Only the author can delete.
-    [HttpDelete("{id:ulong}")]
+    //[HttpDelete("{id:ulong}")]
+    [HttpDelete("{id}")]
     [Authorize]
     public async Task<IActionResult> Delete([FromRoute] ulong id, CancellationToken ct)
     {
