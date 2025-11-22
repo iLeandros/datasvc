@@ -15,10 +15,18 @@ public sealed class CommentsController : ControllerBase
     private readonly string? _connString;
     private readonly ILogger<CommentsController> _log;
 
+    private readonly int _maxPerHour;
+    private readonly int _maxPerDay;
+    private readonly int _maxPerMatchPerMin;
+
     public CommentsController(IConfiguration cfg, ILogger<CommentsController> log)
     {
         _connString = cfg.GetConnectionString("Default");
         _log = log;
+
+        _maxPerHour = cfg.GetValue("Comments:MaxPerHour", 10);
+        _maxPerDay = cfg.GetValue("Comments:MaxPerDay", 50);
+        _maxPerMatchPerMin = cfg.GetValue("Comments:MaxPerMatchPerMin", 3);
     }
 
     // ===== DTOs =====
@@ -203,7 +211,7 @@ public sealed class CommentsController : ControllerBase
                AND created_at > UTC_TIMESTAMP(3) - INTERVAL 60 SECOND;",
             nowCheckParams, tx);
         
-        if (lastMinuteCount >= MAX_PER_MATCH_PER_MIN)
+        if (lastMinuteCount >= _maxPerMatchPerMin)
             return StatusCode(429, new { error = "Too many comments on this thread. Try again in a minute." });
         
         // global per-hour cap
@@ -213,7 +221,7 @@ public sealed class CommentsController : ControllerBase
                AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 HOUR;",
             new { uid = userId }, tx);
         
-        if (lastHourCount >= MAX_PER_HOUR_GLOBAL)
+        if (lastHourCount >= _maxPerHour)
             return StatusCode(429, new { error = "You’ve hit the hourly comment limit. Please slow down." });
         
         // global per-day cap
@@ -223,7 +231,7 @@ public sealed class CommentsController : ControllerBase
                AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 DAY;",
             new { uid = userId }, tx);
         
-        if (lastDayCount >= MAX_PER_DAY_GLOBAL)
+        if (lastDayCount >= _maxPerDay)
             return StatusCode(429, new { error = "Daily comment limit reached. Try again tomorrow." });
         
         // (optional) duplicate guard (same text on same match within 30s)
@@ -372,7 +380,7 @@ public sealed class CommentsController : ControllerBase
                    c.match_id   AS MatchId,
                    c.user_id    AS UserId,
                    c.parent_comment_id AS ParentCommentId,
-                   '' AS Href, -- not needed for replies
+                   m.href AS Href,
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
@@ -384,6 +392,7 @@ public sealed class CommentsController : ControllerBase
                    EXISTS(SELECT 1 FROM comment_likes me
                        WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
+              JOIN matches m ON m.match_id = c.match_id
          LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.parent_comment_id = @pid
                AND (@beforeId IS NULL OR c.comment_id < @beforeId)
@@ -405,11 +414,16 @@ public sealed class CommentsController : ControllerBase
         if (authResult is not null) return authResult;
     
         await using var conn = Open();
-        var rows = await conn.ExecuteAsync(@"
-            INSERT IGNORE INTO comment_likes (comment_id, user_id)
-            VALUES (@cid, @uid);", new { cid = id, uid = userId });
     
-        // return current like count
+        // Ensure comment exists and is not soft-deleted
+        var exists = await conn.ExecuteScalarAsync<int>(
+            "SELECT 1 FROM comments WHERE comment_id=@cid AND is_deleted=0 LIMIT 1;", new { cid = id });
+        if (exists != 1) return NotFound(new { error = "comment not found" });
+    
+        await conn.ExecuteAsync(
+            "INSERT IGNORE INTO comment_likes (comment_id, user_id) VALUES (@cid, @uid);",
+            new { cid = id, uid = userId });
+    
         var count = await conn.ExecuteScalarAsync<int>(
             "SELECT COUNT(*) FROM comment_likes WHERE comment_id=@cid;", new { cid = id });
     
