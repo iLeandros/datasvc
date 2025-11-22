@@ -1464,7 +1464,7 @@ app.MapGet("/data/details/allhrefs",
 
     var byHref = items
         //.OrderByDescending(i => i.LastUpdatedUtc)
-		.OrderBy(i => i.Href, StringComparer.OrdinalIgnoreCase) // stable order
+		.OrderBy(r => index[r.Href])
         .ToDictionary(
             i => i.Href,
             i =>
@@ -1615,7 +1615,7 @@ app.MapGet("/data/details/allhrefs/date/{date}",
 			    .ToDictionary(x => x.h, x => x.i, StringComparer.OrdinalIgnoreCase);
 	
 	var records = hrefs
-			    .Select(h => store.TryGet(h))
+			    .Select(h => store.Get(h))
 			    .Where(r => r is not null)
 			    .Cast<DetailsRecord>()
 			    .OrderBy(r => index[r.Href])   // stable order
