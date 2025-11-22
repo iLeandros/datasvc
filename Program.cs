@@ -1458,125 +1458,98 @@ app.MapGet("/data/details/allhrefs",
 	
     var (items, generatedUtc) = store.Export();
 
-	var index = hrefs
-			    .Select((h, i) => (h, i))
-			    .ToDictionary(x => x.h, x => x.i, StringComparer.OrdinalIgnoreCase);
-
-    var byHref = items
-        //.OrderByDescending(i => i.LastUpdatedUtc)
-		.OrderBy(r => index[r.Href])
-        .ToDictionary(
-            i => i.Href,
-            i =>
-            {
-                // If you've already added these helpers earlier, keep using them
-                var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
-
-                var matchDataBetween = preferMatchBetweenHtml
-                    ? null
-                    : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
-
-				// NEW: parse the per-team recent matches (your new helper)
-				var recentMatchesSeparate = preferSeparateMatchesHtml
-				    ? null
-				    : MatchSeparatelyHelper.GetMatchDataSeparately(
-				          i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
-
-
-                // NEW: parse barcharts from teamsBetStatisticsHtml (unless HTML is preferred)
-                //var barCharts = preferBetStatsHtml
-                //    ? null
-                //    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
-
-				var rawBarCharts = preferBetStatsHtml ? null
-				    : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
-				
-				var barCharts = rawBarCharts?.Select(b => new {
-				    title = b.Title,
-				    halfContainerId = b.HalfContainerId,
-				    items = b.ToList() // materialize the MatchFactData entries
-				}).ToList();
-
-
-				// NEW: facts (typed list or raw HTML)
+	var byHref = items
+	    .OrderBy(i => i.Href, StringComparer.OrdinalIgnoreCase) // stable ordering
+	    .ToDictionary(
+	        i => i.Href,
+	        i =>
+	        {
+	            var parsedTeamsInfo = preferTeamsInfoHtml ? null : TeamsInfoParser.Parse(i.Payload.TeamsInfoHtml);
+	
+	            var matchDataBetween = preferMatchBetweenHtml
+	                ? null
+	                : MatchBetweenHelper.GetMatchDataBetween(i.Payload.MatchBetweenHtml ?? string.Empty);
+	
+	            var recentMatchesSeparate = preferSeparateMatchesHtml
+	                ? null
+	                : MatchSeparatelyHelper.GetMatchDataSeparately(i.Payload.TeamMatchesSeparateHtml ?? string.Empty);
+	
+	            var rawBarCharts = preferBetStatsHtml ? null
+	                : BarChartsParser.GetBarChartsData(i.Payload.TeamsBetStatisticsHtml ?? string.Empty);
+	
+	            var barCharts = rawBarCharts?.Select(b => new {
+	                title = b.Title,
+	                halfContainerId = b.HalfContainerId,
+	                items = b.ToList()
+	            }).ToList();
+	
 	            var matchFacts = preferFactsHtml
 	                ? null
 	                : MatchFactsParser.GetMatchFacts(i.Payload.FactsHtml);
-
-				// BEFORE
-				// var lastTeamsWinrate = preferLastTeamsHtml 
-				//     ? null
-				//     : LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(i.Payload.LastTeamsMatchesHtml ?? string.Empty);
-				
-				// AFTER (safe for System.Text.Json)
-				object? lastTeamsWinrate = null;
-				if (!preferLastTeamsHtml)
-				{
-				    var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
-				                i.Payload.LastTeamsMatchesHtml ?? string.Empty);
-				
-				    lastTeamsWinrate = new
-				    {
-				        wins   = new[] { m[0,0], m[0,1] },
-				        draws  = new[] { m[1,0], m[1,1] },
-				        losses = new[] { m[2,0], m[2,1] }
-				    };
-				}
-
-				var teamsStats = preferTeamsStatisticsHtml
-				    ? null
-				    : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
-
-				var teamStandingsParsed = preferTeamStandingsHtml
+	
+	            object? lastTeamsWinrate = null;
+	            if (!preferLastTeamsHtml)
+	            {
+	                var m = LastTeamsMatchesHelper.GetQuickTableWinratePercentagesFromSeperateTeams(
+	                            i.Payload.LastTeamsMatchesHtml ?? string.Empty);
+	
+	                lastTeamsWinrate = new
+	                {
+	                    wins   = new[] { m[0,0], m[0,1] },
+	                    draws  = new[] { m[1,0], m[1,1] },
+	                    losses = new[] { m[2,0], m[2,1] }
+	                };
+	            }
+	
+	            var teamsStats = preferTeamsStatisticsHtml
 	                ? null
-	                : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty); // NEW
-				
-                return new
-                {
-                    href           = i.Href,
-                    lastUpdatedUtc = i.LastUpdatedUtc,
-
-                    // teams info
-                    teamsInfo      = parsedTeamsInfo,
-                    teamsInfoHtml  = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
-
-                    // matches between
-                    matchDataBetween = matchDataBetween,
-                    matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
-
-					recentMatchesSeparate      = recentMatchesSeparate, // NEW parsed object
-					recentMatchesSeparateHtml  = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
-
-
-                    // NEW: bar charts parsed from teamsbetstatistics
-                    barCharts             = barCharts,
-                    teamsBetStatisticsHtml= preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
-
-					// NEW: facts
+	                : GetTeamStatisticsHelper.GetTeamsStatistics(i.Payload.TeamsStatisticsHtml ?? string.Empty);
+	
+	            var teamStandingsParsed = preferTeamStandingsHtml
+	                ? null
+	                : TeamStandingsHelper.GetTeamStandings(i.Payload.TeamStandingsHtml ?? string.Empty);
+	
+	            return new
+	            {
+	                href           = i.Href,
+	                lastUpdatedUtc = i.LastUpdatedUtc,
+	
+	                teamsInfo     = parsedTeamsInfo,
+	                teamsInfoHtml = preferTeamsInfoHtml ? i.Payload.TeamsInfoHtml : null,
+	
+	                matchDataBetween = matchDataBetween,
+	                matchBetweenHtml = preferMatchBetweenHtml ? i.Payload.MatchBetweenHtml : null,
+	
+	                recentMatchesSeparate     = recentMatchesSeparate,
+	                recentMatchesSeparateHtml = preferSeparateMatchesHtml ? i.Payload.TeamMatchesSeparateHtml : null,
+	
+	                barCharts              = barCharts,
+	                teamsBetStatisticsHtml = preferBetStatsHtml ? i.Payload.TeamsBetStatisticsHtml : null,
+	
 	                matchFacts = matchFacts,
 	                factsHtml  = preferFactsHtml ? i.Payload.FactsHtml : null,
+	
+	                lastTeamsWinrate     = lastTeamsWinrate,
+	                lastTeamsMatchesHtml = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
+	
+	                teamsStatistics     = teamsStats,
+	                teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
+	
+	                teamStandings     = teamStandingsParsed,
+	                teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
+	            };
+	        },
+	        StringComparer.OrdinalIgnoreCase
+	    );
+	
+	return Results.Json(new
+	{
+	    total        = byHref.Count,
+	    lastSavedUtc = store.LastSavedUtc,
+	    generatedUtc,
+	    items        = byHref
+	});
 
-					lastTeamsWinrate       = lastTeamsWinrate,                  // NEW (3x2 matrix: [W,D,L] x [team1,team2])
-					lastTeamsMatchesHtml   = preferLastTeamsHtml ? i.Payload.LastTeamsMatchesHtml : null,
-
-                    // NEW: team statistics (typed or raw)
-				    teamsStatistics     = teamsStats,
-				    teamsStatisticsHtml = preferTeamsStatisticsHtml ? i.Payload.TeamsStatisticsHtml : null,
-
-					teamStandings     = teamStandingsParsed,
-                	teamStandingsHtml = preferTeamStandingsHtml ? i.Payload.TeamStandingsHtml : null
-                };
-            },
-            StringComparer.OrdinalIgnoreCase
-        );
-
-    return Results.Json(new
-    {
-        total        = byHref.Count,
-        lastSavedUtc = store.LastSavedUtc,
-        generatedUtc,
-        items        = byHref
-    });
 });
 
 // GET /data/details/allhrefs/date/{date}  -> matches parsed per-date behavior
