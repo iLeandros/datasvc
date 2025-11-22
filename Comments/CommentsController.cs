@@ -44,9 +44,28 @@ public sealed class CommentsController : ControllerBase
         // Optional convenience counts
         public int LikeCount { get; set; }      // NEW
         public int ReplyCount { get; set; }     // NEW
+
+        public bool IsLikedByMe { get; set; }   // NEW
     }
 
     // ===== Helpers (mirrors LikesController) =====
+    [NonAction]
+    private ulong? TryGetUserId()
+    {
+        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
+            raw is not null &&
+            ulong.TryParse(raw.ToString(), out var id)) return id;
+    
+        string?[] candidates = { User.FindFirstValue("uid"),
+                                 User.FindFirstValue(ClaimTypes.NameIdentifier),
+                                 User.FindFirstValue("sub") };
+        foreach (var s in candidates)
+            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out id))
+                return id;
+    
+        return null;
+    }
+    
     [NonAction]
     private MySqlConnection Open()
     {
@@ -244,6 +263,7 @@ public sealed class CommentsController : ControllerBase
             text = req.Text.Trim()
         }, tx);
 
+        var meUid = TryGetUserId();
 
         // 3) Return the freshly created comment
         var created = await conn.QuerySingleAsync<CommentDto>(@"
@@ -259,12 +279,15 @@ public sealed class CommentsController : ControllerBase
                    up.display_name AS DisplayName,
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
-                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
               JOIN matches  m  ON m.match_id = c.match_id
          LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.comment_id = @cid;",
-            new { cid = commentId }, tx);
+            //new { cid = commentId }, tx);
+            new { cid = commentId, meUid }, tx);
 
         await tx.CommitAsync(ct);
         return Created($"/v1/comments/{commentId}", created);
@@ -298,6 +321,8 @@ public sealed class CommentsController : ControllerBase
 
         int take = Math.Clamp(limit ?? 20, 1, 100);
 
+        var meUid = TryGetUserId();
+
         var rows = await conn.QueryAsync<CommentDto>(@"
             SELECT c.comment_id AS CommentId,
                    c.match_id   AS MatchId,
@@ -311,7 +336,9 @@ public sealed class CommentsController : ControllerBase
                    up.display_name AS DisplayName,
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
-                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
               JOIN matches  m  ON m.match_id = c.match_id
          LEFT JOIN user_profile up ON up.user_id = c.user_id
@@ -320,7 +347,8 @@ public sealed class CommentsController : ControllerBase
                AND (@beforeId IS NULL OR c.comment_id < @beforeId)
           ORDER BY c.comment_id DESC
              LIMIT @take;",
-            new { mid = matchId.Value, beforeId, take });
+            //new { mid = matchId.Value, beforeId, take });
+            new { mid = matchId.Value, beforeId, take, meUid });
 
 
         ulong? next = rows.Any() ? rows.Last().CommentId : null;
@@ -331,6 +359,7 @@ public sealed class CommentsController : ControllerBase
     [HttpGet("{id}/replies")]
     public async Task<IActionResult> ListReplies([FromRoute] ulong id, [FromQuery] int? limit, [FromQuery] ulong? beforeId, CancellationToken ct)
     {
+        var meUid = TryGetUserId();
         int take = Math.Clamp(limit ?? 20, 1, 100);
         await using var conn = Open();
     
@@ -351,14 +380,17 @@ public sealed class CommentsController : ControllerBase
                    up.display_name AS DisplayName,
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
-                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
          LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.parent_comment_id = @pid
                AND (@beforeId IS NULL OR c.comment_id < @beforeId)
           ORDER BY c.comment_id DESC
              LIMIT @take;",
-            new { pid = id, beforeId, take });
+            //new { pid = id, beforeId, take });
+            new { pid = id, beforeId, take, meUid });
     
         ulong? next = rows.Any() ? rows.Last().CommentId : null;
         return Ok(new { items = rows, nextBeforeId = next });
@@ -436,11 +468,18 @@ public sealed class CommentsController : ControllerBase
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
-                   c.is_deleted AS IsDeleted
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
               JOIN matches  m ON m.match_id = c.match_id
+            LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.comment_id = @cid;",
-            new { cid = id });
+            new { cid = id, meUid = TryGetUserId() });
 
         return Ok(updated);
     }
