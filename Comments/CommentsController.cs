@@ -112,8 +112,10 @@ public sealed class CommentsController : ControllerBase
     public async Task<IActionResult> Post([FromBody] PostCommentRequest req, CancellationToken ct)
     {
         // --- rate limits ---
-        const int MAX_PER_MATCH_PER_MIN = 3;
-        const int MAX_PER_HOUR_GLOBAL = 60;
+        const int MAX_PER_HOUR_GLOBAL = 10;   // ← tune as you like
+        const int MAX_PER_DAY_GLOBAL  = 50;  // ← tune as you like
+        const int MAX_PER_MATCH_PER_MIN = 3;  // (optional) keeps one thread from being spammed
+
         
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
             return BadRequest(new { error = "href is required" });
@@ -170,33 +172,47 @@ public sealed class CommentsController : ControllerBase
 
         var nowCheckParams = new { uid = userId, mid = matchId };
 
-        // burst on same match
+        // (optional) burst on the same match
         var lastMinuteCount = await conn.ExecuteScalarAsync<int>(@"
             SELECT COUNT(*) FROM comments
              WHERE user_id=@uid AND match_id=@mid
-               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 60 SECOND;", nowCheckParams, tx);
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 60 SECOND;",
+            nowCheckParams, tx);
         
         if (lastMinuteCount >= MAX_PER_MATCH_PER_MIN)
             return StatusCode(429, new { error = "Too many comments on this thread. Try again in a minute." });
         
-        // global pace
+        // global per-hour cap
         var lastHourCount = await conn.ExecuteScalarAsync<int>(@"
             SELECT COUNT(*) FROM comments
              WHERE user_id=@uid
-               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 HOUR;", new { uid = userId }, tx);
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 HOUR;",
+            new { uid = userId }, tx);
         
         if (lastHourCount >= MAX_PER_HOUR_GLOBAL)
             return StatusCode(429, new { error = "You’ve hit the hourly comment limit. Please slow down." });
         
-        // duplicate guard (same text on same match within 30s)
+        // global per-day cap
+        var lastDayCount = await conn.ExecuteScalarAsync<int>(@"
+            SELECT COUNT(*) FROM comments
+             WHERE user_id=@uid
+               AND created_at > UTC_TIMESTAMP(3) - INTERVAL 1 DAY;",
+            new { uid = userId }, tx);
+        
+        if (lastDayCount >= MAX_PER_DAY_GLOBAL)
+            return StatusCode(429, new { error = "Daily comment limit reached. Try again tomorrow." });
+        
+        // (optional) duplicate guard (same text on same match within 30s)
         var isDup = await conn.ExecuteScalarAsync<int>(@"
             SELECT 1 FROM comments
              WHERE user_id=@uid AND match_id=@mid AND text=@text
                AND created_at > UTC_TIMESTAMP(3) - INTERVAL 30 SECOND
-             LIMIT 1;", new { uid = userId, mid = matchId, text = req.Text.Trim() }, tx);
+             LIMIT 1;",
+            new { uid = userId, mid = matchId, text = req.Text.Trim() }, tx);
         
         if (isDup == 1)
             return Conflict(new { error = "Duplicate comment detected. Please wait a bit or edit your text." });
+
         
         // 2) Insert the comment
         const string insertSql = @"
