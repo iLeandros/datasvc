@@ -54,6 +54,9 @@ public sealed class CommentsController : ControllerBase
         public int ReplyCount { get; set; }     // NEW
 
         public bool IsLikedByMe { get; set; }   // NEW
+        
+        // NEW: needed by replies page and controller
+        public ulong? ParentCommentId { get; set; }
     }
 
     // ===== Helpers (mirrors LikesController) =====
