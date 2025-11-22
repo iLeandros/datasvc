@@ -1458,8 +1458,13 @@ app.MapGet("/data/details/allhrefs",
 	
     var (items, generatedUtc) = store.Export();
 
+	var index = hrefs
+			    .Select((h, i) => (h, i))
+			    .ToDictionary(x => x.h, x => x.i, StringComparer.OrdinalIgnoreCase);
+
     var byHref = items
-        .OrderByDescending(i => i.LastUpdatedUtc)
+        //.OrderByDescending(i => i.LastUpdatedUtc)
+		.OrderBy(i => i.Href, StringComparer.OrdinalIgnoreCase) // stable order
         .ToDictionary(
             i => i.Href,
             i =>
@@ -1604,6 +1609,19 @@ app.MapGet("/data/details/allhrefs/date/{date}",
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList() ?? new List<string>();
 
+	// preserve the parsed/day order
+	var index = hrefs
+			    .Select((h, i) => (h, i))
+			    .ToDictionary(x => x.h, x => x.i, StringComparer.OrdinalIgnoreCase);
+	
+	var records = hrefs
+			    .Select(h => store.TryGet(h))
+			    .Where(r => r is not null)
+			    .Cast<DetailsRecord>()
+			    .OrderBy(r => index[r.Href])   // stable order
+			    .ToList();
+
+	/*
     // 3) Pull only the requested hrefs from DetailsStore
     var records = hrefs
         .Select(h => store.Get(h))
@@ -1611,6 +1629,7 @@ app.MapGet("/data/details/allhrefs/date/{date}",
         .Cast<DetailsRecord>()
         .OrderByDescending(r => r.LastUpdatedUtc) // stable ordering like the non-date endpoint
         .ToList();
+	*/
 
     // Toggles (same behavior as the existing allhrefs endpoint)
     bool preferTeamsInfoHtml       = string.Equals(teamsInfo, "html", StringComparison.OrdinalIgnoreCase);
@@ -3855,7 +3874,45 @@ public sealed class DetailsStore
 	    return new Uri(baseUri, s).AbsoluteUri; // canonicalize
 	}
 }
+internal static class DetailsMerge
+{
+    static string? PreferOldUnlessNullOrEmpty(string? oldValue, string? newValue)
+    {
+        if (!string.IsNullOrWhiteSpace(oldValue)) return oldValue;
+        if (!string.IsNullOrWhiteSpace(newValue)) return newValue;
+        return null;
+    }
 
+    public static DetailsRecord Merge(DetailsRecord? oldRec, DetailsRecord newRec)
+    {
+        // If we had nothing before, just take the fresh record as-is.
+        if (oldRec is null) return newRec;
+
+        var pOld = oldRec.Payload;
+        var pNew = newRec.Payload;
+
+        // Merge with your “prefer old unless empty” rule
+        var mergedPayload = new DetailsPayload(
+            PreferOldUnlessNullOrEmpty(pOld.TeamsInfoHtml,           pNew.TeamsInfoHtml),
+            PreferOldUnlessNullOrEmpty(pOld.MatchBetweenHtml,        pNew.MatchBetweenHtml),
+            PreferOldUnlessNullOrEmpty(pOld.TeamMatchesSeparateHtml, pNew.TeamMatchesSeparateHtml),
+            PreferOldUnlessNullOrEmpty(pOld.LastTeamsMatchesHtml,    pNew.LastTeamsMatchesHtml),
+            PreferOldUnlessNullOrEmpty(pOld.TeamsStatisticsHtml,     pNew.TeamsStatisticsHtml),
+            PreferOldUnlessNullOrEmpty(pOld.TeamsBetStatisticsHtml,  pNew.TeamsBetStatisticsHtml),
+            PreferOldUnlessNullOrEmpty(pOld.FactsHtml,               pNew.FactsHtml),
+            PreferOldUnlessNullOrEmpty(pOld.TeamStandingsHtml,       pNew.TeamStandingsHtml)
+        );
+
+        // No-op? Keep the existing record (preserves LastUpdatedUtc).
+        if (mergedPayload == pOld) return oldRec;
+
+        // Real change: keep the merged payload, and use the fresh scrape’s timestamp.
+        // (newRec.LastUpdatedUtc is set where the record is scraped.)
+        return new DetailsRecord(newRec.Href, newRec.LastUpdatedUtc, mergedPayload);
+    }
+}
+
+/*
 internal static class DetailsMerge
 {
 	static string? PreferOldUnlessNullOrEmpty(string? oldValue, string? newValue)
@@ -3886,7 +3943,7 @@ internal static class DetailsMerge
         return new DetailsRecord(newRec.Href, DateTimeOffset.UtcNow, mergedPayload);
     }
 }
-
+*/
 
 public static class DetailsFiles
 {
@@ -4102,12 +4159,18 @@ public sealed class DetailsRefreshService
 		    .Distinct(StringComparer.OrdinalIgnoreCase)
 		    .ToArray();
 
+		// Stable index from parsed order
+		var index = hrefs
+		    .Select((h, i) => (h, i))
+		    .ToDictionary(x => x.h, x => x.i, StringComparer.OrdinalIgnoreCase);
+
 		
         var records = hrefs
             .Select(h => _details.Get(h))
             .Where(r => r is not null)
             .Cast<DetailsRecord>()
-            .OrderByDescending(r => r.LastUpdatedUtc)
+            //.OrderByDescending(r => r.LastUpdatedUtc)
+			.OrderBy(r => index[r.Href]) // <- stable
             .ToList();
 
         var byHref = records.ToDictionary(
