@@ -22,7 +22,8 @@ public sealed class CommentsController : ControllerBase
     }
 
     // ===== DTOs =====
-    public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc);
+    //public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc);
+    public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc, ulong? ParentCommentId);
     public sealed record EditCommentRequest(string Text);
 
     public sealed class CommentDto
@@ -39,6 +40,10 @@ public sealed class CommentsController : ControllerBase
         // NEW
         public string? DisplayName { get; set; }
         public string? AvatarUrl  { get; set; }
+
+        // Optional convenience counts
+        public int LikeCount { get; set; }      // NEW
+        public int ReplyCount { get; set; }     // NEW
     }
 
     // ===== Helpers (mirrors LikesController) =====
@@ -215,30 +220,46 @@ public sealed class CommentsController : ControllerBase
 
         
         // 2) Insert the comment
+        // If replying, ensure parent exists and belongs to the same match
+        if (req.ParentCommentId is not null)
+        {
+            var ok = await conn.ExecuteScalarAsync<int>(@"
+                SELECT 1 FROM comments WHERE comment_id=@pid AND match_id=@mid LIMIT 1;",
+                new { pid = req.ParentCommentId.Value, mid = matchId }, tx);
+            if (ok != 1)
+                return BadRequest(new { error = "Parent comment not found on this thread." });
+        }
+        
+        // 2) Insert the comment (top-level or reply)
         const string insertSql = @"
-            INSERT INTO comments (match_id, user_id, text)
-            VALUES (@mid, @uid, @text);
+            INSERT INTO comments (match_id, user_id, parent_comment_id, text)
+            VALUES (@mid, @uid, @parentId, @text);
             SELECT LAST_INSERT_ID();";
-
+        
         var commentId = await conn.ExecuteScalarAsync<ulong>(insertSql, new
         {
             mid = matchId,
             uid = userId,
+            parentId = (object?)req.ParentCommentId ?? DBNull.Value,
             text = req.Text.Trim()
         }, tx);
+
 
         // 3) Return the freshly created comment
         var created = await conn.QuerySingleAsync<CommentDto>(@"
             SELECT c.comment_id AS CommentId,
                    c.match_id   AS MatchId,
                    c.user_id    AS UserId,
+                   c.parent_comment_id AS ParentCommentId,
                    m.href       AS Href,
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
                    up.display_name AS DisplayName,
-                   up.avatar_url   AS AvatarUrl
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
               FROM comments c
               JOIN matches  m  ON m.match_id = c.match_id
          LEFT JOIN user_profile up ON up.user_id = c.user_id
@@ -281,24 +302,105 @@ public sealed class CommentsController : ControllerBase
             SELECT c.comment_id AS CommentId,
                    c.match_id   AS MatchId,
                    c.user_id    AS UserId,
+                   c.parent_comment_id AS ParentCommentId,
                    m.href       AS Href,
                    c.text       AS Text,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
                    up.display_name AS DisplayName,
-                   up.avatar_url   AS AvatarUrl
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
               FROM comments c
               JOIN matches  m  ON m.match_id = c.match_id
          LEFT JOIN user_profile up ON up.user_id = c.user_id
              WHERE c.match_id = @mid
+               AND c.parent_comment_id IS NULL                -- top-level only
                AND (@beforeId IS NULL OR c.comment_id < @beforeId)
           ORDER BY c.comment_id DESC
              LIMIT @take;",
             new { mid = matchId.Value, beforeId, take });
 
+
         ulong? next = rows.Any() ? rows.Last().CommentId : null;
         return Ok(new { items = rows, nextBeforeId = next });
+    }
+    
+    // GET /v1/comments/{id}/replies?limit=20&beforeId=...
+    [HttpGet("{id}/replies")]
+    public async Task<IActionResult> ListReplies([FromRoute] ulong id, [FromQuery] int? limit, [FromQuery] ulong? beforeId, CancellationToken ct)
+    {
+        int take = Math.Clamp(limit ?? 20, 1, 100);
+        await using var conn = Open();
+    
+        // verify parent exists
+        var exists = await conn.ExecuteScalarAsync<int>("SELECT 1 FROM comments WHERE comment_id=@id LIMIT 1;", new { id });
+        if (exists != 1) return NotFound(new { error = "parent comment not found" });
+    
+        var rows = await conn.QueryAsync<CommentDto>(@"
+            SELECT c.comment_id AS CommentId,
+                   c.match_id   AS MatchId,
+                   c.user_id    AS UserId,
+                   c.parent_comment_id AS ParentCommentId,
+                   '' AS Href, -- not needed for replies
+                   c.text       AS Text,
+                   c.created_at AS CreatedAtUtc,
+                   c.updated_at AS UpdatedAtUtc,
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount
+              FROM comments c
+         LEFT JOIN user_profile up ON up.user_id = c.user_id
+             WHERE c.parent_comment_id = @pid
+               AND (@beforeId IS NULL OR c.comment_id < @beforeId)
+          ORDER BY c.comment_id DESC
+             LIMIT @take;",
+            new { pid = id, beforeId, take });
+    
+        ulong? next = rows.Any() ? rows.Last().CommentId : null;
+        return Ok(new { items = rows, nextBeforeId = next });
+    }
+
+    // POST /v1/comments/{id}/like
+    [HttpPost("{id}/like")]
+    [Authorize]
+    public async Task<IActionResult> Like([FromRoute] ulong id, CancellationToken ct)
+    {
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult is not null) return authResult;
+    
+        await using var conn = Open();
+        var rows = await conn.ExecuteAsync(@"
+            INSERT IGNORE INTO comment_likes (comment_id, user_id)
+            VALUES (@cid, @uid);", new { cid = id, uid = userId });
+    
+        // return current like count
+        var count = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM comment_likes WHERE comment_id=@cid;", new { cid = id });
+    
+        return Ok(new { commentId = id, liked = true, likeCount = count });
+    }
+    
+    // DELETE /v1/comments/{id}/like
+    [HttpDelete("{id}/like")]
+    [Authorize]
+    public async Task<IActionResult> Unlike([FromRoute] ulong id, CancellationToken ct)
+    {
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult is not null) return authResult;
+    
+        await using var conn = Open();
+        await conn.ExecuteAsync(@"
+            DELETE FROM comment_likes WHERE comment_id=@cid AND user_id=@uid;",
+            new { cid = id, uid = userId });
+    
+        var count = await conn.ExecuteScalarAsync<int>(
+            "SELECT COUNT(*) FROM comment_likes WHERE comment_id=@cid;", new { cid = id });
+    
+        return Ok(new { commentId = id, liked = false, likeCount = count });
     }
 
     // PUT /v1/comments/{id}
