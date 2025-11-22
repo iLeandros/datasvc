@@ -142,13 +142,7 @@ public sealed class CommentsController : ControllerBase
     [Authorize]
     [Consumes("application/json")]
     public async Task<IActionResult> Post([FromBody] PostCommentRequest req, CancellationToken ct)
-    {
-        // --- rate limits ---
-        const int MAX_PER_HOUR_GLOBAL = 10;   // ← tune as you like
-        const int MAX_PER_DAY_GLOBAL  = 50;  // ← tune as you like
-        const int MAX_PER_MATCH_PER_MIN = 3;  // (optional) keeps one thread from being spammed
-
-        
+    {   
         if (req is null || string.IsNullOrWhiteSpace(req.Href))
             return BadRequest(new { error = "href is required" });
         if (string.IsNullOrWhiteSpace(req.Text))
