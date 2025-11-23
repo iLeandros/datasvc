@@ -52,6 +52,7 @@ public sealed class CommentsController : ControllerBase
         // Optional convenience counts
         public int LikeCount { get; set; }      // NEW
         public int ReplyCount { get; set; }     // NEW
+        public int ReplyCountVisible { get; set; } // excludes deleted replies
 
         public bool IsLikedByMe { get; set; }   // NEW
         
@@ -285,6 +286,9 @@ public sealed class CommentsController : ControllerBase
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
                    (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
                    EXISTS(SELECT 1 FROM comment_likes me
                        WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
@@ -342,6 +346,9 @@ public sealed class CommentsController : ControllerBase
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
                    (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
                    EXISTS(SELECT 1 FROM comment_likes me
                        WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
@@ -386,6 +393,9 @@ public sealed class CommentsController : ControllerBase
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
                    (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
                    EXISTS(SELECT 1 FROM comment_likes me
                        WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
@@ -484,6 +494,9 @@ public sealed class CommentsController : ControllerBase
                    up.avatar_url   AS AvatarUrl,
                    (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
                    (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
                    EXISTS(SELECT 1 FROM comment_likes me
                        WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
               FROM comments c
