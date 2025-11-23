@@ -197,88 +197,104 @@ public sealed class LikesController : ControllerBase
             return BadRequest(new { error = "href is required" });
         if (req.Vote is < -1 or > 1)
             return BadRequest(new { error = "vote must be -1, 0, or +1" });
-
+    
         var href = req.Href.Trim();
-        var hrefHash = Sha256(href);
-        var newVote = req.Vote;
-        //var userId = GetRequiredUserId();
+        if (href.Length > 600)
+            return BadRequest(new { error = "href too long (max 600 chars)" });
+    
+        var newVote = (sbyte)req.Vote;
+    
+        // Prefer the synchronous helper you already have
         var authResult = GetRequiredUserId(out var userId);
         if (authResult != null)
             return authResult;
+    
         var matchUtc = ForceUtc(req.MatchUtc);
-
-        await using var conn = Open();
-        await conn.OpenAsync(ct);
-        await using var tx = await conn.BeginTransactionAsync(ct);
-        // Build both candidates exactly like Get()
+    
+        // Build canonical candidates exactly like GET
         var (h1, h2, h3) = CanonicalHrefCandidates(href);
         var h1Hash = Sha256(h1);
         var h2Hash = h2 is null ? null : Sha256(h2);
         var h3Hash = h3 is null ? null : Sha256(h3);
-
+    
+        await using var conn = Open();
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
         try
         {
-            // Try to find an existing match by any candidate
+            // 1) Find or create a match_id
             ulong matchId = await conn.ExecuteScalarAsync<ulong?>(@"
                 SELECT match_id
-                FROM matches
-                WHERE href_hash = @h1Hash
-                   OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
-                   OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
-                LIMIT 1;",
+                  FROM matches
+                 WHERE href_hash = @h1Hash
+                    OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
+                    OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
+                 LIMIT 1;",
                 new { h1Hash, h2Hash, h3Hash }, tx) ?? 0UL;
-            
-            // If none found, insert a SINGLE canonical form (pick one policy; here we store h1)
+    
             if (matchId == 0UL)
             {
+                // Insert a single canonical row (store h1)
                 await conn.ExecuteAsync(@"
                     INSERT INTO matches (href_hash, href, match_utc)
                     VALUES (@h1Hash, @h1, @matchUtc)
-                    ON DUPLICATE KEY UPDATE href = VALUES(href), match_utc = COALESCE(VALUES(match_utc), match_utc);",
+                    ON DUPLICATE KEY UPDATE
+                        href = VALUES(href),
+                        match_utc = COALESCE(VALUES(match_utc), match_utc);",
                     new { h1Hash, h1, matchUtc }, tx);
-            
+    
                 matchId = await conn.ExecuteScalarAsync<ulong>(
                     "SELECT match_id FROM matches WHERE href_hash=@h1Hash LIMIT 1;",
                     new { h1Hash }, tx);
-            
+    
+                // Ensure a totals row exists for the new match
                 await conn.ExecuteAsync(
                     "INSERT IGNORE INTO match_vote_totals (match_id) VALUES (@mid);",
                     new { mid = matchId }, tx);
             }
-            else if (matchUtc is not null)
+            else
             {
-                // backfill or correct match_utc if client now knows it
-                await conn.ExecuteAsync(@"
-                    UPDATE matches
-                       SET match_utc = @matchUtc
-                     WHERE match_id  = @mid
-                       AND (match_utc IS NULL OR match_utc <> @matchUtc);",
-                    new { matchUtc, mid = matchId }, tx);
+                // Backfill/correct match_utc if caller knows it now
+                if (matchUtc is not null)
+                {
+                    await conn.ExecuteAsync(@"
+                        UPDATE matches
+                           SET match_utc = @matchUtc
+                         WHERE match_id  = @mid
+                           AND (match_utc IS NULL OR match_utc <> @matchUtc);",
+                        new { matchUtc, mid = matchId }, tx);
+                }
             }
-
+    
+            // Always ensure totals row exists (idempotent)
+            await conn.ExecuteAsync(
+                "INSERT IGNORE INTO match_vote_totals (match_id) VALUES (@mid);",
+                new { mid = matchId }, tx);
+    
+            // 2) Previous vote (treat null as 0; clamp defensively)
             int prevRaw = await conn.ExecuteScalarAsync<int?>(@"
                 SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
                 new { uid = userId, mid = matchId }, tx) ?? 0;
-                
             sbyte prev = (sbyte)Math.Clamp(prevRaw, -1, 1);
-
-            /*
-            // 2) Previous vote for delta calc (treat null as 0)
-            sbyte prev = await conn.ExecuteScalarAsync<sbyte?>(@"
-                SELECT vote FROM user_match_votes WHERE user_id=@uid AND match_id=@mid;",
-                new { uid = userId, mid = matchId }, tx) ?? (sbyte)0;
-            */
+    
+            // 3) If unchanged, just read and return totals (LEFT JOIN so we never throw)
             if (prev == newVote)
             {
                 var unchanged = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-                    SELECT t.upvotes, t.downvotes, t.score, t.updated_at, m.match_utc
-                      FROM match_vote_totals t
-                      JOIN matches m ON m.match_id=t.match_id
-                     WHERE t.match_id=@mid;",
+                    SELECT
+                      COALESCE(t.upvotes, 0)                    AS upvotes,
+                      COALESCE(t.downvotes, 0)                  AS downvotes,
+                      COALESCE(t.score, 0)                      AS score,
+                      COALESCE(t.updated_at, m.created_at)      AS updated_at,
+                      m.match_utc                                AS match_utc
+                    FROM matches m
+                    LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+                    WHERE m.match_id = @mid;",
                     new { mid = matchId }, tx);
-
+    
                 await tx.CommitAsync(ct);
-
+    
                 return Ok(new LikeTotalsDto
                 {
                     Href = href,
@@ -290,21 +306,21 @@ public sealed class LikesController : ControllerBase
                     MatchUtc = unchanged.MUtc
                 });
             }
-
-            // 3) Upsert user vote
+    
+            // 4) Upsert the user's vote
             await conn.ExecuteAsync(@"
                 INSERT INTO user_match_votes (user_id, match_id, vote)
                 VALUES (@uid, @mid, @vote)
                 ON DUPLICATE KEY UPDATE vote = VALUES(vote);",
                 new { uid = userId, mid = matchId, vote = newVote }, tx);
-
-            // 4) Apply deltas
+    
+            // 5) Apply deltas to totals
             int upDelta = 0, downDelta = 0, scoreDelta = newVote - prev;
             if (prev == 1) upDelta--;
             if (prev == -1) downDelta--;
             if (newVote == 1) upDelta++;
             if (newVote == -1) downDelta++;
-
+    
             await conn.ExecuteAsync(@"
                 UPDATE match_vote_totals
                    SET upvotes   = upvotes   + @u,
@@ -312,16 +328,22 @@ public sealed class LikesController : ControllerBase
                        score     = score     + @s
                  WHERE match_id  = @mid;",
                 new { u = upDelta, d = downDelta, s = scoreDelta, mid = matchId }, tx);
-
+    
+            // 6) Return fresh totals (LEFT JOIN + COALESCE)
             var row = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
-                SELECT t.upvotes, t.downvotes, t.score, t.updated_at, m.match_utc
-                  FROM match_vote_totals t
-                  JOIN matches m ON m.match_id=t.match_id
-                 WHERE t.match_id=@mid;",
+                SELECT
+                  COALESCE(t.upvotes, 0)                    AS upvotes,
+                  COALESCE(t.downvotes, 0)                  AS downvotes,
+                  COALESCE(t.score, 0)                      AS score,
+                  COALESCE(t.updated_at, m.created_at)      AS updated_at,
+                  m.match_utc                                AS match_utc
+                FROM matches m
+                LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
+                WHERE m.match_id = @mid;",
                 new { mid = matchId }, tx);
-
+    
             await tx.CommitAsync(ct);
-
+    
             return Ok(new LikeTotalsDto
             {
                 Href = href,
@@ -340,6 +362,7 @@ public sealed class LikesController : ControllerBase
             return Problem("Vote failed.");
         }
     }
+
     // PUBLIC: GET /v1/likes/matches
     // Lists matches + aggregated votes, optionally including the caller's vote.
     // Query:
