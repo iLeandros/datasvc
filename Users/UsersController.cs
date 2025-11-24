@@ -122,12 +122,12 @@ public sealed class UsersController : ControllerBase
         // Activity counts (comments / likes / votes)
         var activity = await conn.QueryFirstAsync<(int Comments, int LikesUp, int LikesDown, int LikesOnComments)>(@"
             SELECT
-              (SELECT COUNT(*) FROM comments c WHERE c.user_id=@uid AND c.is_deleted=0) AS Comments,               -- comments.is_deleted  :contentReference[oaicite:9]{index=9}
-              (SELECT COUNT(*) FROM user_match_votes mv WHERE mv.user_id=@uid AND mv.vote= 1) AS LikesUp,          -- tinyint vote        :contentReference[oaicite:10]{index=10}
+              (SELECT COUNT(*) FROM comments c WHERE c.user_id=@uid AND c.is_deleted=0) AS Comments,               
+              (SELECT COUNT(*) FROM user_match_votes mv WHERE mv.user_id=@uid AND mv.vote= 1) AS LikesUp,          
               (SELECT COUNT(*) FROM user_match_votes mv WHERE mv.user_id=@uid AND mv.vote=-1) AS LikesDown,
               (SELECT COUNT(*) FROM comment_likes cl
                  JOIN comments c2 ON c2.comment_id = cl.comment_id
-               WHERE c2.user_id=@uid) AS LikesOnComments;",                                                       -- comment_likes join   :contentReference[oaicite:11]{index=11}
+               WHERE c2.user_id=@uid) AS LikesOnComments;",                                                       
             new { uid = row.UserId });
 
         var dto = new PublicUserProfileDto
