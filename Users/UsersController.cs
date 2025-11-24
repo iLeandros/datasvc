@@ -37,6 +37,20 @@ public sealed class UsersController : ControllerBase
         public int LikesCastUp { get; set; }
         public int LikesCastDown { get; set; }
     }
+    
+    public sealed class UserCardDto
+    {
+        public ulong   UserId      { get; set; }
+        public string? Username    { get; set; }
+        public DateTime JoinedAtUtc{ get; set; }
+        public string? AvatarUrl   { get; set; }
+        public string[] Roles      { get; set; } = Array.Empty<string>();
+    }
+
+    public sealed class IdsRequest
+    {
+        public IReadOnlyList<ulong>? Ids { get; set; }
+    }
 
     public sealed class FollowDto
     {
@@ -200,6 +214,78 @@ public sealed class UsersController : ControllerBase
         };
     
         return Ok(dto);
+    }
+
+    [HttpPost("profiles")]
+    [AllowAnonymous]
+    public async Task<IActionResult> GetProfilesByIds([FromBody] IdsRequest body, CancellationToken ct)
+    {
+        if (body?.Ids is null || body.Ids.Count == 0)
+            return Ok(Array.Empty<UserCardDto>());
+    
+        // de-dupe & guard
+        var ids = body.Ids.Where(id => id != 0).Distinct().ToArray();
+        if (ids.Length == 0)
+            return Ok(Array.Empty<UserCardDto>());
+    
+        await using var conn = Open();
+        await conn.OpenAsync(ct);
+    
+        // Base profiles
+        const string sqlProfiles = @"
+            SELECT u.id            AS UserId,
+                   up.display_name AS Username,
+                   u.created_at    AS JoinedAtUtc,
+                   up.avatar_url   AS AvatarUrl
+              FROM users u
+              JOIN user_profile up ON up.user_id = u.id
+             WHERE u.id IN @ids;";
+    
+        var rows = (await conn.QueryAsync<(ulong UserId, string Username, DateTime JoinedAtUtc, string AvatarUrl)>(
+            new CommandDefinition(sqlProfiles, new { ids }, cancellationToken: ct)
+        )).ToList();
+    
+        if (rows.Count == 0) return Ok(Array.Empty<UserCardDto>());
+    
+        // Roles for these users (single query)
+        const string sqlRoles = @"
+            SELECT ur.user_id AS UserId, r.name AS RoleName
+              FROM user_roles ur
+              JOIN roles r ON r.id = ur.role_id
+             WHERE ur.user_id IN @ids;";
+    
+        var roleLookup = new Dictionary<ulong, List<string>>();
+        var roleRows = await conn.QueryAsync<(ulong UserId, string RoleName)>(
+            new CommandDefinition(sqlRoles, new { ids }, cancellationToken: ct)
+        );
+        foreach (var (uid, role) in roleRows)
+        {
+            if (!roleLookup.TryGetValue(uid, out var list))
+            {
+                list = new List<string>();
+                roleLookup[uid] = list;
+            }
+            list.Add(role);
+        }
+    
+        // Map to DTOs
+        var byId = rows.ToDictionary(
+            r => r.UserId,
+            r => new UserCardDto
+            {
+                UserId = r.UserId,
+                Username = r.Username,
+                JoinedAtUtc = DateTime.SpecifyKind(r.JoinedAtUtc, DateTimeKind.Utc),
+                AvatarUrl = r.AvatarUrl,
+                Roles = roleLookup.TryGetValue(r.UserId, out var roles) ? roles.ToArray() : Array.Empty<string>()
+            });
+    
+        // Preserve original input order; skip IDs that weren’t found
+        var ordered = new List<UserCardDto>(ids.Length);
+        foreach (var id in ids)
+            if (byId.TryGetValue(id, out var dto)) ordered.Add(dto);
+    
+        return Ok(ordered);
     }
 
     // ----------------------------------------
