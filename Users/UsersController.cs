@@ -70,6 +70,49 @@ public sealed class UsersController : ControllerBase
 
         return null;
     }
+    // Add under your other methods
+    [NonAction]
+    private async Task<(IActionResult? error, ulong userId)> GetRequiredUserIdAsync(CancellationToken ct)
+    {
+        // 1) HttpContext.Items
+        if (HttpContext.Items.TryGetValue("user_id", out var raw) &&
+            raw is not null &&
+            ulong.TryParse(raw.ToString(), out var uidFromItem))
+        {
+            return (null, uidFromItem);
+        }
+    
+        // 2) Common claims
+        string?[] candidates =
+        {
+            User.FindFirstValue("uid"),
+            User.FindFirstValue(ClaimTypes.NameIdentifier),
+            User.FindFirstValue("sub"),
+        };
+        foreach (var s in candidates)
+        {
+            if (!string.IsNullOrWhiteSpace(s) && ulong.TryParse(s, out var uidFromClaim))
+                return (null, uidFromClaim);
+        }
+    
+        // 3) Fallback: Bearer token → debug_tokens lookup
+        if (Request.Headers.TryGetValue("Authorization", out var authHeader) &&
+            authHeader.ToString().StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+        {
+            var token = authHeader.ToString().Substring("Bearer ".Length).Trim();
+            if (!string.IsNullOrEmpty(token))
+            {
+                const string sql = "SELECT user_id FROM debug_tokens WHERE token = @token LIMIT 1;";
+                await using var conn = Open();
+                var uid = await conn.ExecuteScalarAsync<ulong?>(new CommandDefinition(sql, new { token }, cancellationToken: ct));
+                if (uid.HasValue)
+                    return (null, uid.Value);
+            }
+        }
+    
+        _log.LogWarning("UsersController: Missing user id: no Items, no claim, and token not found in debug_tokens.");
+        return (Unauthorized(new { error = "Missing or invalid user identity" }), 0UL);
+    }
 
     // -------------------------------------------------
     // GET /v1/users/{idOrName}  (anonymous public page)
@@ -202,26 +245,26 @@ public sealed class UsersController : ControllerBase
     [Authorize]
     public async Task<IActionResult> Follow([FromRoute] ulong id, CancellationToken ct)
     {
-        var me = TryGetUserId();
-        if (me is null) return Unauthorized(new { error = "Missing or invalid user ID" });
-        if (me.Value == id) return BadRequest(new { error = "You cannot follow yourself." });
-
+        var (err, me) = await GetRequiredUserIdAsync(ct);
+        if (err is not null) return err;
+        if (me == id) return BadRequest(new { error = "You cannot follow yourself." });
+    
         const string sql = @"INSERT IGNORE INTO user_follows (follower_id, followee_id) VALUES (@me, @them);";
         await using var conn = Open();
-        await conn.ExecuteAsync(new CommandDefinition(sql, new { me = me.Value, them = id }, cancellationToken: ct));
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { me, them = id }, cancellationToken: ct));
         return Ok(); // idempotent
     }
-
+    
     [HttpDelete("{id}/follow")]
     [Authorize]
     public async Task<IActionResult> Unfollow([FromRoute] ulong id, CancellationToken ct)
     {
-        var me = TryGetUserId();
-        if (me is null) return Unauthorized(new { error = "Missing or invalid user ID" });
-
+        var (err, me) = await GetRequiredUserIdAsync(ct);
+        if (err is not null) return err;
+    
         const string sql = @"DELETE FROM user_follows WHERE follower_id=@me AND followee_id=@them;";
         await using var conn = Open();
-        await conn.ExecuteAsync(new CommandDefinition(sql, new { me = me.Value, them = id }, cancellationToken: ct));
+        await conn.ExecuteAsync(new CommandDefinition(sql, new { me, them = id }, cancellationToken: ct));
         return NoContent();
     }
 
