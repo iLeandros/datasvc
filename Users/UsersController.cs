@@ -383,7 +383,7 @@ public sealed class UsersController : ControllerBase
         await using var conn = Open();
 
         var comments = await conn.QueryAsync(new CommandDefinition(@"
-            SELECT c.comment_id, c.text, c.created_at AS CreatedAtUtc, m.href
+            SELECT c.comment_id, c.title AS Title, c.text, c.created_at AS CreatedAtUtc, m.href
               FROM comments c
               JOIN matches  m ON m.match_id = c.match_id
              WHERE c.user_id=@uid AND c.is_deleted=0
