@@ -391,7 +391,7 @@ public sealed class UsersController : ControllerBase
              LIMIT @lim;", new { uid = id, lim = limit }, cancellationToken: ct));  // comments/matches per dump  
 
         var likes = await conn.QueryAsync(new CommandDefinition(@"
-            SELECT mv.match_id, m.href, mv.updated_at AS UpdatedAtUtc, mv.vote
+            SELECT mv.match_id, m.href, m.title AS Title, mv.updated_at AS UpdatedAtUtc, mv.vote
               FROM user_match_votes mv
               JOIN matches m ON m.match_id = mv.match_id
              WHERE mv.user_id=@uid AND mv.vote <> 0
