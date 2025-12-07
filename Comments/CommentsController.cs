@@ -31,7 +31,15 @@ public sealed class CommentsController : ControllerBase
 
     // ===== DTOs =====
     //public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc);
-    public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc, ulong? ParentCommentId);
+    //public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc, ulong? ParentCommentId);
+    public sealed record PostCommentRequest(
+        string Href,
+        string Text,
+        DateTime? MatchUtc,
+        ulong? ParentCommentId,
+        string? Title   // NEW
+    );
+
     public sealed record EditCommentRequest(string Text);
 
     public sealed class CommentDto
@@ -41,6 +49,7 @@ public sealed class CommentsController : ControllerBase
         public ulong UserId { get; set; }
         public string Href { get; set; } = "";
         public string Text { get; set; } = "";
+        public string? Title { get; set; }     // <--- ADD THIS
         public DateTime CreatedAtUtc { get; set; }
         public DateTime UpdatedAtUtc { get; set; }
         public bool IsDeleted { get; set; }
@@ -254,7 +263,7 @@ public sealed class CommentsController : ControllerBase
             if (ok != 1)
                 return BadRequest(new { error = "Parent comment not found on this thread." });
         }
-        
+        /*
         // 2) Insert the comment (top-level or reply)
         const string insertSql = @"
             INSERT INTO comments (match_id, user_id, parent_comment_id, text)
@@ -268,6 +277,20 @@ public sealed class CommentsController : ControllerBase
             parentId = (object?)req.ParentCommentId ?? DBNull.Value,
             text = req.Text.Trim()
         }, tx);
+        */
+        const string insertSql = @"
+            INSERT INTO comments (match_id, user_id, parent_comment_id, title, text)
+            VALUES (@mid, @uid, @parentId, @title, @text);
+            SELECT LAST_INSERT_ID();";
+                
+        var commentId = await conn.ExecuteScalarAsync<ulong>(insertSql, new
+        {
+            mid = matchId,
+            uid = userId,
+            parentId = (object?)req.ParentCommentId ?? DBNull.Value,
+            title = string.IsNullOrWhiteSpace(req.Title) ? null : req.Title.Trim(),
+            text  = req.Text.Trim()
+        }, tx);
 
         var meUid = TryGetUserId();
 
@@ -279,6 +302,7 @@ public sealed class CommentsController : ControllerBase
                    c.parent_comment_id AS ParentCommentId,
                    m.href       AS Href,
                    c.text       AS Text,
+                   c.title      AS Title,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
@@ -339,6 +363,7 @@ public sealed class CommentsController : ControllerBase
                    c.parent_comment_id AS ParentCommentId,
                    m.href       AS Href,
                    c.text       AS Text,
+                   c.title      AS Title,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
@@ -386,6 +411,7 @@ public sealed class CommentsController : ControllerBase
                    c.parent_comment_id AS ParentCommentId,
                    m.href AS Href,
                    c.text       AS Text,
+                   c.title      AS Title,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
@@ -487,6 +513,7 @@ public sealed class CommentsController : ControllerBase
                    c.user_id    AS UserId,
                    m.href       AS Href,
                    c.text       AS Text,
+                   c.title      AS Title,
                    c.created_at AS CreatedAtUtc,
                    c.updated_at AS UpdatedAtUtc,
                    c.is_deleted AS IsDeleted,
