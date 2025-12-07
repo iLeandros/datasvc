@@ -26,6 +26,7 @@ public sealed class LikesController : ControllerBase
     public sealed class LikeTotalsDto
     {
         public string Href { get; set; } = "";
+        public string? Title { get; set; }
         public int Upvotes { get; set; }
         public int Downvotes { get; set; }
         public int Score { get; set; }
@@ -36,6 +37,7 @@ public sealed class LikesController : ControllerBase
     public sealed class MyLikeDto
     {
         public string Href { get; set; } = "";
+        public string? Title { get; set; }
         public DateTime? MatchUtc { get; set; }
         public DateTime UserUpdatedAtUtc { get; set; }
         public int Upvotes { get; set; }
@@ -281,23 +283,25 @@ public sealed class LikesController : ControllerBase
             // 3) If unchanged, just read and return totals (LEFT JOIN so we never throw)
             if (prev == newVote)
             {
-                var unchanged = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
+                var unchanged = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc, string? Title)>(@"
                     SELECT
                       COALESCE(t.upvotes, 0)                    AS upvotes,
                       COALESCE(t.downvotes, 0)                  AS downvotes,
                       COALESCE(t.score, 0)                      AS score,
                       COALESCE(t.updated_at, m.created_at)      AS updated_at,
-                      m.match_utc                                AS match_utc
+                      m.match_utc                               AS match_utc,
+                      m.title                                   AS title
                     FROM matches m
                     LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
                     WHERE m.match_id = @mid;",
                     new { mid = matchId }, tx);
-    
+
                 await tx.CommitAsync(ct);
     
                 return Ok(new LikeTotalsDto
                 {
                     Href = href,
+                    Title = unchanged.Title,                    // NEW
                     Upvotes = unchanged.Up,
                     Downvotes = unchanged.Down,
                     Score = unchanged.Score,
@@ -330,13 +334,14 @@ public sealed class LikesController : ControllerBase
                 new { u = upDelta, d = downDelta, s = scoreDelta, mid = matchId }, tx);
     
             // 6) Return fresh totals (LEFT JOIN + COALESCE)
-            var row = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc)>(@"
+            var row = await conn.QueryFirstAsync<(int Up, int Down, int Score, DateTime Updated, DateTime? MUtc, string? Title)>(@"
                 SELECT
                   COALESCE(t.upvotes, 0)                    AS upvotes,
                   COALESCE(t.downvotes, 0)                  AS downvotes,
                   COALESCE(t.score, 0)                      AS score,
                   COALESCE(t.updated_at, m.created_at)      AS updated_at,
-                  m.match_utc                                AS match_utc
+                  m.match_utc                               AS match_utc,
+                  m.title                                   AS title
                 FROM matches m
                 LEFT JOIN match_vote_totals t ON t.match_id = m.match_id
                 WHERE m.match_id = @mid;",
@@ -347,6 +352,7 @@ public sealed class LikesController : ControllerBase
             return Ok(new LikeTotalsDto
             {
                 Href = href,
+                Title = row.Title,                          // NEW
                 Upvotes = row.Up,
                 Downvotes = row.Down,
                 Score = row.Score,
@@ -401,6 +407,7 @@ public sealed class LikesController : ControllerBase
         var sql = $@"
                     SELECT
                       m.href,
+                      m.title,
                       m.match_utc,
                       COALESCE(t.upvotes,   0)    AS upvotes,
                       COALESCE(t.downvotes, 0)    AS downvotes,
@@ -428,6 +435,7 @@ public sealed class LikesController : ControllerBase
         var items = rows.Select(r => new LikeTotalsDto
         {
             Href = r.href,
+            Title = r.title,                             // NEW
             Upvotes = (int)r.upvotes,
             Downvotes = (int)r.downvotes,
             Score = (int)r.score,
@@ -479,6 +487,7 @@ public sealed class LikesController : ControllerBase
         var sql = $@"
                     SELECT
                       m.href,
+                      m.title,
                       m.match_utc,
                       COALESCE(t.upvotes,   0) AS upvotes,
                       COALESCE(t.downvotes, 0) AS downvotes,
@@ -508,6 +517,7 @@ public sealed class LikesController : ControllerBase
         var items = rows.Select(r => new LikeTotalsDto
         {
             Href = r.href,
+            Title = r.title,                             // NEW
             Upvotes = (int)r.upvotes,
             Downvotes = (int)r.downvotes,
             Score = (int)r.score,
@@ -537,7 +547,7 @@ public sealed class LikesController : ControllerBase
         var h3Hash = h3 is null ? null : Sha256(h3);
     
         const string sql = @"
-            SELECT m.match_id, m.href, m.match_utc,
+            SELECT m.match_id, m.href, m.title, m.match_utc,
                    COALESCE(t.upvotes,0) Up, COALESCE(t.downvotes,0) Down,
                    COALESCE(t.score,0) Score, COALESCE(t.updated_at, m.created_at) Updated
             FROM matches m
@@ -555,6 +565,7 @@ public sealed class LikesController : ControllerBase
             return Ok(new LikeTotalsDto
             {
                 Href = h1,
+                Title = "",                           // NEW
                 Upvotes = 0,
                 Downvotes = 0,
                 Score = 0,
@@ -577,6 +588,7 @@ public sealed class LikesController : ControllerBase
         return Ok(new LikeTotalsDto
         {
             Href = rec.href,
+            Title = rec.title,                           // NEW
             Upvotes = (int)rec.Up,
             Downvotes = (int)rec.Down,
             Score = (int)rec.Score,
@@ -598,19 +610,20 @@ public sealed class LikesController : ControllerBase
         if (err is not null) return err;
     
         const string sql = @"
-    SELECT
-      m.href,
-      m.match_utc,
-      umv.updated_at              AS user_updated_at,
-      COALESCE(t.upvotes, 0)      AS upvotes,
-      COALESCE(t.downvotes, 0)    AS downvotes,
-      COALESCE(t.score, 0)        AS score
-    FROM user_match_votes umv
-    JOIN matches m            ON m.match_id = umv.match_id
-    LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
-    WHERE umv.user_id = @user_id AND umv.vote = 1
-    ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
-    LIMIT @skip, @take;";
+            SELECT
+              m.href,
+              m.title,
+              m.match_utc,
+              umv.updated_at              AS user_updated_at,
+              COALESCE(t.upvotes, 0)      AS upvotes,
+              COALESCE(t.downvotes, 0)    AS downvotes,
+              COALESCE(t.score, 0)        AS score
+            FROM user_match_votes umv
+            JOIN matches m            ON m.match_id = umv.match_id
+            LEFT JOIN match_vote_totals t ON t.match_id = umv.match_id
+            WHERE umv.user_id = @user_id AND umv.vote = 1
+            ORDER BY COALESCE(m.match_utc, umv.updated_at) DESC
+            LIMIT @skip, @take;";
     
         await using var conn = Open();
         var rows = (await conn.QueryAsync(sql, new { user_id = userId, skip, take })).ToList();
@@ -618,6 +631,7 @@ public sealed class LikesController : ControllerBase
         var items = rows.Select(r => new MyLikeDto
         {
             Href = r.href,
+            Title = r.title,                           // NEW
             MatchUtc = r.match_utc is null ? null : DateTime.SpecifyKind((DateTime)r.match_utc, DateTimeKind.Utc),
             UserUpdatedAtUtc = DateTime.SpecifyKind((DateTime)r.user_updated_at, DateTimeKind.Utc),
             Upvotes = (int)r.upvotes,
