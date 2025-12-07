@@ -22,7 +22,7 @@ public sealed class LikesController : ControllerBase
     }
 
     // ===== DTOs =====
-    public sealed record VoteRequest(string Href, sbyte Vote, DateTime? MatchUtc); // Vote in {-1,0,+1}, optional UTC kick-off
+    public sealed record VoteRequest(string title, string Href, sbyte Vote, DateTime? MatchUtc); // Vote in {-1,0,+1}, optional UTC kick-off
     public sealed class LikeTotalsDto
     {
         public string Href { get; set; } = "";
