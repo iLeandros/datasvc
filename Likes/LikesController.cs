@@ -22,7 +22,7 @@ public sealed class LikesController : ControllerBase
     }
 
     // ===== DTOs =====
-    public sealed record VoteRequest(string title, string Href, sbyte Vote, DateTime? MatchUtc); // Vote in {-1,0,+1}, optional UTC kick-off
+    public sealed record VoteRequest(string Href, string? Title, sbyte Vote, DateTime? MatchUtc); // Vote in {-1,0,+1}, optional UTC kick-off
     public sealed class LikeTotalsDto
     {
         public string Href { get; set; } = "";
@@ -203,6 +203,8 @@ public sealed class LikesController : ControllerBase
         var href = req.Href.Trim();
         if (href.Length > 600)
             return BadRequest(new { error = "href too long (max 600 chars)" });
+
+        var title = string.IsNullOrWhiteSpace(req.Title) ? null : req.Title.Trim();
     
         var newVote = (sbyte)req.Vote;
     
@@ -239,12 +241,12 @@ public sealed class LikesController : ControllerBase
             {
                 // Insert a single canonical row (store h1)
                 await conn.ExecuteAsync(@"
-                    INSERT INTO matches (href_hash, href, match_utc)
+                    INSERT INTO matches (href_hash, href, title, match_utc)
                     VALUES (@h1Hash, @h1, @matchUtc)
                     ON DUPLICATE KEY UPDATE
                         href = VALUES(href),
                         match_utc = COALESCE(VALUES(match_utc), match_utc);",
-                    new { h1Hash, h1, matchUtc }, tx);
+                    new { h1Hash, h1, title, matchUtc }, tx);
     
                 matchId = await conn.ExecuteScalarAsync<ulong>(
                     "SELECT match_id FROM matches WHERE href_hash=@h1Hash LIMIT 1;",
@@ -266,6 +268,15 @@ public sealed class LikesController : ControllerBase
                          WHERE match_id  = @mid
                            AND (match_utc IS NULL OR match_utc <> @matchUtc);",
                         new { matchUtc, mid = matchId }, tx);
+                }
+                if (!string.IsNullOrWhiteSpace(title))
+                {
+                    await conn.ExecuteAsync(@"
+                        UPDATE matches
+                           SET title = @title
+                         WHERE match_id = @mid
+                           AND (title IS NULL OR title = '');",
+                        new { title, mid = matchId }, tx);
                 }
             }
     
