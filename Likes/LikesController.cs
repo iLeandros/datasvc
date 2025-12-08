@@ -242,17 +242,17 @@ public sealed class LikesController : ControllerBase
                 // Insert a single canonical row (store h1)
                 await conn.ExecuteAsync(@"
                     INSERT INTO matches (href_hash, href, title, match_utc)
-                    VALUES (@h1Hash, @h1, title, @matchUtc)
+                    VALUES (@h1Hash, @h1, @title, @matchUtc)
                     ON DUPLICATE KEY UPDATE
-                        href = VALUES(href),
+                        href      = VALUES(href),
+                        title     = COALESCE(VALUES(title), title),
                         match_utc = COALESCE(VALUES(match_utc), match_utc);",
-                    new { h1Hash, h1, title, matchUtc }, tx);
-    
+                    new { h1Hash, h1 = href, title, matchUtc }, tx);
+            
                 matchId = await conn.ExecuteScalarAsync<ulong>(
                     "SELECT match_id FROM matches WHERE href_hash=@h1Hash LIMIT 1;",
                     new { h1Hash }, tx);
-    
-                // Ensure a totals row exists for the new match
+            
                 await conn.ExecuteAsync(
                     "INSERT IGNORE INTO match_vote_totals (match_id) VALUES (@mid);",
                     new { mid = matchId }, tx);
