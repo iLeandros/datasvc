@@ -242,7 +242,7 @@ public sealed class LikesController : ControllerBase
                 // Insert a single canonical row (store h1)
                 await conn.ExecuteAsync(@"
                     INSERT INTO matches (href_hash, href, title, match_utc)
-                    VALUES (@h1Hash, @h1, @matchUtc)
+                    VALUES (@h1Hash, @h1, title, @matchUtc)
                     ON DUPLICATE KEY UPDATE
                         href = VALUES(href),
                         match_utc = COALESCE(VALUES(match_utc), match_utc);",
