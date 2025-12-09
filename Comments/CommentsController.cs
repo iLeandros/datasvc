@@ -33,11 +33,11 @@ public sealed class CommentsController : ControllerBase
     //public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc);
     //public sealed record PostCommentRequest(string Href, string Text, DateTime? MatchUtc, ulong? ParentCommentId);
     public sealed record PostCommentRequest(
+        string Title,
         string Href,
         string Text,
         DateTime? MatchUtc,
-        ulong? ParentCommentId,
-        string? Title   // NEW
+        ulong? ParentCommentId
     );
 
     public sealed record EditCommentRequest(string Text);
@@ -151,7 +151,7 @@ public sealed class CommentsController : ControllerBase
 
     // POST /v1/comments  { href, text, matchUtc? }
     // Creates a new comment for the (href→match) and returns it.
-    [HttpPost]
+    [HttpPost("")]
     [Authorize]
     [Consumes("application/json")]
     public async Task<IActionResult> Post([FromBody] PostCommentRequest req, CancellationToken ct)
