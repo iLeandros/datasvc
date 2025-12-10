@@ -23,7 +23,7 @@ namespace DataSvc.Services
         private static readonly TimeSpan ProviderEventsKeep = TimeSpan.FromDays(60);
 
         // Comments older than current day - 3 (local midnight boundary)
-        private const int CommentsKeepDays       = 3;
+        private const int CommentsKeepDays       = 4;
 
         // Matches with no activity older than D-7 (adjust if you like)
         private const int InactiveMatchesKeepDays = 7;
