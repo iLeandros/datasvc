@@ -24,9 +24,9 @@ public sealed class CommentsController : ControllerBase
         _connString = cfg.GetConnectionString("Default");
         _log = log;
 
-        _maxPerHour = cfg.GetValue("Comments:MaxPerHour", 10);
-        _maxPerDay = cfg.GetValue("Comments:MaxPerDay", 50);
-        _maxPerMatchPerMin = cfg.GetValue("Comments:MaxPerMatchPerMin", 3);
+        _maxPerHour = cfg.GetValue("Comments:MaxPerHour", 50);
+        _maxPerDay = cfg.GetValue("Comments:MaxPerDay", 500);
+        _maxPerMatchPerMin = cfg.GetValue("Comments:MaxPerMatchPerMin", 5);
     }
 
     // ===== DTOs =====
