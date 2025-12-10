@@ -11,27 +11,21 @@ using MySqlConnector;
 
 namespace DataSvc.Services
 {
-    /// <summary>
-    /// Hourly cleanup of expired/old operational data.
-    /// - Sessions: expired/revoked
-    /// - Password resets: expired or used (with grace)
-    /// - Debug tokens: expired / too old
-    /// - Provider events: old logs
-    /// - Matches with no activity (no comments, no votes): older than retention
-    /// - Match vote totals with zeroes: old rows
-    /// </summary>
     public sealed class OldDataCleanupJob : BackgroundService
     {
         private readonly ILogger<OldDataCleanupJob> _log;
         private readonly IConfiguration _cfg;
 
-        // Retention knobs (tune freely)
+        // Retention knobs
         private static readonly TimeSpan SessionsGrace      = TimeSpan.FromDays(7);
         private static readonly TimeSpan ResetsGrace        = TimeSpan.FromDays(30);
         private static readonly TimeSpan DebugTokensGrace   = TimeSpan.FromDays(30);
         private static readonly TimeSpan ProviderEventsKeep = TimeSpan.FromDays(60);
 
-        // For matches without activity. We’ll align day-boundary to local tz and then convert to UTC.
+        // Comments older than current day - 3 (local midnight boundary)
+        private const int CommentsKeepDays       = 3;
+
+        // Matches with no activity older than D-7 (adjust if you like)
         private const int InactiveMatchesKeepDays = 7;
 
         public OldDataCleanupJob(ILogger<OldDataCleanupJob> log, IConfiguration cfg)
@@ -59,83 +53,113 @@ namespace DataSvc.Services
                     return;
                 }
 
-                // Build time cutoffs
+                // Timezone alignment (use TOP_OF_HOUR_TZ if set; else local)
                 var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
                 var tz   = !string.IsNullOrWhiteSpace(tzId) ? TimeZoneInfo.FindSystemTimeZoneById(tzId) : TimeZoneInfo.Local;
 
                 var nowUtc      = DateTimeOffset.UtcNow;
                 var nowLocal    = TimeZoneInfo.ConvertTime(nowUtc, tz);
-                var dayBoundary = nowLocal.Date; // today@00:00 local
-                var inactiveMatchesCutoffLocal = dayBoundary.AddDays(-InactiveMatchesKeepDays);
+                var todayLocal  = nowLocal.Date;
+
+                // 1) Comments: cutoff = local midnight of (today - 3), then convert to UTC
+                var commentsCutoffLocal = todayLocal.AddDays(-CommentsKeepDays);
+                var commentsCutoffUtc   = TimeZoneInfo.ConvertTimeToUtc(commentsCutoffLocal, tz);
+
+                // 2) Inactive matches: local midnight of (today - N)
+                var inactiveMatchesCutoffLocal = todayLocal.AddDays(-InactiveMatchesKeepDays);
                 var inactiveMatchesCutoffUtc   = TimeZoneInfo.ConvertTimeToUtc(inactiveMatchesCutoffLocal, tz);
 
+                // Other absolute time cutoffs (UTC)
                 var sessionsCutoff   = nowUtc.UtcDateTime - SessionsGrace;
                 var resetsCutoff     = nowUtc.UtcDateTime - ResetsGrace;
                 var tokensCutoff     = nowUtc.UtcDateTime - DebugTokensGrace;
                 var eventsCutoff     = nowUtc.UtcDateTime - ProviderEventsKeep;
-                var zeroTotalsCutoff = inactiveMatchesCutoffUtc; // reuse
+                var zeroTotalsCutoff = inactiveMatchesCutoffUtc;
 
-                int delSessions = 0, delResets = 0, delTokens = 0, delEvents = 0, delZeroTotals = 0, delMatches = 0;
+                int delCommentLikes = 0, delComments = 0,
+                    delSessions = 0, delResets = 0, delTokens = 0, delEvents = 0, delZeroTotals = 0, delMatches = 0;
 
                 await using var conn = new MySqlConnection(cs);
                 await conn.OpenAsync(ct);
 
                 using var tx = await conn.BeginTransactionAsync(ct);
 
-                // 1) Sessions: expired or revoked long ago
-                //    sessions(expires_at, revoked_at) – indexed. :contentReference[oaicite:7]{index=7}
-                delSessions = await conn.ExecuteAsync(new CommandDefinition(@"
+                // --- A) COMMENTS + LIKES older than D-3 (UTC boundary from local midnight) ---
+
+                // Delete likes for doomed comments (if you don't have ON DELETE CASCADE)
+                const string delLikesSql = @"
+DELETE FROM comment_likes
+WHERE comment_id IN (
+    SELECT comment_id FROM comments WHERE created_at < @cutoff
+);";
+                delCommentLikes = await conn.ExecuteAsync(
+                    new CommandDefinition(delLikesSql, new { cutoff = commentsCutoffUtc }, (IDbTransaction)tx, cancellationToken: ct));
+
+                // Delete old comments themselves
+                const string delCommentsSql = @"DELETE FROM comments WHERE created_at < @cutoff;";
+                delComments = await conn.ExecuteAsync(
+                    new CommandDefinition(delCommentsSql, new { cutoff = commentsCutoffUtc }, (IDbTransaction)tx, cancellationToken: ct));
+
+                // --- B) SESSIONS / TOKENS / EVENTS ---
+
+                const string delSessionsSql = @"
 DELETE FROM sessions
  WHERE (expires_at < @sessionsCutoff)
-    OR (revoked_at IS NOT NULL AND revoked_at < @sessionsCutoff);
-", new { sessionsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
+    OR (revoked_at IS NOT NULL AND revoked_at < @sessionsCutoff);";
+                delSessions = await conn.ExecuteAsync(
+                    new CommandDefinition(delSessionsSql, new { sessionsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
 
-                // 2) Password reset tokens: expired or used (with grace)  :contentReference[oaicite:8]{index=8}
-                delResets = await conn.ExecuteAsync(new CommandDefinition(@"
+                const string delResetsSql = @"
 DELETE FROM password_resets
  WHERE (expires_at < @resetsCutoff)
-    OR (used_at IS NOT NULL AND used_at < @resetsCutoff);
-", new { resetsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
+    OR (used_at IS NOT NULL AND used_at < @resetsCutoff);";
+                delResets = await conn.ExecuteAsync(
+                    new CommandDefinition(delResetsSql, new { resetsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
 
-                // 3) Debug tokens: expired or very old  :contentReference[oaicite:9]{index=9}
-                delTokens = await conn.ExecuteAsync(new CommandDefinition(@"
+                const string delDebugTokensSql = @"
 DELETE FROM debug_tokens
  WHERE (expires_at IS NOT NULL AND expires_at < @tokensCutoff)
-    OR (expires_at IS NULL     AND created_at < @tokensCutoff);
-", new { tokensCutoff }, (IDbTransaction)tx, cancellationToken: ct));
+    OR (expires_at IS NULL     AND created_at < @tokensCutoff);";
+                delTokens = await conn.ExecuteAsync(
+                    new CommandDefinition(delDebugTokensSql, new { tokensCutoff }, (IDbTransaction)tx, cancellationToken: ct));
 
-                // 4) Provider events: log-like; trim old rows  :contentReference[oaicite:10]{index=10}
-                delEvents = await conn.ExecuteAsync(new CommandDefinition(@"
+                const string delProviderEventsSql = @"
 DELETE FROM provider_events
- WHERE occurred_at < @eventsCutoff;
-", new { eventsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
+ WHERE occurred_at < @eventsCutoff;";
+                delEvents = await conn.ExecuteAsync(
+                    new CommandDefinition(delProviderEventsSql, new { eventsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
 
-                // 5) Match vote totals with all zeros and old  :contentReference[oaicite:11]{index=11}
-                delZeroTotals = await conn.ExecuteAsync(new CommandDefinition(@"
+                // --- C) MATCH TOTALS (optional tidy-up) ---
+                const string delZeroTotalsSql = @"
 DELETE FROM match_vote_totals
  WHERE upvotes = 0 AND downvotes = 0
-   AND updated_at < @zeroTotalsCutoff;
-", new { zeroTotalsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
+   AND updated_at < @zeroTotalsCutoff;";
+                delZeroTotals = await conn.ExecuteAsync(
+                    new CommandDefinition(delZeroTotalsSql, new { zeroTotalsCutoff }, (IDbTransaction)tx, cancellationToken: ct));
 
-                // 6) Inactive matches (no comments, no user votes) older than cutoff
-                //    This will also cascade-delete comments/likes/flags/totals due to FKs. 
-                delMatches = await conn.ExecuteAsync(new CommandDefinition(@"
+                // --- D) INACTIVE MATCHES (no comments, no user votes) older than D-7 ---
+                const string delMatchesSql = @"
 DELETE m FROM matches m
 LEFT JOIN comments c ON c.match_id = m.match_id
 LEFT JOIN user_match_votes v ON v.match_id = m.match_id
-WHERE m.created_at < @inactiveMatchesCutoffUtc
+WHERE m.created_at < @inactiveCutoff
   AND c.comment_id IS NULL
-  AND v.match_id IS NULL;
-", new { inactiveMatchesCutoffUtc }, (IDbTransaction)tx, cancellationToken: ct));
+  AND v.match_id IS NULL;";
+                delMatches = await conn.ExecuteAsync(
+                    new CommandDefinition(delMatchesSql, new { inactiveCutoff = inactiveMatchesCutoffUtc }, (IDbTransaction)tx, cancellationToken: ct));
 
                 await tx.CommitAsync(ct);
 
                 _log.LogInformation(
-                    "Cleanup done. sessions={Sessions}, resets={Resets}, debugTokens={Tokens}, providerEvents={Events}, zeroTotals={ZeroTotals}, inactiveMatches={Matches}. Cutoff(local D-7)={CutoffLocal}, cutoffUtc={CutoffUtc:o}",
+                    "Cleanup OK. cutoffLocal(D-3)={CommentsCutoffLocal}, cutoffUtc={CommentsCutoffUtc:o} | " +
+                    "comments={Comments} likes={Likes} | sessions={Sessions} resets={Resets} debugTokens={Tokens} events={Events} zeroTotals={ZeroTotals} inactiveMatches={Matches} (cutoff D-7 local={InactiveLocal}, utc={InactiveUtc:o})",
+                    commentsCutoffLocal.ToString("yyyy-MM-dd HH:mm"), commentsCutoffUtc,
+                    delComments, delCommentLikes,
                     delSessions, delResets, delTokens, delEvents, delZeroTotals, delMatches,
-                    inactiveMatchesCutoffLocal.ToString("yyyy-MM-dd HH:mm"), inactiveMatchesCutoffUtc);
+                    inactiveMatchesCutoffLocal.ToString("yyyy-MM-dd HH:mm"), inactiveMatchesCutoffUtc
+                );
             }
-            catch (OperationCanceledException) { }
+            catch (OperationCanceledException) { /* shutting down */ }
             catch (Exception ex)
             {
                 _log.LogError(ex, "OldDataCleanupJob failed.");
