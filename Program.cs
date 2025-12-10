@@ -115,7 +115,7 @@ builder.Services.AddHostedService<PerDateRefreshJob>();
 builder.Services.AddSingleton<ParsedTipsService>();
 //builder.Services.AddHostedService<ParsedTipsRefreshJob>();
 
-builder.Services.AddHostedService<OldCommentsCleanupJob>();
+builder.Services.AddHostedService<OldDataCleanupJob >();
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
