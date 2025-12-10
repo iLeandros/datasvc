@@ -326,6 +326,24 @@ public sealed class CommentsController : ControllerBase
         return Created($"/v1/comments/{commentId}", created);
     }
 
+    // POST /v1/comments/{id}/replies
+    [HttpPost("{id}/replies")]
+    [Authorize]
+    [Consumes("application/json")]
+    public async Task<IActionResult> Reply([FromRoute] ulong id, [FromBody] PostCommentRequest req, CancellationToken ct)
+    {
+        if (req is null) return BadRequest(new { error = "Body required" });
+        if (string.IsNullOrWhiteSpace(req.Href)) return BadRequest(new { error = "href is required" });
+        if (string.IsNullOrWhiteSpace(req.Text)) return BadRequest(new { error = "text is required" });
+        if (req.Text.Length > 1000) return BadRequest(new { error = "text length must be ≤ 1000" });
+    
+        // Force the parent id from the route (body value ignored if present)
+        req = req with { ParentCommentId = id };
+    
+        // Delegate to your existing POST /v1/comments action
+        return await Post(req, ct);
+    }
+
     // GET /v1/comments?href=...&limit=20&beforeId=12345
     // Lists newest-first comments for a given href using keyset pagination.
     [HttpGet]
