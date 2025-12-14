@@ -1458,8 +1458,9 @@ app.MapGet("/data/details/allhrefs",
 	bool preferTeamsStatisticsHtml  = string.Equals(teamsStatistics, "html", StringComparison.OrdinalIgnoreCase); // NEW
 	bool preferTeamStandingsHtml = string.Equals(teamStandings, "html", StringComparison.OrdinalIgnoreCase); // NEW
 	
-    var (items, generatedUtc) = store.Export();
-
+    //var (items, generatedUtc) = store.Export();
+	var (items, _) = store.Export();
+	
 	var byHref = items
 	    .OrderBy(i => i.Href, StringComparer.OrdinalIgnoreCase) // stable ordering
 	    .ToDictionary(
@@ -1548,7 +1549,7 @@ app.MapGet("/data/details/allhrefs",
 	{
 	    total        = byHref.Count,
 	    lastSavedUtc = store.LastSavedUtc,
-	    generatedUtc,
+	    //generatedUtc,
 	    items        = byHref
 	});
 
@@ -1635,7 +1636,7 @@ app.MapGet("/data/details/allhrefs/date/{date}",
     {
         date = d.ToString("yyyy-MM-dd"),
         total = byHref.Count,
-        generatedUtc = DateTimeOffset.UtcNow,
+        //generatedUtc = DateTimeOffset.UtcNow,
         items = byHref
     };
 
@@ -4166,7 +4167,7 @@ public sealed class DetailsRefreshService
         {
             date = date.ToString("yyyy-MM-dd"),
             total = byHref.Count,
-            generatedUtc = DateTimeOffset.UtcNow,
+            //generatedUtc = DateTimeOffset.UtcNow,
             items = byHref
         };
 
