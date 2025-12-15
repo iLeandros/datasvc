@@ -2152,7 +2152,7 @@ public sealed class ParsedTipsService
 	                continue; // no details for this match
 	
 	            //item.IsVipMatch = true;
-				//item.DetailsDto = detailDto;
+				item.DetailsDto = detailDto;
 	
 	            // Optional: pick up livescore by teams (ready for future rules)
 	            LiveTableDataItemDto? live = null;
