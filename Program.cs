@@ -2068,6 +2068,17 @@ public sealed class ParsedTipsService
 	        }).ToList() ?? new List<LiveScoreGroupResponse>()
 	    };
 	}
+	private static DetailsItemDto TrimForVm(DetailsItemDto src)
+	{
+	    return new DetailsItemDto
+	    {
+	        TeamsInfo     = src.TeamsInfo,
+	        MatchFacts    = src.MatchFacts,
+	        TeamStandings = src.TeamStandings,
+	        MatchDataBetween = src.MatchDataBetween,
+	        BarCharts = src.BarCharts
+	    };
+	}
 
     /// <summary>
     /// Apply tips for the given date:
@@ -2152,7 +2163,8 @@ public sealed class ParsedTipsService
 	                continue; // no details for this match
 	
 	            //item.IsVipMatch = true;
-				item.DetailsDto = detailDto;
+				//item.DetailsDto = detailDto;
+				item.DetailsItemDto = TrimForVm(detailDto);   // <= embed the small payload
 	
 	            // Optional: pick up livescore by teams (ready for future rules)
 	            LiveTableDataItemDto? live = null;
