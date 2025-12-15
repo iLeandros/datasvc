@@ -44,7 +44,8 @@ public class TableDataItem
     public bool TipIsVisible { get; set; } = true;
     public string BackgroundColor { get; set; } = "#D3D3D3"; // LightGray
     //public Microsoft.Maui.Graphics.Color BackgroundColor { get; set; } = Microsoft.Maui.Graphics.Colors.LightGray // Default to LightGray
-    public DetailsItemDto DetailsDto { get; set; }
+    //public DetailsItemDto DetailsDto { get; set; }
+    public DetailsItemDto DetailsItemDto { get; set; }
     
 
     public TableDataItem() { }
