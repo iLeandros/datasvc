@@ -2164,7 +2164,7 @@ public sealed class ParsedTipsService
 	
 	            //item.IsVipMatch = true;
 				//item.DetailsDto = detailDto;
-				item.DetailsDto = TrimForVm(detailDto);   // <= embed the small payload
+				item.DetailsItemDto = TrimForVm(detailDto);   // <= embed the small payload
 	
 	            // Optional: pick up livescore by teams (ready for future rules)
 	            LiveTableDataItemDto? live = null;
