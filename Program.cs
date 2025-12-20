@@ -164,7 +164,8 @@ app.Use(async (ctx, next) =>
         if (path.StartsWith("/reset") || path.StartsWith("/v1/auth/reset")
             || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
             || path.StartsWith("/account/delete")     // allow HTML confirm page
-            || path.StartsWith("/v1/auth/account"))   // allow the DELETE API
+            || path.StartsWith("/v1/auth/account")
+		    || path == "/app-ads.txt"))   // allow the DELETE API
         {
             await next();
             return;
@@ -342,6 +343,13 @@ app.MapGet("/v1/time/now", () =>
     });
 });
 
+app.MapGet("/app-ads.txt", async ctx =>
+{
+    ctx.Response.ContentType = "text/plain; charset=utf-8";
+    // cache a bit (adjust as you like)
+    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
+    await ctx.Response.WriteAsync("google.com, pub-3388518972215761, DIRECT, f08c47fec0942fa0");
+});
 
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
 {
