@@ -165,7 +165,7 @@ app.Use(async (ctx, next) =>
             || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
             || path.StartsWith("/account/delete")     // allow HTML confirm page
             || path.StartsWith("/v1/auth/account")
-		    || path == "/app-ads.txt"))   // allow the DELETE API
+		    || path.StartsWith("/app-ads.txt"))   // allow the DELETE API
         {
             await next();
             return;
