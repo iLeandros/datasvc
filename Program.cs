@@ -1987,7 +1987,41 @@ static object MapDetailsRecordToAllhrefsItem(
 }
 */
 
-
+// somewhere accessible in Program.cs
+	static byte[] Sha256(string s) => System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
+	
+	static (string primary, string? altPlus, string? altPct20) CanonicalHrefCandidates(string href)
+	{
+	    var primary = href.Trim();
+	    string? altPlus = null, altPct20 = null;
+	    if (primary.IndexOf(' ') >= 0) { altPlus = primary.Replace(' ', '+'); altPct20 = primary.Replace(" ", "%20"); }
+	    return (primary, altPlus, altPct20);
+	}
+	
+	static async Task<int> GetTopLevelCommentCountAsync(MySqlConnection conn, string href, CancellationToken ct)
+	{
+	    var (h1, h2, h3) = CanonicalHrefCandidates(href);
+	    var h1Hash = Sha256(h1);
+	    var h2Hash = h2 is null ? null : Sha256(h2);
+	    var h3Hash = h3 is null ? null : Sha256(h3);
+	
+	    const string findMatchSql = @"
+	        SELECT match_id FROM matches
+	         WHERE href_hash = @h1Hash
+	            OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
+	            OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
+	         LIMIT 1;";
+	
+	    var matchId = await conn.ExecuteScalarAsync<ulong?>(findMatchSql, new { h1Hash, h2Hash, h3Hash });
+	    if (!matchId.HasValue) return 0;
+	
+	    const string sql = @"
+	        SELECT COUNT(*) FROM comments
+	         WHERE match_id=@mid
+	           AND (is_deleted = 0 OR is_deleted IS NULL)
+	           AND parent_comment_id IS NULL;";
+	    return await conn.ExecuteScalarAsync<int>(sql, new { mid = matchId.Value });
+	}
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -3624,41 +3658,6 @@ public static class GetStartupMainTableDataGroup2024
             throw new Exception("Couldn't get GetStartupMainTableDataGroup2024", ex);
         }
     }
-	// somewhere accessible in Program.cs
-	static byte[] Sha256(string s) => System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
-	
-	static (string primary, string? altPlus, string? altPct20) CanonicalHrefCandidates(string href)
-	{
-	    var primary = href.Trim();
-	    string? altPlus = null, altPct20 = null;
-	    if (primary.IndexOf(' ') >= 0) { altPlus = primary.Replace(' ', '+'); altPct20 = primary.Replace(" ", "%20"); }
-	    return (primary, altPlus, altPct20);
-	}
-	
-	static async Task<int> GetTopLevelCommentCountAsync(MySqlConnection conn, string href, CancellationToken ct)
-	{
-	    var (h1, h2, h3) = CanonicalHrefCandidates(href);
-	    var h1Hash = Sha256(h1);
-	    var h2Hash = h2 is null ? null : Sha256(h2);
-	    var h3Hash = h3 is null ? null : Sha256(h3);
-	
-	    const string findMatchSql = @"
-	        SELECT match_id FROM matches
-	         WHERE href_hash = @h1Hash
-	            OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
-	            OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
-	         LIMIT 1;";
-	
-	    var matchId = await conn.ExecuteScalarAsync<ulong?>(findMatchSql, new { h1Hash, h2Hash, h3Hash });
-	    if (!matchId.HasValue) return 0;
-	
-	    const string sql = @"
-	        SELECT COUNT(*) FROM comments
-	         WHERE match_id=@mid
-	           AND (is_deleted = 0 OR is_deleted IS NULL)
-	           AND parent_comment_id IS NULL;";
-	    return await conn.ExecuteScalarAsync<int>(sql, new { mid = matchId.Value });
-	}
 }
 // ---------- NEW: Details models, store, files, scraper, job ----------
 // ---------- LiveScores: models, storage, files ----------
