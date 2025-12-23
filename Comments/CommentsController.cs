@@ -52,6 +52,14 @@ public sealed class CommentsController : ControllerBase
         IReadOnlyList<CommentCountByDateItemDto> Items
     );
 
+    private sealed class CountRow
+    {
+        public string Href { get; set; } = "";
+        public DateTime DateUtc { get; set; }
+        public long Total { get; set; }
+        public long TopLevel { get; set; }
+        public long Replies { get; set; }
+    }
 
     public sealed record EditCommentRequest(string Text);
 
@@ -368,7 +376,6 @@ public sealed class CommentsController : ControllerBase
         var from = ForceUtc(fromUtc);
         var to = ForceUtc(toUtc);
     
-        // If toUtc is YYYY-MM-DD 00:00:00, treat it as inclusive day and convert to exclusive next-day.
         if (to is not null && to.Value.TimeOfDay == TimeSpan.Zero)
             to = to.Value.AddDays(1);
     
@@ -389,13 +396,12 @@ public sealed class CommentsController : ControllerBase
     
         await using var conn = Open();
     
-        // Read as an intermediate with Href, then project away Href per-item.
-        var rows = (await conn.QueryAsync(sql, new { from, to }))
+        var rows = (await conn.QueryAsync<CountRow>(sql, new { from, to }))
             .Select(r => new
             {
-                Href = (string)r.Href,
+                r.Href,
                 Item = new CommentCountByDateItemDto(
-                    (DateTime)r.DateUtc,
+                    r.DateUtc,
                     (int)r.Total,
                     (int)r.TopLevel,
                     (int)r.Replies
@@ -411,12 +417,7 @@ public sealed class CommentsController : ControllerBase
             ))
             .ToList();
     
-        return Ok(new
-        {
-            fromUtc = from,
-            toUtc = to,
-            items = grouped
-        });
+        return Ok(new { fromUtc = from, toUtc = to, items = grouped });
     }
 
     // GET /v1/comments/count?href=...&topLevelOnly=true
