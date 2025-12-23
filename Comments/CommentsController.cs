@@ -69,6 +69,14 @@ public sealed class CommentsController : ControllerBase
         public ulong? ParentCommentId { get; set; }
     }
 
+    public sealed class CommentCountDto
+    {
+        public ulong? matchId { get; set; }
+        public int total { get; set; }
+        public int topLevel { get; set; }
+        public int replies { get; set; }
+    }
+
     // ===== Helpers (mirrors LikesController) =====
     [NonAction]
     private ulong? TryGetUserId()
