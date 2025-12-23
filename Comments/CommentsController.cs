@@ -344,6 +344,53 @@ public sealed class CommentsController : ControllerBase
         return await Post(req, ct);
     }
 
+    // GET /v1/comments/count?href=...&topLevelOnly=true
+    [HttpGet("count")]
+    [Produces("application/json")]
+    public async Task<IActionResult> Count([FromQuery] string href, [FromQuery] bool topLevelOnly = true, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(href))
+            return BadRequest(new { error = "href is required" });
+    
+        var (h1, h2, h3) = CanonicalHrefCandidates(href.Trim());
+        var h1Hash = Sha256(h1);
+        var h2Hash = h2 is null ? null : Sha256(h2);
+        var h3Hash = h3 is null ? null : Sha256(h3);
+    
+        const string findMatchSql = @"
+            SELECT match_id FROM matches
+             WHERE href_hash = @h1Hash
+                OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
+                OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
+             LIMIT 1;";
+    
+        await using var conn = Open();
+        var matchId = await conn.ExecuteScalarAsync<ulong?>(findMatchSql, new { h1Hash, h2Hash, h3Hash });
+        if (!matchId.HasValue) return Ok(new { matchId = (ulong?)null, total = 0, topLevel = 0, replies = 0 });
+    
+        // Visible-only (exclude soft-deleted)
+        var whereVisible = "match_id=@mid AND (is_deleted = 0 OR is_deleted IS NULL)";
+        var topLevel = await conn.ExecuteScalarAsync<int>($@"
+            SELECT COUNT(*) FROM comments WHERE {whereVisible} AND parent_comment_id IS NULL;",
+            new { mid = matchId.Value });
+    
+        if (topLevelOnly)
+            return Ok(new { matchId = matchId.Value, total = topLevel, topLevel, replies = 0 });
+    
+        var total = await conn.ExecuteScalarAsync<int>($@"
+            SELECT COUNT(*) FROM comments WHERE {whereVisible};",
+            new { mid = matchId.Value });
+    
+        return Ok(new
+        {
+            matchId = matchId.Value,
+            total,
+            topLevel,
+            replies = total - topLevel
+        });
+    }
+
+    
     // GET /v1/comments?href=...&limit=20&beforeId=12345
     // Lists newest-first comments for a given href using keyset pagination.
     [HttpGet]
