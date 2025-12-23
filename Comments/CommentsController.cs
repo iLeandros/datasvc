@@ -381,7 +381,7 @@ public sealed class CommentsController : ControllerBase
         const string sql = @"
             SELECT
                 m.href AS Href,
-                CAST(DATE(c.created_at) AS DATETIME) AS DateUtc,
+                DATE(c.created_at) AS DateUtc,  -- Fixed: no CAST needed
                 COUNT(*) AS Total,
                 SUM(CASE WHEN c.parent_comment_id IS NULL THEN 1 ELSE 0 END) AS TopLevel,
                 SUM(CASE WHEN c.parent_comment_id IS NOT NULL THEN 1 ELSE 0 END) AS Replies
@@ -394,10 +394,7 @@ public sealed class CommentsController : ControllerBase
             ORDER BY m.href, DATE(c.created_at);";
     
         await using var conn = Open();
-        // ────────────────────────────────────────
-        // ADD THIS LINE:
-        await conn.OpenAsync(ct);
-        // ────────────────────────────────────────
+        await conn.OpenAsync(ct);  // Already added this earlier
     
         var rows = (await conn.QueryAsync<CountRow>(sql, new { from, to }))
             .Select(r => new
