@@ -365,7 +365,6 @@ public sealed class CommentsController : ControllerBase
         return await Post(req, ct);
     }
 
-    // GET /v1/comments/count-by-date?fromUtc=2025-12-01&toUtc=2025-12-31
     [HttpGet("count-by-date")]
     [Produces("application/json")]
     public async Task<IActionResult> CountByDateAllMatches(
@@ -376,7 +375,6 @@ public sealed class CommentsController : ControllerBase
         var from = ForceUtc(fromUtc);
         var to = ForceUtc(toUtc);
     
-        // Treat YYYY-MM-DD as inclusive day by making 'to' exclusive next-day
         if (to is not null && to.Value.TimeOfDay == TimeSpan.Zero)
             to = to.Value.AddDays(1);
     
@@ -396,6 +394,10 @@ public sealed class CommentsController : ControllerBase
             ORDER BY m.href, DATE(c.created_at);";
     
         await using var conn = Open();
+        // ────────────────────────────────────────
+        // ADD THIS LINE:
+        await conn.OpenAsync(ct);
+        // ────────────────────────────────────────
     
         var rows = (await conn.QueryAsync<CountRow>(sql, new { from, to }))
             .Select(r => new
