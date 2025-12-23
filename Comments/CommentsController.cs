@@ -40,6 +40,19 @@ public sealed class CommentsController : ControllerBase
         ulong? ParentCommentId
     );
 
+    public sealed record CommentCountByDateItemDto(
+        DateTime DateUtc,
+        int Total,
+        int TopLevel,
+        int Replies
+    );
+    
+    public sealed record CommentCountByDateGroupDto(
+        string Href,
+        IReadOnlyList<CommentCountByDateItemDto> Items
+    );
+
+
     public sealed record EditCommentRequest(string Text);
 
     public sealed class CommentDto
