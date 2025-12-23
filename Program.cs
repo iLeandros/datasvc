@@ -3558,7 +3558,8 @@ public static class GetStartupMainTableDataGroup2024
 							// compute server-side using the chosen UTC moment
 	                        var computed    = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
 	                        var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
-							
+
+							var comments = 5;
 							
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
@@ -3579,6 +3580,7 @@ public static class GetStartupMainTableDataGroup2024
                                     likenegative,
 									computed,
 									computedFmt,
+									comments,
                                     likesandvotes[0].InnerText,
                                     likesandvotes[1].InnerText,
                                     likesandvotes[2].InnerText,
