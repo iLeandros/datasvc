@@ -367,48 +367,54 @@ public sealed class CommentsController : ControllerBase
 
     // GET /v1/comments/count-by-date?fromUtc=2025-12-01&toUtc=2025-12-31
     [HttpGet("count-by-date")]
+    [Produces("application/json")]
     public async Task<IActionResult> CountByDateAllMatches(
         [FromQuery] DateTime? fromUtc = null,
         [FromQuery] DateTime? toUtc = null,
         CancellationToken ct = default)
     {
-        var from = fromUtc?.ToUniversalTime();
-        var to = toUtc?.ToUniversalTime();
+        var from = ForceUtc(fromUtc);
+        var to = ForceUtc(toUtc);
     
-        // Make end-of-day inclusive when a date is passed at 00:00:00
+        // Treat YYYY-MM-DD as inclusive day by making 'to' exclusive next-day
         if (to is not null && to.Value.TimeOfDay == TimeSpan.Zero)
             to = to.Value.AddDays(1);
     
         const string sql = @"
             SELECT
-                -- rename c.href to your actual column (e.g., c.match_title) if that's what you store
-                c.href AS Href,
+                m.href AS Href,
                 CAST(DATE(c.created_at) AS DATETIME) AS DateUtc,
                 COUNT(*) AS Total,
                 SUM(CASE WHEN c.parent_comment_id IS NULL THEN 1 ELSE 0 END) AS TopLevel,
                 SUM(CASE WHEN c.parent_comment_id IS NOT NULL THEN 1 ELSE 0 END) AS Replies
             FROM comments c
+            INNER JOIN matches m ON m.match_id = c.match_id
             WHERE (c.is_deleted = 0 OR c.is_deleted IS NULL)
-              AND (@fromUtc IS NULL OR c.created_at >= @fromUtc)
-              AND (@toUtc   IS NULL OR c.created_at <  @toUtc)
-            GROUP BY Href, DATE(c.created_at)
-            ORDER BY Href, DATE(c.created_at);";
+              AND (@from IS NULL OR c.created_at >= @from)
+              AND (@to   IS NULL OR c.created_at <  @to)
+            GROUP BY m.href, DATE(c.created_at)
+            ORDER BY m.href, DATE(c.created_at);";
     
         await using var conn = Open();
     
-        // IMPORTANT: names here match the SQL placeholders exactly
-        var rows = await conn.QueryAsync<CountRow>(sql, new { fromUtc = from, toUtc = to });
+        var rows = (await conn.QueryAsync<CountRow>(sql, new { from, to }))
+            .Select(r => new
+            {
+                r.Href,
+                Item = new CommentCountByDateItemDto(
+                    r.DateUtc,
+                    (int)r.Total,
+                    (int)r.TopLevel,
+                    (int)r.Replies
+                )
+            })
+            .ToList();
     
         var grouped = rows
-            .GroupBy(r => r.Href, StringComparer.Ordinal)
+            .GroupBy(x => x.Href, StringComparer.Ordinal)
             .Select(g => new CommentCountByDateGroupDto(
                 g.Key,
-                g.Select(r => new CommentCountByDateItemDto(
-                    r.DateUtc,
-                    checked((int)r.Total),
-                    checked((int)r.TopLevel),
-                    checked((int)r.Replies)
-                )).ToList()
+                g.Select(x => x.Item).ToList()
             ))
             .ToList();
     
