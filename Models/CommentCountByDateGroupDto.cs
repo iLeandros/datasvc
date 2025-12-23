@@ -1,5 +1,5 @@
 namespace DataSvc.Models;
 public sealed record CommentCountByDateGroupDto(
-    string Href,
-    IReadOnlyList<CommentCountByDateRowDto> Items
+    public string? Href { get; set; }
+    public IReadOnlyList<CommentCountDto> Items { get; set; }
 );
