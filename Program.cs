@@ -1987,41 +1987,7 @@ static object MapDetailsRecordToAllhrefsItem(
 }
 */
 
-// somewhere accessible in Program.cs
-	static byte[] Sha256(string s) => System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(s ?? string.Empty));
-	
-	static (string primary, string? altPlus, string? altPct20) CanonicalHrefCandidates(string href)
-	{
-	    var primary = href.Trim();
-	    string? altPlus = null, altPct20 = null;
-	    if (primary.IndexOf(' ') >= 0) { altPlus = primary.Replace(' ', '+'); altPct20 = primary.Replace(" ", "%20"); }
-	    return (primary, altPlus, altPct20);
-	}
-	
-	static async Task<int> GetTopLevelCommentCountAsync(MySqlConnection conn, string href, CancellationToken ct)
-	{
-	    var (h1, h2, h3) = CanonicalHrefCandidates(href);
-	    var h1Hash = Sha256(h1);
-	    var h2Hash = h2 is null ? null : Sha256(h2);
-	    var h3Hash = h3 is null ? null : Sha256(h3);
-	
-	    const string findMatchSql = @"
-	        SELECT match_id FROM matches
-	         WHERE href_hash = @h1Hash
-	            OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
-	            OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
-	         LIMIT 1;";
-	
-	    var matchId = await conn.ExecuteScalarAsync<ulong?>(findMatchSql, new { h1Hash, h2Hash, h3Hash });
-	    if (!matchId.HasValue) return 0;
-	
-	    const string sql = @"
-	        SELECT COUNT(*) FROM comments
-	         WHERE match_id=@mid
-	           AND (is_deleted = 0 OR is_deleted IS NULL)
-	           AND parent_comment_id IS NULL;";
-	    return await conn.ExecuteScalarAsync<int>(sql, new { mid = matchId.Value });
-	}
+
 static void SaveGzipCopy(string jsonPath)
 {
     var gzPath = jsonPath + ".gz";
@@ -3201,6 +3167,8 @@ public sealed class ScraperService
 	    {
 	        await conn.OpenAsync(ct);
 	        await VoteMixing.ApplyUserVotesAsync(table, whenUtc, nowUtc, conn, ct);
+			// NEW: fill comment counts now that we have `table` and an open DB connection
+			await CommentCountFiller.FillTopLevelCommentCountsAsync(table, conn, ct);
 	    }
 	
 	    var payload = new DataPayload(html, titles, table);
@@ -3470,6 +3438,76 @@ public static class GetStartupMainTitlesAndHrefs2024
         }
     }
 }
+public static class CommentCountFiller
+{
+    // Fills top-level (non-reply) comment counts per match/href into your table items.
+    // Uses your "matches" table via href_hash → match_id, then counts only visible top-level comments.
+    public static async Task FillTopLevelCommentCountsAsync(
+        ObservableCollection<TableDataGroup> groups,
+        MySqlConnection conn,
+        CancellationToken ct = default)
+    {
+        // 1) collect distinct hrefs from all items
+        var hrefs = groups
+            .SelectMany(g => g.Items ?? Enumerable.Empty<TableDataItem>())
+            .Select(i => i.Href)
+            .Where(h => !string.IsNullOrWhiteSpace(h))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (hrefs.Count == 0) return;
+
+        // 2) map href -> match_id (try the 3 variants like in CommentsController)
+        var map = new Dictionary<string, ulong>(StringComparer.OrdinalIgnoreCase);
+        foreach (var href in hrefs)
+        {
+            var (h1, h2, h3) = CanonicalHrefCandidates(href);
+            var h1Hash = Sha256(h1);
+            var h2Hash = h2 is null ? null : Sha256(h2);
+            var h3Hash = h3 is null ? null : Sha256(h3);
+
+            var mid = await conn.ExecuteScalarAsync<ulong?>(@"
+                SELECT match_id FROM matches
+                 WHERE href_hash = @h1Hash
+                    OR (@h2Hash IS NOT NULL AND href_hash = @h2Hash)
+                    OR (@h3Hash IS NOT NULL AND href_hash = @h3Hash)
+                 LIMIT 1;", new { h1Hash, h2Hash, h3Hash });
+
+            if (mid.HasValue) map[href] = mid.Value;
+        }
+
+        if (map.Count == 0) return;
+
+        // 3) fetch counts per match_id; visible-only and top-level only (parent_comment_id IS NULL)
+        foreach (var kv in map)
+        {
+            var topLevel = await conn.ExecuteScalarAsync<int>(@"
+                SELECT COUNT(*) FROM comments
+                 WHERE match_id=@mid
+                   AND (is_deleted = 0 OR is_deleted IS NULL)
+                   AND parent_comment_id IS NULL;", new { mid = kv.Value });
+
+            // 4) apply to all items with this href
+            foreach (var item in groups.SelectMany(g => g.Items).Where(i => string.Equals(i.Href, kv.Key, StringComparison.OrdinalIgnoreCase)))
+                item.Comments = topLevel; // your TableDataItem is mutated elsewhere too, so this matches your pattern
+        }
+
+        // --- local helpers copied to keep this file self-contained ---
+        static (string primary, string? altPlus, string? altPct20) CanonicalHrefCandidates(string href)
+        {
+            var primary = href.Trim();
+            string? altPlus = null, altPct20 = null;
+            if (primary.IndexOf(' ') >= 0)
+            {
+                altPlus  = primary.Replace(' ', '+');
+                altPct20 = primary.Replace(" ", "%20");
+            }
+            return (primary, altPlus, altPct20);
+        }
+
+        static byte[] Sha256(string s) => System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(s ?? string.Empty));
+    }
+}
 
 public static class GetStartupMainTableDataGroup2024
 {
@@ -3593,9 +3631,8 @@ public static class GetStartupMainTableDataGroup2024
 	                        var computed    = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
 	                        var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
-							// before: var comments = 5;
-							var comments = await GetTopLevelCommentCountAsync(conn, hrefs, ct); // 'hrefs' is the match URL you already have
-							
+							var comments = 0;
+
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
                                 items.Add(new TableDataItem(
