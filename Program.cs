@@ -3631,7 +3631,7 @@ public static class GetStartupMainTableDataGroup2024
 	                        var computed    = LikesCalculator.ComputeWithDateRules(likesRaw, hostName, guestName, whenUtc, DateTime.UtcNow);
 	                        var computedFmt = LikesCalculator.ToCompact(computed, CultureInfo.InvariantCulture);
 
-							var comments = 0;
+							var comments = null;
 
                             if (likesandvotes != null && likesandvotes.Count >= 11)
                             {
