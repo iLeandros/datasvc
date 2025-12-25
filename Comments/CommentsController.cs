@@ -380,18 +380,18 @@ public sealed class CommentsController : ControllerBase
     
         const string sql = @"
             SELECT
-                m.href AS Href,
-                DATE(c.created_at) AS DateUtc,  -- Fixed: no CAST needed
+                COALESCE(m.href, CONCAT('match:', c.match_id)) AS Href,
+                DATE(c.created_at) AS DateUtc,
                 COUNT(*) AS Total,
                 SUM(CASE WHEN c.parent_comment_id IS NULL THEN 1 ELSE 0 END) AS TopLevel,
                 SUM(CASE WHEN c.parent_comment_id IS NOT NULL THEN 1 ELSE 0 END) AS Replies
             FROM comments c
-            INNER JOIN matches m ON m.match_id = c.match_id
+            LEFT JOIN matches m ON m.match_id = c.match_id
             WHERE (c.is_deleted = 0 OR c.is_deleted IS NULL)
               AND (@from IS NULL OR c.created_at >= @from)
               AND (@to   IS NULL OR c.created_at <  @to)
-            GROUP BY m.href, DATE(c.created_at)
-            ORDER BY m.href, DATE(c.created_at);";
+            GROUP BY COALESCE(m.href, CONCAT('match:', c.match_id)), DATE(c.created_at)
+            ORDER BY Href, DateUtc;";
     
         await using var conn = Open();
         await conn.OpenAsync(ct);  // Already added this earlier
