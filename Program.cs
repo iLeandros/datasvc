@@ -165,6 +165,7 @@ app.Use(async (ctx, next) =>
             || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
             || path.StartsWith("/account/delete")     // allow HTML confirm page
             || path.StartsWith("/v1/auth/account")
+			|| path.StartsWith("/app-version.txt")
 		    || path.StartsWith("/app-ads.txt"))   // allow the DELETE API
         {
             await next();
@@ -349,6 +350,14 @@ app.MapGet("/app-ads.txt", async ctx =>
     // cache a bit (adjust as you like)
     ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
     await ctx.Response.WriteAsync("google.com, pub-3388518972215761, DIRECT, f08c47fec0942fa0");
+});
+
+app.MapGet("/app-version.txt", async ctx =>
+{
+    ctx.Response.ContentType = "text/plain; charset=utf-8";
+    // cache a bit (adjust as you like)
+    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
+    await ctx.Response.WriteAsync("AI Scores Predictor, v1.0.2, code 28, date 27/12/2025");
 });
 
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
