@@ -354,10 +354,36 @@ app.MapGet("/app-ads.txt", async ctx =>
 
 app.MapGet("/app-version.txt", async ctx =>
 {
+    // Allow override via env var APP_VERSION_FILE, otherwise use default path
+    var path = Environment.GetEnvironmentVariable("APP_VERSION_FILE")
+               ?? "/var/lib/datasvc/app-version.txt";
+
     ctx.Response.ContentType = "text/plain; charset=utf-8";
-    // cache a bit (adjust as you like)
-    ctx.Response.Headers["Cache-Control"] = "public, max-age=3600";
-    await ctx.Response.WriteAsync("AI Scores Predictor, v1.0.2, code 28, date 27/12/2025");
+    // avoid stale clients; you can change this to max-age=60 if you like
+    ctx.Response.Headers["Cache-Control"] = "no-store";
+
+    if (!System.IO.File.Exists(path))
+    {
+        // Fallback when file isn't there yet
+        await ctx.Response.WriteAsync("AI Scores Predictor, v?.?.?, code ?, date ?");
+        return;
+    }
+
+    var fi = new FileInfo(path);
+
+    // Support If-Modified-Since (cheap caching)
+    if (ctx.Request.Headers.TryGetValue("If-Modified-Since", out var ims) &&
+        DateTimeOffset.TryParse(ims.ToString(), out var since) &&
+        fi.LastWriteTimeUtc <= since.UtcDateTime.AddSeconds(1))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status304NotModified;
+        return;
+    }
+
+    ctx.Response.Headers["Last-Modified"] = fi.LastWriteTimeUtc.ToString("R");
+
+    // Stream file without loading into memory
+    await ctx.Response.SendFileAsync(path);
 });
 
 app.MapPost("/__likes_probe", (HttpContext ctx) =>
