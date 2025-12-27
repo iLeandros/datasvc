@@ -32,6 +32,7 @@ using DataSvc.MainHelpers; // MainHelpers
 using DataSvc.Likes; // MainHelpers
 using DataSvc.Services; // Services
 using DataSvc.Analyzer;
+using DataSvc.ClubElo;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -116,6 +117,11 @@ builder.Services.AddSingleton<ParsedTipsService>();
 //builder.Services.AddHostedService<ParsedTipsRefreshJob>();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
+
+// ClubElo DI
+builder.Services.AddSingleton<ClubEloStore>();
+builder.Services.AddSingleton<ClubEloScraperService>();
+builder.Services.AddHostedService<ClubEloRefreshJob>();
 
 // Program.cs (server)
 builder.Services.ConfigureHttpJsonOptions(o =>
@@ -321,6 +327,53 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 */
+
+// GET /data/clubelo/current?limit=50
+app.MapGet("/data/clubelo/current", ([FromServices] ClubEloStore store, [FromQuery] int? limit) =>
+{
+    var ranks = store.GetCurrentRanks();
+    if (ranks is null) return Results.NotFound(new { error = "clubelo current not ready" });
+
+    var take = (limit is > 0) ? limit.Value : ranks.Count;
+    return Results.Json(new
+    {
+        UpdatedUtc = store.LastRanksFetchUtc,
+        Count = Math.Min(take, ranks.Count),
+        Items = ranks.Take(take)
+    });
+});
+
+// GET /data/clubelo/fixtures?date=yyyy-MM-dd   (default: today, window today±3)
+app.MapGet("/data/clubelo/fixtures", ([FromServices] ClubEloStore store, [FromQuery] string? date) =>
+{
+    var center = ScraperConfig.TodayLocal(); // you already use this elsewhere
+    var min = center.AddDays(-3);
+    var max = center.AddDays(+3);
+
+    DateOnly d;
+    if (string.IsNullOrWhiteSpace(date))
+        d = center;
+    else if (!DateOnly.TryParseExact(date, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out d))
+        return Results.BadRequest(new { error = "date must be yyyy-MM-dd" });
+
+    if (d < min || d > max)
+        return Results.BadRequest(new { error = "date outside allowed window", window = new { from = min.ToString("yyyy-MM-dd"), to = max.ToString("yyyy-MM-dd") } });
+
+    var key = d.ToString("yyyy-MM-dd");
+    var items = store.GetFixturesForDate(key);
+
+    if (items is null) return Results.NotFound(new { error = "clubelo fixtures not ready" });
+
+    return Results.Json(new
+    {
+        UpdatedUtc = store.LastFixturesFetchUtc,
+        Date = key,
+        Window = new { from = min.ToString("yyyy-MM-dd"), to = max.ToString("yyyy-MM-dd") },
+        Count = items.Count,
+        Items = items
+    });
+});
+
 // GET /v1/time/now  — returns server UTC & server-local time
 app.MapGet("/v1/time/now", () =>
 {
