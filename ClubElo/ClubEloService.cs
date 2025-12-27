@@ -355,7 +355,7 @@ public sealed class ClubEloRefreshJob : BackgroundService
             }
 
             // 2) Refresh fixtures if stale (> 12h)
-            var fixturesStale = _store.LastFixturesFetchUtc is null || (nowUtc - _store.LastFixturesFetchUtc.Value) > TimeSpan.FromHours(12);
+            var fixturesStale = _store.LastFixturesFetchUtc is null || (nowUtc - _store.LastFixturesFetchUtc.Value) > TimeSpan.FromHours(1);
             if (fixturesStale)
             {
                 var all = await _svc.FetchFixturesAsync(ct);
