@@ -255,7 +255,15 @@ public sealed class ClubEloScraperService
     {
         Timeout = TimeSpan.FromMinutes(3) // ClubElo can be slow/variable
     };
-
+    
+    public async Task<List<ClubEloFixture>> FetchFixturesByDateAsync(DateOnly date, CancellationToken ct)
+    {
+        var iso = date.ToString("yyyy-MM-dd");
+        var url = $"http://api.clubelo.com/{iso}/Fixtures";
+        var csv = await GetStringWithRetriesAsync(url, ct);
+        return ClubEloCsv.ParseFixtures(csv);
+    }
+    
     public async Task<List<ClubEloRank>> FetchCurrentRanksAsync(CancellationToken ct)
     {
         // Use your existing local-day logic (today in server TZ),
@@ -358,6 +366,7 @@ public sealed class ClubEloRefreshJob : BackgroundService
             var fixturesStale = _store.LastFixturesFetchUtc is null || (nowUtc - _store.LastFixturesFetchUtc.Value) > TimeSpan.FromHours(1);
             if (fixturesStale)
             {
+                /*
                 var all = await _svc.FetchFixturesAsync(ct);
 
                 var center = ScraperConfig.TodayLocal();
@@ -370,6 +379,29 @@ public sealed class ClubEloRefreshJob : BackgroundService
                     .GroupBy(f => f.Date, StringComparer.OrdinalIgnoreCase)
                     .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
 
+                _store.SetFixturesWindow(byDate, nowUtc);
+                */
+                var center = ScraperConfig.TodayLocal();
+                var windowDates = ScraperConfig.DateWindow(center, back: 3, ahead: 3).ToList();
+                
+                var byDate = new Dictionary<string, List<ClubEloFixture>>(StringComparer.OrdinalIgnoreCase);
+                
+                foreach (var d in windowDates)
+                {
+                    ct.ThrowIfCancellationRequested();
+                
+                    var iso = d.ToString("yyyy-MM-dd");
+                
+                    // New dated CSV endpoint: http://api.clubelo.com/YYYY-MM-DD/Fixtures
+                    var items = await _svc.FetchFixturesByDateAsync(d, ct);
+                
+                    // Ensure the Date field is correct (defensive; API already includes it)
+                    for (int i = 0; i < items.Count; i++)
+                        items[i] = items[i] with { Date = iso };
+                
+                    byDate[iso] = items;
+                }
+                
                 _store.SetFixturesWindow(byDate, nowUtc);
             }
 
@@ -453,7 +485,7 @@ public static class ClubEloCsv
 
         var gdIdx = header
             .Select((h, i) => (h, i))
-            .Where(x => x.h.StartsWith("GD:", StringComparison.OrdinalIgnoreCase))
+            .Where(x => x.h.StartsWith("GD", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
         var rIdx = header
