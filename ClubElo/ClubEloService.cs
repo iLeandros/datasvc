@@ -1,6 +1,19 @@
-using System.Net;
-using System.Text;
+using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Globalization;              // CultureInfo, NumberStyles, DateTimeStyles
+using System.IO;                        // File, Directory, FileInfo, StringReader
+using System.IO.Compression;            // GZipStream
+using System.Linq;                      // LINQ used in parsing/grouping
+using System.Net;                       // DecompressionMethods
+using System.Net.Http;                  // HttpClient, HttpRequestMessage
+using System.Text;                      // StringBuilder
+using System.Text.Json;                 // JsonDocument, JsonSerializer, JsonValueKind
+using System.Text.Json.Serialization;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.Extensions.Hosting;     // BackgroundService, PeriodicTimer
+using DataSvc.MainHelpers;              // ScraperConfig (you already use this in Program.cs)
 
 namespace DataSvc.ClubElo;
 
