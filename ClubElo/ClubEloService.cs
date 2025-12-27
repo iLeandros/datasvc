@@ -2,6 +2,8 @@ using System.Net;
 using System.Text;
 using System.Collections.Concurrent;
 
+namespace DataSvc.ClubElo;
+
 // -------------------- Models --------------------
 
 public record ClubEloRank(
