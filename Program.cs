@@ -327,6 +327,15 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 */
+app.MapGet("/data/clubelo/status", ([FromServices] ClubEloStore store) =>
+{
+    return Results.Json(new {
+        ranksUpdatedUtc = store.LastRanksFetchUtc,
+        fixturesUpdatedUtc = store.LastFixturesFetchUtc,
+        ranksError = store.LastRanksError,
+        fixturesError = store.LastFixturesError
+    });
+});
 
 // GET /data/clubelo/current?limit=50
 app.MapGet("/data/clubelo/current", ([FromServices] ClubEloStore store, [FromQuery] int? limit) =>
