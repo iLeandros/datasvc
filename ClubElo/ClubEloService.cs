@@ -258,7 +258,12 @@ public sealed class ClubEloScraperService
 
     public async Task<List<ClubEloRank>> FetchCurrentRanksAsync(CancellationToken ct)
     {
-        var csv = await GetStringWithRetriesAsync("http://api.clubelo.com/", ct);
+        // Use your existing local-day logic (today in server TZ),
+        // since your service already thinks in DateOnly windows.
+        var today = DataSvc.MainHelpers.ScraperConfig.TodayLocal();
+        var url = $"http://api.clubelo.com/{today:yyyy-MM-dd}";
+    
+        var csv = await GetStringWithRetriesAsync(url, ct);
         return ClubEloCsv.ParseRanks(csv);
     }
 
@@ -277,9 +282,13 @@ public sealed class ClubEloScraperService
             try
             {
                 using var req = new HttpRequestMessage(HttpMethod.Get, url);
-                req.Headers.TryAddWithoutValidation("User-Agent", "DataSvc/1.0 (+https://scorespredict.com)");
+                req.Headers.TryAddWithoutValidation(
+                    "User-Agent",
+                    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36");
                 req.Headers.TryAddWithoutValidation("Accept", "text/csv,*/*");
+                req.Headers.TryAddWithoutValidation("Accept-Language", "en-US,en;q=0.9");
                 req.Headers.TryAddWithoutValidation("Accept-Encoding", "gzip, deflate, br");
+                req.Headers.TryAddWithoutValidation("Referer", "https://clubelo.com/");
 
                 using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct);
                 res.EnsureSuccessStatusCode();
