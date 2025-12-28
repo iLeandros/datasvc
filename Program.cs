@@ -471,9 +471,7 @@ app.MapPost("/data/refresh-window", async (
     [FromQuery] string? date,
     [FromQuery] int? daysBack,
     [FromQuery] int? daysAhead,
-	[FromQuery] int? hour,
-	[FromQuery] bool? force,
-	[FromQuery] int? staleMinutes,  
+	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
 	[FromServices] ParsedTipsService tips,        // <-- add this
@@ -491,8 +489,6 @@ app.MapPost("/data/refresh-window", async (
         center: center,
         back:   back,
         ahead:  ahead,
-		force:  force ?? false,
-		staleAfter: staleMinutes is int m ? TimeSpan.FromMinutes(m) : null,
         ct:     ct);
 
     BulkRefresh.CleanupRetention(perDateStore, center, back, ahead);
@@ -512,9 +508,7 @@ app.MapGet("/data/refresh-window", async (
     [FromQuery] string? date,
     [FromQuery] int? daysBack,
     [FromQuery] int? daysAhead,
-	[FromQuery] int? hour,
-	[FromQuery] bool? force,
-	[FromQuery] int? staleMinutes,  
+	[FromQuery] int? hour,  
     [FromServices] SnapshotPerDateStore perDateStore,
     [FromServices] IConfiguration cfg,
 	[FromServices] ParsedTipsService tips,
@@ -532,8 +526,6 @@ app.MapGet("/data/refresh-window", async (
         center: center,
         back:   back,
         ahead:  ahead,
-		force:  force ?? false,
-		staleAfter: staleMinutes is int m ? TimeSpan.FromMinutes(m) : null,
         ct:     ct);
 
     BulkRefresh.CleanupRetention(perDateStore, center, back, ahead);
@@ -3039,8 +3031,6 @@ public static class BulkRefresh
 		ParsedTipsService tips,          // <-- new
         int? hourUtc = null,
         DateOnly? center = null, int back = 3, int ahead = 3,
-        bool force = false,
-        TimeSpan? staleAfter = null,
         CancellationToken ct = default)
     {
         var c = center ?? ScraperConfig.TodayLocal();
@@ -3055,28 +3045,15 @@ public static class BulkRefresh
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Warm from disk first (cheap) so we don't re-scrape overlapping days after a restart.
-                var hasExisting = store.TryGet(d, out var existing);
-                if (!hasExisting)
-                {
-                    TryLoadFromDisk(store, d);
-                    hasExisting = store.TryGet(d, out existing);
-                }
-
-                // Key fix: don't treat the whole 7-day window as "new" every time the center day moves.
-                // Only refresh dates that are missing or stale, unless the caller forces a full refresh.
-                if (!force && hasExisting && !ShouldRefresh(date: d, center: c, existing: existing, staleAfter: staleAfter))
-                    continue;
-
                 // Use the FetchOneDateAsync overload that takes IConfiguration
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
-
-                // Enrich: apply tips ONCE here, before putting it into the store
-                if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
-                {
-                    await tips.ApplyTipsForDate(d, groups, ct);
-                }
-
+				
+				// Enrich: apply tips ONCE here, before putting it into the store
+		        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
+		        {
+		            await tips.ApplyTipsForDate(d, groups, ct);
+		        }
+				
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
@@ -3087,27 +3064,6 @@ public static class BulkRefresh
         }
 
         return (refreshed, errors);
-    }
-
-    private static bool ShouldRefresh(DateOnly date, DateOnly center, DataSnapshot existing, TimeSpan? staleAfter)
-    {
-        if (!existing.Ready || existing.Payload is null) return true;
-
-        var age = DateTimeOffset.UtcNow - existing.LastUpdatedUtc;
-        var maxAge = staleAfter ?? FreshnessFor(date, center);
-        return age >= maxAge;
-    }
-
-    private static TimeSpan FreshnessFor(DateOnly date, DateOnly center)
-    {
-        var delta = date.DayNumber - center.DayNumber;
-        var abs = Math.Abs(delta);
-
-        // Keep "today" very fresh; the rest can be less aggressive.
-        if (delta == 0) return TimeSpan.FromMinutes(4);     // today
-        if (abs == 1)   return TimeSpan.FromMinutes(30);    // yesterday / tomorrow
-        if (abs == 2)   return TimeSpan.FromHours(2);       // ±2
-        return TimeSpan.FromHours(12);                      // ±3 (usually stable)
     }
 	
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
