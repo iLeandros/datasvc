@@ -4465,7 +4465,7 @@ public sealed class DetailsScraperService
 									    DateTimeOffset LastUpdatedUtc
 									);
 
-
+	/*
     public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
 	{
 	    var current = _root.Current?.Payload?.TableDataGroup;
@@ -4539,7 +4539,68 @@ public sealed class DetailsScraperService
 		
 		await DetailsFiles.SaveAsync(_store);
 		return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
-
+	}
+	*/
+	public async Task<RefreshSummary> RefreshAllFromCurrentAsync(CancellationToken ct = default)
+	{
+	    // 0) Get today's parsed items
+	    var current = _root.Current?.Payload?.TableDataGroup;
+	    if (current is null)
+	        return new RefreshSummary(0, 0, 0, new List<string> { "No root payload yet" }, DateTimeOffset.UtcNow);
+	
+	    var hrefs = current
+	        .SelectMany(g => g.Items)
+	        .Select(i => i.Href)
+	        .Where(h => !string.IsNullOrWhiteSpace(h))
+	        .Select(DetailsStore.Normalize)
+	        .Distinct(StringComparer.OrdinalIgnoreCase)
+	        .ToList();
+	
+	    if (hrefs.Count == 0)
+	        return new RefreshSummary(0, 0, 0, new List<string> { "Parsed 0 hrefs — kept cache intact." }, DateTimeOffset.UtcNow);
+	
+	    // 1) Refresh only what's stale/missing; do NOT prune the store here
+	    int refreshed = 0, skipped = 0;
+	    var errors = new List<string>();
+	    var sem = new SemaphoreSlim(_maxParallel);
+	    var now = DateTimeOffset.UtcNow;
+	
+	    var tasks = hrefs.Select(async href =>
+	    {
+	        await sem.WaitAsync(ct);
+	        try
+	        {
+	            var existing = _store.Get(href);
+	            if (existing is not null && (now - existing.LastUpdatedUtc) < _ttl)
+	            {
+	                Interlocked.Increment(ref skipped);
+	                return;
+	            }
+	
+	            var fresh  = await FetchOneAsync(href, ct);
+	            var merged = DetailsMerge.Merge(existing, fresh);
+	            _store.Set(merged);
+	
+	            Interlocked.Increment(ref refreshed);
+	        }
+	        catch (Exception ex)
+	        {
+	            lock (errors) errors.Add($"{href}: {ex.Message}");
+	        }
+	        finally
+	        {
+	            sem.Release();
+	        }
+	    });
+	
+	    await Task.WhenAll(tasks);
+	
+	    // 2) Persist only if we actually updated anything
+	    if (refreshed > 0)
+	        await DetailsFiles.SaveAsync(_store);
+	
+	    // No pruning here; 'deleted' is always 0
+	    return new RefreshSummary(refreshed, skipped, deleted: 0, errors, DateTimeOffset.UtcNow);
 	}
 	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
