@@ -4170,7 +4170,7 @@ public sealed class DetailsRefreshService
         _scraper = scraper;
         _log = log;
     }
-
+	/*
     // NEW: refresh details for all hrefs that appear in parsed today±3
     public async Task RefreshAllFromParsedWindowAsync(int back = 3, int ahead = 3, int maxConcurrency = 8, CancellationToken ct = default)
     {
@@ -4204,6 +4204,111 @@ public sealed class DetailsRefreshService
             .ToList();
 
         _log.LogInformation("DetailsRefresh: fetching {Count} hrefs (missing/stale)", targets.Count);
+
+        var throttler = new SemaphoreSlim(maxConcurrency);
+        var tasks = targets.Select(async h =>
+        {
+            await throttler.WaitAsync(ct);
+            try
+            {
+                //var rec = await _scraper.FetchOneAsync(h, ct);   // prefer the injected instance
+				//_details.Set(rec);
+				//var rec = await DetailsScraperService.FetchOneAsync(h, ct);
+				//_details.Set(rec);
+				var existing = _details.Get(h);
+		        var fresh    = await DetailsScraperService.FetchOneAsync(h, ct);
+		        _details.Set(DetailsMerge.Merge(existing, fresh));
+
+            }
+            catch (Exception ex)
+            {
+                _log.LogWarning(ex, "Fetch failed for {Href}", h);
+            }
+            finally
+            {
+                throttler.Release();
+            }
+        });
+
+        await Task.WhenAll(tasks);
+
+        // 3) optional: materialize & save per-date aggregates after refresh
+        foreach (var d in dates)
+        {
+            await GenerateAndSavePerDateAsync(d);
+        }
+
+        // 4) enforce on-disk retention for details per-date artifacts
+        DetailsPerDateFiles.CleanupRetention(center, back, ahead);
+    }
+	*/
+	public async Task RefreshAllFromParsedWindowAsync(int back = 3, int ahead = 3, int maxConcurrency = 8, CancellationToken ct = default)
+    {
+        var center = ScraperConfig.TodayLocal();
+		var dates  = ScraperConfig.DateWindow(center, back, ahead);
+		
+		// 1) collect hrefs AND their closest offset
+		var hrefOffsets = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+		foreach (var d in dates)
+		{
+		    if (!_perDateStore.TryGet(d, out var snap) || snap.Payload?.TableDataGroup is null) continue;
+		
+		    var thisOffset = d.DayNumber - center.DayNumber; // negative=past, 0=today, positive=future
+		
+		    foreach (var href in snap.Payload.TableDataGroup.SelectMany(g => g.Items).Select(i => i.Href))
+		    {
+		        if (string.IsNullOrWhiteSpace(href)) continue;
+		        var key = DetailsStore.Normalize(href);
+		
+		        if (!hrefOffsets.TryGetValue(key, out var old))
+		        {
+		            hrefOffsets[key] = thisOffset;
+		        }
+		        else
+		        {
+		            // keep the offset closest to 0 (smallest absolute offset wins)
+		            if (Math.Abs(thisOffset) < Math.Abs(old)) hrefOffsets[key] = thisOffset;
+		        }
+		    }
+		}
+		
+		if (hrefOffsets.Count == 0)
+		{
+		    _log.LogInformation("DetailsRefresh: No hrefs found ... parsed window {Center}±({Back},{Ahead})", center, back, ahead);
+		    return;
+		}
+
+        _log.LogInformation("DetailsRefresh: {Count} distinct hrefs in parsed window", hrefOffsets.Count);
+
+        // 2) fetch any missing or stale details
+        // TTL chooser per offset
+		static TimeSpan TtlForOffset(int offset)
+		{
+		    if (offset <= 0) return TimeSpan.FromHours(24); // past & today
+		    return offset switch
+		    {
+		        1 => TimeSpan.FromHours(6),
+		        2 => TimeSpan.FromHours(3),
+		        _ => TimeSpan.FromMinutes(30), // +3 (and any beyond, if present)
+		    };
+		}
+		
+		// New version that uses the per-href TTL
+		bool NeedsFetchPerOffset(string href, DetailsRecord? rec)
+		{
+		    if (rec is null || IsIncomplete(rec)) return true;
+		    var offset = hrefOffsets.TryGetValue(href, out var o) ? o : 0; // default to today if absent
+		    var ttl    = TtlForOffset(offset);
+		    return (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > ttl;
+		}
+		
+		// 2) fetch any missing or stale details
+		var targets = hrefOffsets
+		    .Where(kvp => NeedsFetchPerOffset(kvp.Key, _details.Get(kvp.Key)))
+		    .Select(kvp => kvp.Key)
+		    .ToList();
+		
+		_log.LogInformation("DetailsRefresh: fetching {Count} hrefs (missing/stale)", targets.Count);
 
         var throttler = new SemaphoreSlim(maxConcurrency);
         var tasks = targets.Select(async h =>
