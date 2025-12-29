@@ -3024,7 +3024,7 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
 
 public static class BulkRefresh
 {
-	/*
+	
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
     	RefreshWindowAsync(
         SnapshotPerDateStore store,
@@ -3066,7 +3066,7 @@ public static class BulkRefresh
 
         return (refreshed, errors);
     }
-	*/
+	/*
 	public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
 	    RefreshWindowAsync(
 	        SnapshotPerDateStore store,
@@ -3135,7 +3135,7 @@ public static class BulkRefresh
 	
 	    return (refreshed, errors);
 	}
-
+	*/
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
     {
         var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
