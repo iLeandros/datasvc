@@ -4036,26 +4036,27 @@ public static class DetailsFiles
 	        var doc = JsonDocument.Parse(json);
 	        var items = doc.RootElement.GetProperty("items").Deserialize<List<DetailsRecord>>() ?? new();
 	
-	        // Upgrade/migrate old records to current schema
+	        var upgraded = new List<DetailsRecord>(items.Count);
+	
 	        foreach (var rec in items)
 	        {
-	            if (rec.Payload == null)
-	            {
-	                rec.Payload = new DetailsPayload(); // shouldn't happen, but safe
-	            }
+	            // Use existing values if present, fall back to empty string
+	            var payload = new DetailsPayload(
+	                TeamsInfoHtml:            rec.Payload?.TeamsInfoHtml            ?? string.Empty,
+	                MatchBetweenHtml:         rec.Payload?.MatchBetweenHtml         ?? string.Empty,
+	                TeamMatchesSeparateHtml:  rec.Payload?.TeamMatchesSeparateHtml  ?? string.Empty,
+	                TeamsBetStatisticsHtml:   rec.Payload?.TeamsBetStatisticsHtml   ?? string.Empty,
+	                FactsHtml:                rec.Payload?.FactsHtml                ?? string.Empty,
+	                LastTeamsMatchesHtml:     rec.Payload?.LastTeamsMatchesHtml     ?? string.Empty,
+	                TeamsStatisticsHtml:      rec.Payload?.TeamsStatisticsHtml      ?? string.Empty,
+	                TeamStandingsHtml:        rec.Payload?.TeamStandingsHtml        ?? string.Empty
+	            );
 	
-	            // Ensure every field checked by IsIncomplete is non-null
-	            rec.Payload.TeamsInfoHtml            ??= string.Empty;
-	            rec.Payload.MatchBetweenHtml         ??= string.Empty;
-	            rec.Payload.TeamMatchesSeparateHtml  ??= string.Empty;
-	            rec.Payload.TeamsBetStatisticsHtml   ??= string.Empty;
-	            rec.Payload.FactsHtml                ??= string.Empty;
-	            rec.Payload.LastTeamsMatchesHtml     ??= string.Empty;
-	            rec.Payload.TeamsStatisticsHtml      ??= string.Empty;
-	            rec.Payload.TeamStandingsHtml        ??= string.Empty;
+	            // Create a new record with the upgraded payload and preserve original timestamp + href
+	            upgraded.Add(rec with { Payload = payload });
 	        }
 	
-	        return items;
+	        return upgraded;
 	    }
 	    catch (Exception ex)
 	    {
