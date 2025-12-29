@@ -4013,7 +4013,7 @@ public static class DetailsFiles
         System.IO.File.Move(tmp, File, overwrite: true);
         store.MarkSaved(now);
     }
-
+	/*
     public static async Task<IReadOnlyList<DetailsRecord>> LoadAsync()
     {
         if (!System.IO.File.Exists(File)) return Array.Empty<DetailsRecord>();
@@ -4026,6 +4026,43 @@ public static class DetailsFiles
         }
         catch { return Array.Empty<DetailsRecord>(); }
     }
+	*/
+	public static async Task<IReadOnlyList<DetailsRecord>> LoadAsync()
+	{
+	    if (!System.IO.File.Exists(File)) return Array.Empty<DetailsRecord>();
+	    try
+	    {
+	        var json = await System.IO.File.ReadAllTextAsync(File);
+	        var doc = JsonDocument.Parse(json);
+	        var items = doc.RootElement.GetProperty("items").Deserialize<List<DetailsRecord>>() ?? new();
+	
+	        // Upgrade/migrate old records to current schema
+	        foreach (var rec in items)
+	        {
+	            if (rec.Payload == null)
+	            {
+	                rec.Payload = new DetailsPayload(); // shouldn't happen, but safe
+	            }
+	
+	            // Ensure every field checked by IsIncomplete is non-null
+	            rec.Payload.TeamsInfoHtml            ??= string.Empty;
+	            rec.Payload.MatchBetweenHtml         ??= string.Empty;
+	            rec.Payload.TeamMatchesSeparateHtml  ??= string.Empty;
+	            rec.Payload.TeamsBetStatisticsHtml   ??= string.Empty;
+	            rec.Payload.FactsHtml                ??= string.Empty;
+	            rec.Payload.LastTeamsMatchesHtml     ??= string.Empty;
+	            rec.Payload.TeamsStatisticsHtml      ??= string.Empty;
+	            rec.Payload.TeamStandingsHtml        ??= string.Empty;
+	        }
+	
+	        return items;
+	    }
+	    catch (Exception ex)
+	    {
+	        Console.WriteLine($"[details] Failed to load or migrate details.json: {ex.Message}");
+	        return Array.Empty<DetailsRecord>();
+	    }
+	}
 }
 
 public static class DetailsPerDateFiles
