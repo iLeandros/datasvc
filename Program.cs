@@ -4264,7 +4264,7 @@ public sealed class DetailsScraperService
 
 	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
 	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
-	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1)); // 3h default
+	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 60)); // 3h default
 
     static readonly SocketsHttpHandler _handler = new()
 	{
