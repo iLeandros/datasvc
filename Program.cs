@@ -4600,7 +4600,7 @@ public sealed class DetailsScraperService
 	        await DetailsFiles.SaveAsync(_store);
 	
 	    // No pruning here; 'deleted' is always 0
-	    return new RefreshSummary(refreshed, skipped, deleted: 0, errors, DateTimeOffset.UtcNow);
+	    return new RefreshSummary(refreshed, skipped, 0, errors, DateTimeOffset.UtcNow);
 	}
 	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
