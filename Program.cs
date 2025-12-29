@@ -4221,7 +4221,7 @@ public sealed class DetailsRefreshService
 	    || r.Payload.TeamStandingsHtml == null;
 	
 	private static bool NeedsFetch(DetailsRecord? rec)
-	    => rec is null || IsIncomplete(rec) || (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > TimeSpan.FromHours(6);
+	    => rec is null || IsIncomplete(rec) || (DateTimeOffset.UtcNow - rec.LastUpdatedUtc) > TimeSpan.FromHours(3);
 
 
     // Reuse the same mapping the endpoint does, but as a helper so we can write files post-refresh
