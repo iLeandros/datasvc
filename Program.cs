@@ -3024,6 +3024,7 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
 
 public static class BulkRefresh
 {
+	/*
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
     	RefreshWindowAsync(
         SnapshotPerDateStore store,
@@ -3065,7 +3066,76 @@ public static class BulkRefresh
 
         return (refreshed, errors);
     }
+	*/
+	public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
+	    RefreshWindowAsync(
+	        SnapshotPerDateStore store,
+	        IConfiguration cfg,
+	        ParsedTipsService tips,
+	        int? hourUtc = null,
+	        DateOnly? center = null, int back = 3, int ahead = 3,
+	        CancellationToken ct = default)
+	{
+	    var c = center ?? ScraperConfig.TodayLocal();
+	    var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
 	
+	    var refreshed = new List<string>(dates.Length);
+	    var errors = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+	
+	    bool HasUsableSnapshot(DateOnly d)
+	        => store.TryGet(d, out var snap)
+	           && snap?.Payload?.TableDataGroup is { Count: > 0 };
+	
+	    bool IsFresh(DateOnly d, DataSnapshot snap)
+	    {
+	        // Past days: if we already have a payload, consider it good enough.
+	        if (d < c) return true;
+	
+	        // Today / future: refresh if older than ~30 minutes.
+	        var age = DateTimeOffset.UtcNow - snap!.LastUpdatedUtc;
+	        return age <= TimeSpan.FromMinutes(30);
+	    }
+	
+	    foreach (var d in dates)
+	    {
+	        try
+	        {
+	            ct.ThrowIfCancellationRequested();
+	
+	            // 1) If we already have a usable & fresh snapshot, keep it.
+	            if (store.TryGet(d, out var existing) && existing?.Payload?.TableDataGroup is { Count: > 0 } && IsFresh(d, existing))
+	            {
+	                // nothing to do for this date
+	                continue;
+	            }
+	
+	            // 2) Try to hydrate from disk instead of refetching
+	            if (!HasUsableSnapshot(d) && TryLoadFromDisk(store, d))
+	            {
+	                // If disk snapshot is fresh enough (or in the past), we can keep it.
+	                if (store.TryGet(d, out var loaded) && loaded is not null && IsFresh(d, loaded))
+	                    continue;
+	            }
+	
+	            // 3) Otherwise fetch this date
+	            var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
+	
+	            // Enrich once, before storing
+	            if (snap.Payload?.TableDataGroup is { Count: > 0 } groups)
+	                await tips.ApplyTipsForDate(d, groups, ct);
+	
+	            store.Set(d, snap);
+	            refreshed.Add(d.ToString("yyyy-MM-dd"));
+	        }
+	        catch (Exception ex)
+	        {
+	            errors[d.ToString("yyyy-MM-dd")] = ex.Message;
+	        }
+	    }
+	
+	    return (refreshed, errors);
+	}
+
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
     {
         var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
