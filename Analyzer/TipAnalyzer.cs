@@ -338,6 +338,17 @@ public static class TipAnalyzer
         var px2 = Clamp01(px + p2);
         var p12 = Clamp01(p1 + p2);
         */
+        double htsElo = double.NaN, gtsElo = double.NaN;
+        double wEloGoals = 0.0;
+        
+        if (homeElo is double he && awayElo is double ae)
+        {
+            (htsElo, gtsElo) = EloToTeamScores(he, ae);
+        
+            // Make goals follow Elo strongly, but slightly less than 1X2
+            // (If you want: set equal to wElo)
+            wEloGoals = 0.75 * wElo;
+        }
         // BTTS / OTS with standings hint
         var btts = Blend(new[]
         {
@@ -366,7 +377,8 @@ public static class TipAnalyzer
             C(Avg(factsHome.ScoreChance, factsAway.ConcedeChance), w: 2),
             C(h2h.PHomeScored,                                     w: wSqrt(h2h.NH2H)),
             C(Avg(sepHome.ScoreRate,   sepAway.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
-            C(htsStand,                                            w: wStand) // NEW
+            C(htsStand,                                            w: wStand), // NEW
+            C(htsElo,                                              w: wEloGoals)
         });
 
         var gts = Blend(new[]
@@ -374,7 +386,8 @@ public static class TipAnalyzer
             C(Avg(factsAway.ScoreChance, factsHome.ConcedeChance), w: 2),
             C(h2h.PAwayScored,                                     w: wSqrt(h2h.NH2H)),
             C(Avg(sepAway.ScoreRate,   sepHome.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
-            C(gtsStand,                                            w: wStand) // NEW
+            C(gtsStand,                                            w: wStand), // NEW
+            C(gtsElo,                                              w: wEloGoals)
         });
 
         // Over/Under totals: chart + H2H + separate + facts (2.5) + facts-Poisson + standings-Poisson
@@ -526,6 +539,38 @@ public static class TipAnalyzer
         var p2 = (1.0 - pDraw) * (1.0 - pHomeNoDraw);
     
         return (p1, pDraw, p2);
+    }
+    
+    private static (double hts, double gts) EloToTeamScores(double homeElo, double awayElo)
+    {
+        const double hfa = 60.0;
+    
+        // diff in Elo points (same convention as EloTo1X2)
+        var diff = (homeElo + hfa) - awayElo;
+    
+        // Baseline xG-ish rates (tune later; these are reasonable starters)
+        const double baseLamHome = 1.45;
+        const double baseLamAway = 1.15;
+    
+        // How strongly Elo moves expected goals (tune 0.45..0.75)
+        const double k = 0.60;
+    
+        // Convert Elo diff to multiplicative goal-strength ratio
+        // +diff => home λ up, away λ down
+        var r = Math.Exp(k * diff / 400.0);
+    
+        var lamH = baseLamHome * r;
+        var lamA = baseLamAway / r;
+    
+        // P(score >= 1) = 1 - exp(-λ)
+        double pH = 1.0 - Math.Exp(-lamH);
+        double pA = 1.0 - Math.Exp(-lamA);
+    
+        // keep it sane
+        pH = Clamp01(pH);
+        pA = Clamp01(pA);
+    
+        return (pH, pA);
     }
 
     private static (double p1, double px, double p2) Normalize1X2(double p1, double px, double p2)
