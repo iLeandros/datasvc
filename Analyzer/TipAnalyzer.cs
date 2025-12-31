@@ -18,7 +18,7 @@ public static class TipAnalyzer
                         double? homeElo,
                         double? awayElo)
     {
-        var list = Analyze(d, homeName, awayName); // core calc
+        var list = Analyze(d, homeName, awayName, homeElo, awayElo); // core calc
 
         if (string.IsNullOrWhiteSpace(proposedCode)) return list;
 
