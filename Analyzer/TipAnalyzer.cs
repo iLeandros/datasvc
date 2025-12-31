@@ -267,7 +267,16 @@ public static class TipAnalyzer
               + wStand;
             
             // if evidence is low (< ~6), boost Elo; if high (> ~14), reduce it a bit
-            double scarcityBoost = evidence < 6.0 ? 1.35 : (evidence > 14.0 ? 0.85 : 1.0);
+            //double scarcityBoost = evidence < 6.0 ? 1.50 : (evidence > 15.0 ? 0.85 : 1.0);
+            double scarcityBoost;
+            if (evidence < 5.0)
+                scarcityBoost = 1.65;
+            else if (evidence < 10.0)
+                scarcityBoost = 1.45;
+            else if (evidence < 15.0)
+                scarcityBoost = 1.35;
+            else
+                scarcityBoost = 1.20;
             
             // final Elo weight (cap so it never becomes crazy)
             wElo = (2.0 + 2.0 * mismatch) * scarcityBoost;
