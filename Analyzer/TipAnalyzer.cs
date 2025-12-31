@@ -243,6 +243,9 @@ public static class TipAnalyzer
         double wElo = 0.0;
         double htsElo = double.NaN, gtsElo = double.NaN;
         double wEloGoals = 0.0;
+        double lamHElo = double.NaN, lamAElo = double.NaN;
+        double o15Elo = double.NaN, o25Elo = double.NaN, o35Elo = double.NaN;
+        double wEloOU = 0.0;
         
         if (homeElo is double he && awayElo is double ae)
         {
@@ -298,11 +301,24 @@ public static class TipAnalyzer
             // Hard caps (avoid crazy weights)
             wElo = Math.Clamp(wElo, 2.5, 12.0);
             
-            (htsElo, gtsElo) = EloToTeamScores(he, ae);
+            //(htsElo, gtsElo) = EloToTeamScores(he, ae);
         
             // Make goals follow Elo strongly, but slightly less than 1X2
             // (If you want: set equal to wElo)
+            //wEloGoals = 0.75 * wElo;
+            (lamHElo, lamAElo) = EloToLambdas(he, ae);
+
+            htsElo = 1.0 - Math.Exp(-lamHElo);
+            gtsElo = 1.0 - Math.Exp(-lamAElo);
+            
+            var lamTElo = lamHElo + lamAElo;
+            o15Elo = OverFromLambda(lamTElo, 1.5);
+            o25Elo = OverFromLambda(lamTElo, 2.5);
+            o35Elo = OverFromLambda(lamTElo, 3.5);
+            
+            // weights for goal-derived markets
             wEloGoals = 0.75 * wElo;
+            wEloOU    = 0.75 * wElo;
         }
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
@@ -521,6 +537,26 @@ public static class TipAnalyzer
 
     // ====================== helpers ======================
     // Keep it near the other helpers
+    private static (double lamH, double lamA) EloToLambdas(double homeElo, double awayElo)
+    {
+        const double hfa = 60.0;
+        var diff = (homeElo + hfa) - awayElo;
+    
+        // Baseline team goal rates (tune later)
+        const double baseLamHome = 1.45;
+        const double baseLamAway = 1.15;
+    
+        // Elo -> goals sensitivity (tune 0.45..0.75)
+        const double k = 0.60;
+    
+        // ratio >1 favors home; <1 favors away
+        var r = Math.Exp(k * diff / 400.0);
+    
+        var lamH = Math.Max(1e-6, baseLamHome * r);
+        var lamA = Math.Max(1e-6, baseLamAway / r);
+    
+        return (lamH, lamA);
+    }
     private static (double p1, double px, double p2) EloTo1X2(double homeElo, double awayElo)
     {
         const double hfa = 60.0;       // home-field Elo boost
