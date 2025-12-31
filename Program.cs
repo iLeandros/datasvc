@@ -2262,6 +2262,7 @@ public sealed class ParsedTipsService
 	
 	            // ---- Analyzer (defensive) ----
 	            List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probs = null;
+				List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probsVIP = null;
 	            try
 	            {
 					analyzed++;
@@ -2276,6 +2277,10 @@ public sealed class ParsedTipsService
 					if (TryGetElo(guestSafe, out var ae)) awayElo = ae;
 					
 					probs = await Task.Run(
+					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, null, null),
+					    ct
+					).ConfigureAwait(false);
+					probsVIP = await Task.Run(
 					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
 					    ct
 					).ConfigureAwait(false);
@@ -2284,16 +2289,21 @@ public sealed class ParsedTipsService
 	            {
 	                Console.WriteLine($"[Tips] Analyze failed for href={normHref}, '{item.HostTeam}' vs '{item.GuestTeam}': {ex.Message}");
 	                probs = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+					probsVIP = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
 					analyzeFailed++;
 	            }
 	
 	            var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
+				var tipCodeVIP = probsVIP?.OrderByDescending(p => p.Probability).FirstOrDefault();
 	            item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+				item.ProposedResultsVIP = probsVIP ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
 				if (item.ProposedResults.Count == 0) emptyProposed++;
 	            //item.Tip = tipCode?.Code ?? item.Tip;
 				item.VIPTip = tipCode?.Code ?? item.Tip;
+				item.VIPTipElo = tipCodeVIP?.Code ?? item.Tip;
 	
 	            var backgroundTipColour = item.BackgroundTipColour;
+				var backgroundTipColourVIP = item.BackgroundTipColour;
 	
 	            // === Smarter fixture lookup ===
 	            // Normalize the fixture’s teams and kickoff
@@ -2370,25 +2380,38 @@ public sealed class ParsedTipsService
 	                {
 	                    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
 	                }
+					
+					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
+	                {
+	                    // pass the LIVE dto so IsFinal/clock come from live
+	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
+	                }
+	                else
+	                {
+	                    backgroundTipColourVIP = AppColors.Black; // still pending / no numbers yet
+	                }
 	            }
 	            catch (Exception ex)
 	            {
 	                Console.WriteLine($"[Tips] EvaluateTipColor failed for href={normHref}: {ex.Message}");
 	                backgroundTipColour = AppColors.Black;
+					backgroundTipColourVIP = AppColors.Black;
 	            }
 	
 	            //PENDING QEUE
 	            // IMPORTANT: property sets on UI thread
 	            //item.Tip = tipCode?.Code ?? item.Tip;
 				item.VIPTip = tipCode?.Code ?? item.Tip;
+				item.VIPTipElo = tipCodeVIP?.Code ?? item.Tip;
 	            //item.Tip = "NTM";
 	
 	            item.HostScore = scoreOne;
 	            item.GuestScore = scoreTwo;
 	
 	            item.BackgroundTipColour = backgroundTipColour;
+				item.BackgroundTipColourVIP =backgroundTipColourVIP;
 	            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
-	            if (tipCode?.Probability is double p && p > 0.90)
+	            if (tipCode?.Probability is double p && p > 0.90 || tipCodeVIP?.Probability is double p && p > 0.90)
 	            {
 	                item.BackgroundColor = AppColors.Goldenrod;
 	                item.IsLocked = true;
