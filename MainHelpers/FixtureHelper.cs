@@ -30,7 +30,7 @@ namespace DataSvc.MainHelpers;
             }
             return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
         }
-
+        /*
         public static string Canon(string? s)
         {
             s ??= string.Empty;
@@ -80,6 +80,57 @@ namespace DataSvc.MainHelpers;
             var filtered = tokens
                 .Where(t => !TeamStopwords.Contains(t))
                 .ToArray();
+        
+            return string.Join(' ', filtered);
+        }
+        */
+        public static string Canon(string? s)
+        {
+            s ??= string.Empty;
+        
+            s = RemoveDiacritics(s.ToLowerInvariant());
+            var cleaned = new string(s.Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());
+        
+            var tokens = cleaned
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
+        
+            if (tokens.Count == 0) return string.Empty;
+        
+            // ---- expand common abbreviations / aliases (Elo vs fixture feeds) ----
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                if (tokens[i] == "utd") tokens[i] = "united";
+                if (tokens[i] == "nottm") tokens[i] = "nottingham";
+        
+                // NEW: "weds" -> "wednesday" (and a common typo)
+                if (tokens[i] == "weds" || tokens[i] == "wed")
+                    tokens[i] = "wednesday";
+            }
+        
+            // "man city" / "man united" -> "manchester ..."
+            if (tokens.Count >= 2 && tokens[0] == "man")
+            {
+                if (tokens[1] == "city" || tokens[1] == "united")
+                    tokens[0] = "manchester";
+            }
+        
+            // Elo has "Forest" meaning "Nottingham Forest" in your dataset (only exact)
+            if (tokens.Count == 1 && tokens[0] == "forest")
+                tokens = new List<string> { "nottingham", "forest" };
+        
+            // NEW: drop decorative suffixes that Elo often omits (keep if sole token)
+            // Keep "city" and "united" (do not reintroduce earlier issue).
+            var dropSuffixes = new HashSet<string>
+            {
+                "rovers","athletic","hotspur","wanderers","orient",
+                "stanley","albion","vale","alexandra","county","town"
+            };
+            if (tokens.Count > 1)
+                tokens = tokens.Where(t => !dropSuffixes.Contains(t)).ToList();
+        
+            // remove generic stopwords (but keep city/united now)
+            var filtered = tokens.Where(t => !TeamStopwords.Contains(t)).ToArray();
         
             return string.Join(' ', filtered);
         }
