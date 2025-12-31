@@ -40,6 +40,7 @@ public class TableDataItem
     public string? RowBackground { get; set; }
     public MatchDetails Details { get; set; } // set after construction
     public List<TipAnalyzer.ProposedResult> ProposedResults { get; set; }
+    public List<TipAnalyzer.ProposedResult> ProposedResultsVIP { get; set; }
     public bool IsVipMatch { get; set; }
     public bool IsLocked { get; set; } = false;
     public bool TipIsVisible { get; set; } = true;
