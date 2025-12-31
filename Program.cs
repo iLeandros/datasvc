@@ -4509,7 +4509,10 @@ public sealed class DetailsScraperService
 	
 	            //var rec = await FetchOneAsync(href, ct);
 	            //_store.Set(rec);
-				var fresh   = await FetchOneAsync(href, ct);
+				//var fresh   = await FetchOneAsync(href, ct);
+				//var merged  = DetailsMerge.Merge(existing, fresh);
+				//_store.Set(merged);
+				var fresh   = await FetchOneWithRetryAsync(href, ct);
 				var merged  = DetailsMerge.Merge(existing, fresh);
 				_store.Set(merged);
 
@@ -4552,6 +4555,81 @@ public sealed class DetailsScraperService
 		return new RefreshSummary(refreshed, skipped, deleted, errors, DateTimeOffset.UtcNow);
 
 	}
+	static bool IsTransient(Exception ex, CancellationToken ct)
+	{
+	    // If the caller actually cancelled, don't retry.
+	    if (ct.IsCancellationRequested) return false;
+	
+	    // Typical transient network/timeout cases
+	    if (ex is HttpRequestException) return true;
+	    if (ex is IOException) return true;
+	
+	    // Timeout from linked CTS often shows up as TaskCanceledException/OperationCanceledException
+	    if (ex is TaskCanceledException) return true;
+	    if (ex is OperationCanceledException) return true;
+	
+	    // TLS/auth hiccups
+	    if (ex.InnerException is System.Security.Authentication.AuthenticationException) return true;
+	    if (ex.InnerException is System.Net.Sockets.SocketException) return true;
+	
+	    return false;
+	}
+	
+	static TimeSpan ComputeDelay(int attempt)
+	{
+	    // attempt: 1..N
+	    var baseMs = GetEnvInt("DETAILS_RETRY_BASE_DELAY_MS", 400); // default 400ms
+	    var maxMs  = GetEnvInt("DETAILS_RETRY_MAX_DELAY_MS", 4000); // cap
+	
+	    var exp = baseMs * Math.Pow(2, attempt - 1);
+	    var jitter = Random.Shared.Next(0, 250);
+	
+	    var ms = (int)Math.Min(maxMs, exp + jitter);
+	    return TimeSpan.FromMilliseconds(ms);
+	}
+	
+	public static async Task<DetailsRecord> FetchOneWithRetryAsync(string href, CancellationToken ct = default)
+	{
+	    var attempts = GetEnvInt("DETAILS_RETRIES", 3);
+	
+	    Exception? last = null;
+	
+	    for (int attempt = 1; attempt <= attempts; attempt++)
+	    {
+	        try
+	        {
+	            var rec = await FetchOneAsync(href, ct).ConfigureAwait(false);
+	
+	            // Optional: treat "obviously empty parse" as retryable.
+	            // (If your ParseDetails sometimes returns blank sections when the site responds weirdly.)
+	            var p = rec.Payload;
+	            bool looksEmpty =
+	                string.IsNullOrWhiteSpace(p.TeamsInfoHtml) &&
+	                string.IsNullOrWhiteSpace(p.MatchBetweenHtml) &&
+	                string.IsNullOrWhiteSpace(p.FactsHtml);
+	
+	            if (looksEmpty)
+	                throw new InvalidDataException("Parsed details looks empty (teams/matchbetween/facts all null).");
+	
+	            return rec;
+	        }
+	        catch (Exception ex) when (IsTransient(ex, ct) && attempt < attempts)
+	        {
+	            last = ex;
+	            var delay = ComputeDelay(attempt);
+	            Console.WriteLine($"[details] retry {attempt}/{attempts} for {href}: {ex.GetType().Name}: {ex.Message} (delay {delay.TotalMilliseconds:0}ms)");
+	            await Task.Delay(delay, ct).ConfigureAwait(false);
+	        }
+	        catch (Exception ex)
+	        {
+	            last = ex;
+	            break;
+	        }
+	    }
+	
+	    throw last ?? new Exception("FetchOneWithRetryAsync failed with unknown error.");
+	}
+
 	public static async Task<DetailsRecord> FetchOneAsync(string href, CancellationToken ct = default)
 	{
 	    var abs = DetailsStore.Normalize(href);
