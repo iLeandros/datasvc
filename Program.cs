@@ -538,7 +538,7 @@ app.MapGet("/data/refresh-window", async (
         ok = errors.Count == 0
     });
 });
-
+/*
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (string date) =>
 {
@@ -547,7 +547,7 @@ app.MapGet("/data/parsed/date/{date}", (string date) =>
         ? Results.Ok(snap.Payload.TableDataGroup)
         : Results.NotFound(new { error = "snapshot not found; refresh first", date });
 });
-/*
+
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", (
     string date,
@@ -564,7 +564,7 @@ app.MapGet("/data/parsed/date/{date}", (
 
     return Results.Ok(groups);
 });
-
+*/
 // GET /data/parsed/date/{date}
 app.MapGet("/data/parsed/date/{date}", async (
     string date,
@@ -583,7 +583,7 @@ app.MapGet("/data/parsed/date/{date}", async (
 
     return Results.Ok(groups);
 });
-*/
+
 
 // GET /data/html/date/{date}
 app.MapGet("/data/html/date/{date}", (string date) =>
