@@ -14,7 +14,9 @@ public static class TipAnalyzer
                         DetailsItemDto d,
                         string homeName,
                         string awayName,
-                        string? proposedCode = null)
+                        string? proposedCode = null,
+                        double? homeElo,
+                        double? awayElo)
     {
         var list = Analyze(d, homeName, awayName); // core calc
 
@@ -232,7 +234,16 @@ public static class TipAnalyzer
         }
 
         // --- 2) Derive market probabilities from signals ---------------------
-
+        double p1Elo = double.NaN, pxElo = double.NaN, p2Elo = double.NaN;
+        double wElo = 0.0;
+        
+        if (homeElo is double he && awayElo is double ae)
+        {
+            (p1Elo, pxElo, p2Elo) = EloTo1X2(he, ae);
+        
+            // start conservative; bump if chart 1X2 is missing
+            wElo = (wChart1x2 > 0.0) ? 1.2 : 1.8;
+        }
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
         var p1 = Blend(new[]
         {
@@ -240,7 +251,8 @@ public static class TipAnalyzer
             C(h2h.PHome,       w: wSqrt(h2h.NH2H)),
             C(Avg( sepHome.WinRate,  sepAway.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.WinRate, factsAway.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
-            C(p1Stand,         w: wStand) // NEW
+            C(p1Stand,         w: wStand), // NEW
+            C(p1Elo,           w: wElo)  
         });
 
         var px = Blend(new[]
@@ -249,7 +261,8 @@ public static class TipAnalyzer
             C(h2h.PDraw,       w: wSqrt(h2h.NH2H)),
             C(Avg( sepHome.DrawRate,  sepAway.DrawRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.DrawRate, factsAway.DrawRate), w: wSqrt(factsHome.N + factsAway.N)),
-            C(pxStand,         w: wStand) // NEW
+            C(pxStand,         w: wStand), // NEW
+            C(pxElo,           w: wElo)
         });
 
         var p2 = Blend(new[]
@@ -258,7 +271,8 @@ public static class TipAnalyzer
             C(h2h.PAway,       w: wSqrt(h2h.NH2H)),
             C(Avg( sepAway.WinRate,  sepHome.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsAway.WinRate, factsHome.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
-            C(p2Stand,         w: wStand) // NEW
+            C(p2Stand,         w: wStand), // NEW
+            C(p2Elo,           w: wElo) 
         });
         // After the three Blend(...) assignments:
         (p1, px, p2) = Normalize1X2(p1, px, p2);
@@ -444,6 +458,23 @@ public static class TipAnalyzer
 
     // ====================== helpers ======================
     // Keep it near the other helpers
+    private static (double p1, double px, double p2) EloTo1X2(double homeElo, double awayElo)
+    {
+        const double hfa = 60.0;       // home-field Elo boost
+        const double baseDraw = 0.26;  // typical draw rate baseline
+        const double drawScale = 250.0;
+    
+        var diff = (homeElo + hfa) - awayElo;
+    
+        var pHomeNoDraw = 1.0 / (1.0 + Math.Pow(10.0, -diff / 400.0));
+        var pDraw = baseDraw * Math.Exp(-Math.Abs(diff) / drawScale);
+    
+        var p1 = (1.0 - pDraw) * pHomeNoDraw;
+        var p2 = (1.0 - pDraw) * (1.0 - pHomeNoDraw);
+    
+        return (p1, pDraw, p2);
+    }
+
     private static (double p1, double px, double p2) Normalize1X2(double p1, double px, double p2)
     {
         // treat NaNs as 0 in the sum, but preserve them for output if everything is NaN
