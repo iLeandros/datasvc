@@ -2411,7 +2411,7 @@ public sealed class ParsedTipsService
 	            item.BackgroundTipColour = backgroundTipColour;
 				item.BackgroundTipColourVIP =backgroundTipColourVIP;
 	            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
-	            if (tipCode?.Probability is double p && p > 0.90 || tipCodeVIP?.Probability is double p && p > 0.90)
+	            if (tipCode?.Probability is double p && p > 0.90 || tipCodeVIP?.Probability is double pVIP && pVIP > 0.90)
 	            {
 	                item.BackgroundColor = AppColors.Goldenrod;
 	                item.IsLocked = true;
