@@ -366,7 +366,16 @@ public sealed class ClubEloRefreshJob : BackgroundService
             var ranksStale = _store.LastRanksFetchUtc is null || (nowUtc - _store.LastRanksFetchUtc.Value) > TimeSpan.FromHours(1);
             if (ranksStale)
             {
-                var ranks = await _svc.FetchCurrentRanksAsync(ct);
+                //var ranks = await _svc.FetchCurrentRanksAsync(ct);
+                var ranks = await Retry.RunAsync(
+                    action: () => _svc.FetchCurrentRanksAsync(ct),
+                    maxAttempts: 3,
+                    shouldRetry: Retry.IsTransient,
+                    shouldRetryResult: r => r is null || r.Count == 0, // optional: retry on empty
+                    initialDelay: TimeSpan.FromMilliseconds(250),
+                    log: _log,
+                    ct: ct
+                );
 
                 if (ranks is { Count: > 0 })
                 {
@@ -444,6 +453,59 @@ public sealed class ClubEloRefreshJob : BackgroundService
             _gate.Release();
         }
     }
+}
+static class Retry
+{
+    public static async Task<T> RunAsync<T>(
+        Func<Task<T>> action,
+        int maxAttempts,
+        Func<Exception, bool> shouldRetry,
+        Func<T, bool>? shouldRetryResult,
+        TimeSpan initialDelay,
+        ILogger? log,
+        CancellationToken ct)
+    {
+        var delay = initialDelay;
+
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+
+            try
+            {
+                var result = await action();
+
+                if (shouldRetryResult is not null && shouldRetryResult(result) && attempt < maxAttempts)
+                {
+                    log?.LogWarning("Retry {Attempt}/{MaxAttempts}: got an invalid/empty result. Waiting {Delay}...",
+                        attempt, maxAttempts, delay);
+
+                    await Task.Delay(delay, ct);
+                    delay = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 2);
+                    continue;
+                }
+
+                return result;
+            }
+            catch (Exception ex) when (!ct.IsCancellationRequested && shouldRetry(ex) && attempt < maxAttempts)
+            {
+                log?.LogWarning(ex, "Retry {Attempt}/{MaxAttempts}: failed. Waiting {Delay}...",
+                    attempt, maxAttempts, delay);
+
+                await Task.Delay(delay, ct);
+                delay = TimeSpan.FromMilliseconds(delay.TotalMilliseconds * 2);
+            }
+        }
+
+        // last attempt (or maxAttempts==1) will fall through only if it threw
+        // but to satisfy compiler for T, re-run once and let it throw if it fails.
+        return await action();
+    }
+
+    // Optional: classify HTTP failures you want to retry
+    public static bool IsTransient(Exception ex)
+        => ex is HttpRequestException
+        || ex is TaskCanceledException; // often timeout (not cancellation token)
 }
 
 // -------------------- CSV parsing --------------------
