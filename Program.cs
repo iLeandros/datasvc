@@ -2018,11 +2018,55 @@ public sealed class SnapshotPerDateStore
 public sealed class ParsedTipsService
 {
     private readonly LiveScoresStore _live;
+	private readonly ClubEloStore _clubEloStore;
 
-    public ParsedTipsService(LiveScoresStore live)
+    public ParsedTipsService(LiveScoresStore live, ClubEloStore clubEloStore)
     {
         _live = live;
+		_clubEloStore = clubEloStore;
     }
+
+	private Dictionary<string, double> _eloByTeam = new(StringComparer.OrdinalIgnoreCase);
+	private DateTimeOffset? _eloStampUtc = null;
+	
+	private void EnsureEloIndex()
+	{
+	    // If the store hasn't refreshed yet, just keep empty map
+	    var stamp = _clubEloStore.LastRanksFetchUtc;
+	    if (stamp is null) return;
+	
+	    // If already built for this stamp, no work
+	    if (_eloStampUtc == stamp && _eloByTeam.Count > 0)
+	        return;
+	
+	    var ranks = _clubEloStore.GetCurrentRanks();
+	    if (ranks is null || ranks.Count == 0)
+	        return;
+	
+	    var dict = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+	
+	    foreach (var r in ranks)
+	    {
+	        if (string.IsNullOrWhiteSpace(r.Club)) continue;
+	
+	        // Use the same canonicalizer you already use for live matching
+	        var key = FixtureHelper.Canon(r.Club);
+	        if (!dict.ContainsKey(key))
+	            dict[key] = r.Elo;
+	    }
+	
+	    _eloByTeam = dict;
+	    _eloStampUtc = stamp;
+	}
+	
+	private bool TryGetElo(string? teamName, out double elo)
+	{
+	    elo = default;
+	    if (string.IsNullOrWhiteSpace(teamName)) return false;
+	
+	    var key = FixtureHelper.Canon(teamName);
+	    return _eloByTeam.TryGetValue(key, out elo);
+	}
 
     // Envelope saved by /data/details/allhrefs/date/{date}
     private sealed class DetailsPerDateEnvelope
@@ -2172,10 +2216,16 @@ public sealed class ParsedTipsService
 	                var hostSafe = item.HostTeam ?? string.Empty;
 	                var guestSafe = item.GuestTeam ?? string.Empty;
 	
-	                probs = await Task.Run(
-	                    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip),
-	                    ct
-	                ).ConfigureAwait(false);
+	                EnsureEloIndex();
+
+					double? homeElo = null, awayElo = null;
+					if (TryGetElo(hostSafe, out var he)) homeElo = he;
+					if (TryGetElo(guestSafe, out var ae)) awayElo = ae;
+					
+					probs = await Task.Run(
+					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
+					    ct
+					).ConfigureAwait(false);
 	            }
 	            catch (Exception ex)
 	            {
