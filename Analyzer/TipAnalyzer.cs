@@ -138,7 +138,12 @@ public static class TipAnalyzer
         return list;
     }
 
-    public static List<ProposedResult> Analyze(DetailsItemDto d, string homeName, string awayName)
+    public static List<ProposedResult> Analyze(
+        DetailsItemDto d,
+        string homeName,
+        string awayName,
+        double? homeElo,
+        double? awayElo)
     {
         // --- 1) Build signals -------------------------------------------------
         // 1X2 charts (0..1) + conditional chart weight
