@@ -14,7 +14,7 @@ public static class TipAnalyzer
                         DetailsItemDto d,
                         string homeName,
                         string awayName,
-                        string? proposedCode = null,
+                        string? proposedCode,
                         double? homeElo,
                         double? awayElo)
     {
