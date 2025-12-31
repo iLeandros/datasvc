@@ -409,29 +409,32 @@ public static class TipAnalyzer
             C(chartOU15,                                     w: wChartOU15),
             C(h2h.POver15,                                   w: wSqrt(h2h.NH2H)),
             C(Avg(sepHome.Over15Rate, sepAway.Over15Rate),   w: wSqrt(sepHome.N + sepAway.N)),
-            C(o15Facts,                                      w: 1.3), // facts→Poisson
-            C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+            C(o15Facts,                                      w: 1.3),
+            C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
+            C(o15Elo,                                        w: wEloOU) // <-- NEW
         });
         var u15 = 1 - o15;
-
+        
         var o25 = Blend(new[]
         {
             C(chartOU25,                                     w: wChartOU25),
             C(h2h.POver25,                                   w: wSqrt(h2h.NH2H)),
             C(Avg(sepHome.Over25Rate, sepAway.Over25Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.Over25RateFacts, factsAway.Over25RateFacts), w: wSqrt(factsHome.N + factsAway.N)),
-            C(o25Facts,                                      w: 1.3), // facts→Poisson
-            C(o25Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+            C(o25Facts,                                      w: 1.3),
+            C(o25Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
+            C(o25Elo,                                        w: wEloOU) // <-- NEW
         });
         var u25 = 1 - o25;
-
+        
         var o35 = Blend(new[]
         {
             C(chartOU35,                                     w: wChartOU35),
             C(h2h.POver35,                                   w: wSqrt(h2h.NH2H)),
             C(Avg(sepHome.Over35Rate, sepAway.Over35Rate),   w: wSqrt(sepHome.N + sepAway.N)),
-            C(o35Facts,                                      w: 1.3), // facts→Poisson
-            C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)) // NEW
+            C(o35Facts,                                      w: 1.3),
+            C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
+            C(o35Elo,                                        w: wEloOU) // <-- NEW
         });
         var u35 = 1 - o35;
 
