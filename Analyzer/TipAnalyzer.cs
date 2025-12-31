@@ -241,6 +241,8 @@ public static class TipAnalyzer
         // --- 2) Derive market probabilities from signals ---------------------
         double p1Elo = double.NaN, pxElo = double.NaN, p2Elo = double.NaN;
         double wElo = 0.0;
+        double htsElo = double.NaN, gtsElo = double.NaN;
+        double wEloGoals = 0.0;
         
         if (homeElo is double he && awayElo is double ae)
         {
@@ -295,6 +297,12 @@ public static class TipAnalyzer
         
             // Hard caps (avoid crazy weights)
             wElo = Math.Clamp(wElo, 2.5, 12.0);
+            
+            (htsElo, gtsElo) = EloToTeamScores(heG, aeG);
+        
+            // Make goals follow Elo strongly, but slightly less than 1X2
+            // (If you want: set equal to wElo)
+            wEloGoals = 0.75 * wElo;
         }
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
@@ -338,17 +346,6 @@ public static class TipAnalyzer
         var px2 = Clamp01(px + p2);
         var p12 = Clamp01(p1 + p2);
         */
-        double htsElo = double.NaN, gtsElo = double.NaN;
-        double wEloGoals = 0.0;
-        
-        if (homeElo is double he && awayElo is double ae)
-        {
-            (htsElo, gtsElo) = EloToTeamScores(he, ae);
-        
-            // Make goals follow Elo strongly, but slightly less than 1X2
-            // (If you want: set equal to wElo)
-            wEloGoals = 0.75 * wElo;
-        }
         // BTTS / OTS with standings hint
         var btts = Blend(new[]
         {
