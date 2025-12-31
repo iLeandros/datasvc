@@ -10,10 +10,11 @@ namespace DataSvc.MainHelpers;
     public class FixtureHelper
     {
         public static readonly string[] TeamStopwords = new[]
-{
+        {
             "fc","cf","sc","ac","ca","afc","u","u21","ii","2","w","women","ladies",
             "club","de","cd","atletico","atl","sport","sports","sp","deportivo","sd",
-            "united","city","team","sv","ifs","bk","fk","ik","sk","as","aas","cs","nk"
+            // "united","city",   <-- delete these two
+            "team","sv","ifs","bk","fk","ik","sk","as","aas","cs","nk"
         };
 
         private static string RemoveDiacritics(string s)
@@ -33,13 +34,54 @@ namespace DataSvc.MainHelpers;
         public static string Canon(string? s)
         {
             s ??= string.Empty;
+        
+            // normalize base string
             s = RemoveDiacritics(s.ToLowerInvariant());
+        
             // replace punctuation with spaces, collapse whitespace
             var cleaned = new string(s.Select(ch => char.IsLetterOrDigit(ch) ? ch : ' ').ToArray());
-            var tokens = cleaned.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+        
+            var tokens = cleaned
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .ToList();
+        
+            if (tokens.Count == 0) return string.Empty;
+        
+            // ---- expand common abbreviations / aliases (Elo vs fixture feeds) ----
+        
+            // normalize "utd" -> "united"
+            for (int i = 0; i < tokens.Count; i++)
+            {
+                if (tokens[i] == "utd") tokens[i] = "united";
+                if (tokens[i] == "nottm") tokens[i] = "nottingham";
+            }
+        
+            // "man city" / "man united" -> "manchester ..."
+            if (tokens.Count >= 2 && tokens[0] == "man")
+            {
+                if (tokens[1] == "city")
+                {
+                    tokens[0] = "manchester";
+                }
+                else if (tokens[1] == "united")
+                {
+                    tokens[0] = "manchester";
+                }
+            }
+        
+            // Elo has "Forest" meaning "Nottingham Forest" in your dataset
+            // (only when the whole name is exactly "forest")
+            if (tokens.Count == 1 && tokens[0] == "forest")
+            {
+                tokens = new List<string> { "nottingham", "forest" };
+            }
+        
+            // remove generic stopwords (but keep city/united now)
+            var filtered = tokens
                 .Where(t => !TeamStopwords.Contains(t))
                 .ToArray();
-            return string.Join(' ', tokens);
+        
+            return string.Join(' ', filtered);
         }
 
         public static HashSet<string> TokenSet(string s) =>
