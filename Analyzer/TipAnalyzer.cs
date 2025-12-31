@@ -244,50 +244,59 @@ public static class TipAnalyzer
         
         if (homeElo is double he && awayElo is double ae)
         {
+            // Keep consistent with EloTo1X2
+            const double hfa = 60.0;
+            var diff = (he + hfa) - ae;
+            var absDiff = Math.Abs(diff);
+        
             (p1Elo, pxElo, p2Elo) = EloTo1X2(he, ae);
         
-            // start conservative; bump if chart 1X2 is missing
-            //wElo = (wChart1x2 > 0.0) ? 1.2 : 1.8;
-            // Adaptive Elo weight:
-            // - baseline similar to charts (2.0)
-            // - increases with Elo mismatch (|diff|)
-            // - increases when other evidence is thin
-            var diff = (he + 60.0) - ae;               // keep consistent with EloTo1X2 hfa
-            var absDiff = Math.Abs(diff);
-            
-            // mismatch factor: 0 at 0 Elo, 1 at 200 Elo, 1.5 at 300 Elo (capped)
-            var mismatch = Math.Clamp(absDiff / 200.0, 0.0, 1.5);
-            
-            // evidence factor: if you have little data, trust Elo more
+            // --- Evidence already in your analyzer (same scale you blend with) ---
             double evidence =
-                wChart1x2
-              + wSqrt(h2h.NH2H)
-              + wSqrt(sepHome.N + sepAway.N)
-              + wSqrt(factsHome.N + factsAway.N)
-              + wStand;
-            
-            // if evidence is low (< ~6), boost Elo; if high (> ~14), reduce it a bit
-            //double scarcityBoost = evidence < 6.0 ? 1.50 : (evidence > 15.0 ? 0.85 : 1.0);
+                  wChart1x2
+                + wSqrt(h2h.NH2H)
+                + wSqrt(sepHome.N + sepAway.N)
+                + wSqrt(factsHome.N + factsAway.N)
+                + wStand;
+        
+            // --- Your requested scarcityBoost steps ---
             double scarcityBoost;
-            if (evidence < 5.0)
-                scarcityBoost = 1.65;
-            else if (evidence < 10.0)
-                scarcityBoost = 1.45;
-            else if (evidence < 15.0)
-                scarcityBoost = 1.35;
-            else
-                scarcityBoost = 1.20;
-            
-            // final Elo weight (cap so it never becomes crazy)
-            wElo = (2.0 + 2.0 * mismatch) * scarcityBoost;
-            
-            // if chart 1X2 is missing, bump a bit more (Elo becomes a backbone)
-            if (wChart1x2 <= 0.0) wElo *= 1.25;
-            
-            // hard caps
-            wElo = Math.Clamp(wElo, 1.5, 6.0);
-            
+            if (evidence < 5.0) scarcityBoost = 1.65;
+            else if (evidence < 10.0) scarcityBoost = 1.45;
+            else if (evidence < 15.0) scarcityBoost = 1.35;
+            else scarcityBoost = 1.20;
+        
+            // --- Gap factor: 0 at 0 Elo, 1 at 200 Elo, 2 at 400 Elo (capped) ---
+            var gap = Math.Clamp(absDiff / 200.0, 0.0, 2.0);
+        
+            // --- Elo level factor: depends on average Elo (higher avg -> more trust) ---
+            // Tune the range if your dataset differs; these work well for typical club Elo.
+            var avgElo = (he + ae) / 2.0;
+            var level01 = Math.Clamp((avgElo - 1500.0) / 600.0, 0.0, 1.0); // 1500..2100 -> 0..1
+            var levelBoost = 1.0 + 0.60 * level01;                         // 1.00 .. 1.60
+        
+            // --- Base Elo weight: make it strong, and increase with mismatch ---
+            // At gap=0 -> ~3.0 * boosts
+            // At gap=1 (200 Elo) -> ~5.0 * boosts
+            // At gap=2 (400 Elo) -> ~7.0 * boosts
+            var baseW = 3.0 + 2.0 * gap;
+        
+            wElo = baseW * scarcityBoost * levelBoost;
+        
+            // If chart 1X2 is missing, Elo becomes even more backbone
+            if (wChart1x2 <= 0.0)
+                wElo *= 1.25;
+        
+            // --- Guarantee: Elo is a MAJOR share of total blend weight ---
+            // (Set this higher/lower based on how dominant you want Elo to be.)
+            // Example: 60% of evidence means Elo often becomes the largest single contributor.
+            var targetShare = 0.75;
+            wElo = Math.Max(wElo, targetShare * evidence);
+        
+            // Hard caps (avoid crazy weights)
+            wElo = Math.Clamp(wElo, 2.5, 12.0);
         }
+        
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
         var p1 = Blend(new[]
         {
