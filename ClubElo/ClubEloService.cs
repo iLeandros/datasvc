@@ -133,13 +133,21 @@ public static class ClubEloFiles
 
         var (ranks, fixturesByDate, nowUtc) = store.Export();
 
+        // ✅ current: only write if we have ranks
+        if (ranks is { Count: > 0 })
+        {
+            var envelope = new { lastSavedUtc = nowUtc, ranks };
+            await AtomicWriteJsonAsync(CurrentFile, envelope);
+        }
+        /*
         // current
         {
             var envelope = new { lastSavedUtc = nowUtc, ranks };
             await AtomicWriteJsonAsync(CurrentFile, envelope);
         }
-
+        */
         // fixtures
+        if (fixturesByDate.Count > 0 && fixturesByDate.Values.Any(v => v.Count > 0))
         {
             var days = fixturesByDate
                 .OrderBy(kv => kv.Key)
@@ -359,7 +367,12 @@ public sealed class ClubEloRefreshJob : BackgroundService
             if (ranksStale)
             {
                 var ranks = await _svc.FetchCurrentRanksAsync(ct);
-                _store.SetRanks(ranks, nowUtc);
+
+                if (ranks is { Count: > 0 })
+                {
+                    _store.SetRanks(ranks, nowUtc);
+                }
+                //_store.SetRanks(ranks, nowUtc);
             }
 
             // 2) Refresh fixtures if stale (> 12h)
@@ -385,7 +398,7 @@ public sealed class ClubEloRefreshJob : BackgroundService
                 var windowDates = ScraperConfig.DateWindow(center, back: 3, ahead: 3).ToList();
                 
                 var byDate = new Dictionary<string, List<ClubEloFixture>>(StringComparer.OrdinalIgnoreCase);
-                
+
                 foreach (var d in windowDates)
                 {
                     ct.ThrowIfCancellationRequested();
@@ -402,7 +415,12 @@ public sealed class ClubEloRefreshJob : BackgroundService
                     byDate[iso] = items;
                 }
                 
-                _store.SetFixturesWindow(byDate, nowUtc);
+                var hasAnyFixtures = byDate.Values.Any(list => list.Count > 0);
+                //_store.SetFixturesWindow(byDate, nowUtc);
+                if (hasAnyFixtures)
+                {
+                    _store.SetFixturesWindow(byDate, nowUtc);
+                }
             }
 
             // 3) Always enforce rolling window for fixtures (in case only the day changed)
