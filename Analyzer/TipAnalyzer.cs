@@ -298,7 +298,7 @@ public static class TipAnalyzer
             // Hard caps (avoid crazy weights)
             wElo = Math.Clamp(wElo, 2.5, 12.0);
             
-            (htsElo, gtsElo) = EloToTeamScores(heG, aeG);
+            (htsElo, gtsElo) = EloToTeamScores(he, ae);
         
             // Make goals follow Elo strongly, but slightly less than 1X2
             // (If you want: set equal to wElo)
