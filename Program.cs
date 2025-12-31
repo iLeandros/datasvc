@@ -2127,6 +2127,13 @@ public sealed class ParsedTipsService
 	        ObservableCollection<TableDataGroup>? groups,
 	        CancellationToken ct = default)
 	{
+		var debugTips = string.Equals(
+		    Environment.GetEnvironmentVariable("TIPS_DEBUG"),
+		    "1",
+		    StringComparison.OrdinalIgnoreCase);
+		
+		var dateKey = date.ToString("yyyy-MM-dd");
+
 	    if (groups is null || groups.Count == 0) return;
 	
 	    // ---------- 0) Livescores for the date (from in-memory store) ----------
@@ -2181,6 +2188,19 @@ public sealed class ParsedTipsService
 	
 	    // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
 	    var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
+		int total = 0, missingHref = 0, noDetail = 0, schemeMismatch = 0, analyzed = 0, analyzeFailed = 0, emptyProposed = 0;
+		var samples = new List<object>(); // keep small
+		
+		string ForceScheme(string absUri, string scheme)
+		{
+		    try
+		    {
+		        var u = new Uri(absUri);
+		        var b = new UriBuilder(u) { Scheme = scheme, Port = -1 };
+		        return b.Uri.AbsoluteUri;
+		    }
+		    catch { return absUri; }
+		}
 	
 	    // ---------- 2) Walk parsed items and join ----------
 	    foreach (var group in groups)
@@ -2190,13 +2210,44 @@ public sealed class ParsedTipsService
 	        foreach (var item in group.Items)
 	        {
 	            if (item is null) continue;
+
+				total++;
 	
 	            var href = item.Href;
-	            if (string.IsNullOrWhiteSpace(href)) continue;
+	            if (string.IsNullOrWhiteSpace(href))
+				{
+				    missingHref++;
+				    if (debugTips && samples.Count < 25)
+				        samples.Add(new { reason = "missing-href", host = item.HostTeam, guest = item.GuestTeam });
+				    continue;
+				}
 	
 	            var normHref = DetailsStore.Normalize(href);
 	            if (!detailsByHref.TryGetValue(normHref, out var detailDto) || detailDto is null)
-	                continue; // no details for this match
+				{
+				    noDetail++;
+				
+				    // detect likely “looks same but differs” cases:
+				    var https = ForceScheme(normHref, "https");
+				    var http  = ForceScheme(normHref, "http");
+				
+				    var hasHttps = detailsByHref.ContainsKey(https);
+				    var hasHttp  = detailsByHref.ContainsKey(http);
+				
+				    if ((hasHttps || hasHttp) && !(hasHttps && hasHttp))
+				    {
+				        schemeMismatch++;
+				        if (debugTips && samples.Count < 25)
+				            samples.Add(new { reason = "scheme-mismatch", raw = href, norm = normHref, alt = hasHttps ? https : http });
+				    }
+				    else
+				    {
+				        if (debugTips && samples.Count < 25)
+				            samples.Add(new { reason = "no-details", raw = href, norm = normHref });
+				    }
+				
+				    continue;
+				}
 	
 	            //item.IsVipMatch = true;
 				//item.DetailsDto = detailDto;
@@ -2213,6 +2264,8 @@ public sealed class ParsedTipsService
 	            List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probs = null;
 	            try
 	            {
+					analyzed++;
+					
 	                var hostSafe = item.HostTeam ?? string.Empty;
 	                var guestSafe = item.GuestTeam ?? string.Empty;
 	
@@ -2231,10 +2284,12 @@ public sealed class ParsedTipsService
 	            {
 	                Console.WriteLine($"[Tips] Analyze failed for href={normHref}, '{item.HostTeam}' vs '{item.GuestTeam}': {ex.Message}");
 	                probs = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+					analyzeFailed++;
 	            }
 	
 	            var tipCode = probs?.OrderByDescending(p => p.Probability).FirstOrDefault();
 	            item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+				if (item.ProposedResults.Count == 0) emptyProposed++;
 	            //item.Tip = tipCode?.Code ?? item.Tip;
 				item.VIPTip = tipCode?.Code ?? item.Tip;
 	
@@ -2347,6 +2402,17 @@ public sealed class ParsedTipsService
 	                item.TipIsVisible = true;
 					item.IsVipMatch = false;
 	            }
+
+				Console.WriteLine(
+			    $"[Tips][{dateKey}] total={total} detailsKeys={detailsByHref.Count} " +
+			    $"missingHref={missingHref} noDetail={noDetail} schemeMismatch={schemeMismatch} " +
+			    $"analyzed={analyzed} analyzeFailed={analyzeFailed} emptyProposed={emptyProposed}");
+			
+			if (debugTips && samples.Count > 0)
+			{
+			    Console.WriteLine($"[Tips][{dateKey}] samples:\n" +
+			        JsonSerializer.Serialize(samples, new JsonSerializerOptions { WriteIndented = true }));
+			}
 	            /*
 	            if (item.IsLocked && !string.IsNullOrEmpty(item.Href) &&
 	                unlockIndex.TryGetValue(item.Href, out var watchedAtUtc) &&
@@ -2383,6 +2449,7 @@ public sealed class ParsedTipsService
     /// <summary>
     /// Reads /var/lib/datasvc/details/{yyyy-MM-dd}.json, returns href→DetailsItemDto.
     /// </summary>
+	/*
     private static Dictionary<string, DetailsItemDto> LoadPerDateDetails(DateOnly date)
     {
         var map = new Dictionary<string, DetailsItemDto>(StringComparer.OrdinalIgnoreCase);
@@ -2403,6 +2470,37 @@ public sealed class ParsedTipsService
 
         return map;
     }
+	*/
+	private static Dictionary<string, DetailsItemDto> LoadPerDateDetails(DateOnly date)
+	{
+	    var map = new Dictionary<string, DetailsItemDto>(StringComparer.OrdinalIgnoreCase);
+	
+	    var path = $"/var/lib/datasvc/details/{date:yyyy-MM-dd}.json";
+	    if (!File.Exists(path))
+	    {
+	        Console.WriteLine($"[Tips][{date:yyyy-MM-dd}] Details file MISSING: {path}");
+	        return map;
+	    }
+	
+	    var fi = new FileInfo(path);
+	    Console.WriteLine($"[Tips][{date:yyyy-MM-dd}] Details file OK: {path} size={fi.Length}B mtimeUtc={fi.LastWriteTimeUtc:o}");
+	
+	    var json = File.ReadAllText(path);
+	    var env = JsonSerializer.Deserialize<DetailsPerDateEnvelope>(json, _json);
+	
+	    Console.WriteLine($"[Tips][{date:yyyy-MM-dd}] Details envelope: envTotal={env?.Total} generatedUtc={env?.GeneratedUtc:o} items={(env?.Items?.Count ?? 0)}");
+	
+	    if (env?.Items is null || env.Items.Count == 0) return map;
+	
+	    foreach (var kv in env.Items)
+	    {
+	        var norm = DetailsStore.Normalize(kv.Key);
+	        if (kv.Value is not null && !map.ContainsKey(norm))
+	            map[norm] = kv.Value;
+	    }
+	
+	    return map;
+	}
 
     private static string TeamKey(string home, string away)
         => NormalizeTeam(home) + "|" + NormalizeTeam(away);
