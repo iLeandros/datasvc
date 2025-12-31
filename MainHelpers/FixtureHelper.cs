@@ -118,6 +118,18 @@ namespace DataSvc.MainHelpers;
             // Elo has "Forest" meaning "Nottingham Forest" in your dataset (only exact)
             if (tokens.Count == 1 && tokens[0] == "forest")
                 tokens = new List<string> { "nottingham", "forest" };
+            
+            if (tokens.Count == 1 && tokens[0] == "stoke")
+                tokens = new List<string> { "stoke", "city" };
+
+            if (tokens.Count == 1 && tokens[0] == "hull")
+                tokens = new List<string> { "hull", "city" };
+
+            if (tokens.Count == 1 && tokens[0] == "oxford")
+                tokens = new List<string> { "oxford", "united" };
+
+            if (tokens.Count == 1 && tokens[0] == "swansea")
+                tokens = new List<string> { "swansea", "city" };
         
             // NEW: drop decorative suffixes that Elo often omits (keep if sole token)
             // Keep "city" and "united" (do not reintroduce earlier issue).
