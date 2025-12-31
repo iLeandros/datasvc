@@ -4604,12 +4604,21 @@ public sealed class DetailsScraperService
 	            // (If your ParseDetails sometimes returns blank sections when the site responds weirdly.)
 	            var p = rec.Payload;
 	            bool looksEmpty =
-	                string.IsNullOrWhiteSpace(p.TeamsInfoHtml) &&
-	                string.IsNullOrWhiteSpace(p.MatchBetweenHtml) &&
+	                string.IsNullOrWhiteSpace(p.TeamsInfoHtml) ||
+	                string.IsNullOrWhiteSpace(p.MatchBetweenHtml) ||
+					string.IsNullOrWhiteSpace(p.TeamMatchesSeparateHtml) ||
+	                string.IsNullOrWhiteSpace(p.LastTeamsMatchesHtml) ||
+					string.IsNullOrWhiteSpace(p.TeamsStatisticsHtml) ||
+	                string.IsNullOrWhiteSpace(p.TeamsBetStatisticsHtml) ||
+					string.IsNullOrWhiteSpace(p.TeamStandingsHtml) ||
 	                string.IsNullOrWhiteSpace(p.FactsHtml);
 	
 	            if (looksEmpty)
-	                throw new InvalidDataException("Parsed details looks empty (teams/matchbetween/facts all null).");
+				{
+					Console.WriteLine($"Retrying FetchOneAsync...");
+					throw new InvalidDataException("Parsed details looks empty (teams/matchbetween/facts all null).");
+				}
+	                
 	
 	            return rec;
 	        }
