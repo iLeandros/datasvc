@@ -2381,10 +2381,10 @@ public sealed class ParsedTipsService
 	                    backgroundTipColour = AppColors.Black; // still pending / no numbers yet
 	                }
 					
-					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var home, out var away) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
+					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var homeVIP, out var awayVIP) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
 	                {
 	                    // pass the LIVE dto so IsFinal/clock come from live
-	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, home, away);
+	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP);
 	                }
 	                else
 	                {
