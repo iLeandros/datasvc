@@ -247,7 +247,37 @@ public static class TipAnalyzer
             (p1Elo, pxElo, p2Elo) = EloTo1X2(he, ae);
         
             // start conservative; bump if chart 1X2 is missing
-            wElo = (wChart1x2 > 0.0) ? 1.2 : 1.8;
+            //wElo = (wChart1x2 > 0.0) ? 1.2 : 1.8;
+            // Adaptive Elo weight:
+            // - baseline similar to charts (2.0)
+            // - increases with Elo mismatch (|diff|)
+            // - increases when other evidence is thin
+            var diff = (he + 60.0) - ae;               // keep consistent with EloTo1X2 hfa
+            var absDiff = Math.Abs(diff);
+            
+            // mismatch factor: 0 at 0 Elo, 1 at 200 Elo, 1.5 at 300 Elo (capped)
+            var mismatch = Math.Clamp(absDiff / 200.0, 0.0, 1.5);
+            
+            // evidence factor: if you have little data, trust Elo more
+            double evidence =
+                wChart1x2
+              + wSqrt(h2h.NH2H)
+              + wSqrt(sepHome.N + sepAway.N)
+              + wSqrt(factsHome.N + factsAway.N)
+              + wStand;
+            
+            // if evidence is low (< ~6), boost Elo; if high (> ~14), reduce it a bit
+            double scarcityBoost = evidence < 6.0 ? 1.35 : (evidence > 14.0 ? 0.85 : 1.0);
+            
+            // final Elo weight (cap so it never becomes crazy)
+            wElo = (2.0 + 2.0 * mismatch) * scarcityBoost;
+            
+            // if chart 1X2 is missing, bump a bit more (Elo becomes a backbone)
+            if (wChart1x2 <= 0.0) wElo *= 1.25;
+            
+            // hard caps
+            wElo = Math.Clamp(wElo, 1.5, 6.0);
+            
         }
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
         var p1 = Blend(new[]
