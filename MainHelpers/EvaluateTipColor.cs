@@ -9,13 +9,14 @@ namespace DataSvc.MainHelpers;
 
 public static class EvaluationHelper
 {
-    public static string EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away)
+    public static string EvaluateTipColor(LiveTableDataItemDto live, TableDataItem? item, int home, int away, bool isELO = false)
     {
         if (home < 0 || away < 0 || live is null) return AppColors.Black;
     
         // --- normalize tip cheaply ---
         // Upper, trim, remove spaces, unify BTTS->BTS
-        string ts = (item?.VIPTip ?? string.Empty)
+        string tip = (isELO ? item?.vipTipElo : item?.VIPTip) ?? string.Empty;
+        string ts = tip
             .Trim()
             .ToUpperInvariant()
             .Replace("BTTS", "BTS")
