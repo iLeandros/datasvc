@@ -15,7 +15,7 @@ public static class EvaluationHelper
     
         // --- normalize tip cheaply ---
         // Upper, trim, remove spaces, unify BTTS->BTS
-        string tip = (isELO ? item?.vipTipElo : item?.VIPTip) ?? string.Empty;
+        string tip = (isELO ? item?.VIPTipElo : item?.VIPTip) ?? string.Empty;
         string ts = tip
             .Trim()
             .ToUpperInvariant()
