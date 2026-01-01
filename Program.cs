@@ -2384,7 +2384,7 @@ public sealed class ParsedTipsService
 					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var homeVIP, out var awayVIP) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
 	                {
 	                    // pass the LIVE dto so IsFinal/clock come from live
-	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP);
+	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP, true);
 	                }
 	                else
 	                {
