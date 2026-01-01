@@ -2420,7 +2420,8 @@ public sealed class ParsedTipsService
 	            item.GuestScore = scoreTwo;
 	
 	            item.BackgroundTipColour = backgroundTipColour;
-				item.BackgroundTipColourVIP =backgroundTipColourVIP;
+				item.BackgroundTipColourVIP = backgroundTipColourVIP;
+				item.BackgroundTipColourVIPELO = backgroundTipColourVIPELO;
 	            //Debug.WriteLine($"Item {item.TeamOne} vs {item.TeamTwo} tip {tipCode.Code} prob {tipCode?.Probability:P1} color {backgroundTipColour}");
 	            if (tipCode?.Probability is double p && p > 0.90 || tipCodeVIP?.Probability is double pVIP && pVIP > 0.90)
 	            {
