@@ -2304,6 +2304,7 @@ public sealed class ParsedTipsService
 	
 	            var backgroundTipColour = item.BackgroundTipColour;
 				var backgroundTipColourVIP = item.BackgroundTipColour;
+				var backgroundTipColourVIPELO = item.BackgroundTipColourVIPELO;
 	
 	            // === Smarter fixture lookup ===
 	            // Normalize the fixture’s teams and kickoff
@@ -2384,11 +2385,21 @@ public sealed class ParsedTipsService
 					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var homeVIP, out var awayVIP) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
 	                {
 	                    // pass the LIVE dto so IsFinal/clock come from live
-	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP, true);
+	                    backgroundTipColourVIP = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP);
 	                }
 	                else
 	                {
 	                    backgroundTipColourVIP = AppColors.Black; // still pending / no numbers yet
+	                }
+					
+					if (EvaluationHelper.TryGetScores(srcHome, srcAway, out var homeVIP, out var awayVIP) && !string.IsNullOrWhiteSpace(item.VIPTipElo))
+	                {
+	                    // pass the LIVE dto so IsFinal/clock come from live
+	                    backgroundTipColourVIPELO = EvaluationHelper.EvaluateTipColor(matched?.Item, item, homeVIP, awayVIP, true);
+	                }
+	                else
+	                {
+	                    backgroundTipColourVIPELO = AppColors.Black; // still pending / no numbers yet
 	                }
 	            }
 	            catch (Exception ex)
