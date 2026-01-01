@@ -9,6 +9,7 @@ public class TableDataItem
     [JsonPropertyName("ImagePath")] public string? Flag { get; set; }
     [JsonPropertyName("BackgroundTipColour")] public string? BackgroundTipColour { get; set; }
     [JsonPropertyName("BackgroundTipColourVIP")] public string? BackgroundTipColourVIP { get; set; }
+    [JsonPropertyName("BackgroundTipColourVIPELO")] public string? BackgroundTipColourVIPELO { get; set; }
     [JsonPropertyName("Time")] public string? Time { get; set; }
 
     [JsonPropertyName("TeamOne")] public string? HostTeam { get; set; }
