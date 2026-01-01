@@ -365,6 +365,125 @@ public sealed class CommentsController : ControllerBase
         return await Post(req, ct);
     }
 
+    // GET /v1/comments/mine?limit=20&beforeId=...&topLevelOnly=true
+    [HttpGet("mine")]
+    [Authorize]
+    [Produces("application/json")]
+    public async Task<IActionResult> ListMine(
+        [FromQuery] int? limit,
+        [FromQuery] ulong? beforeId,
+        [FromQuery] bool topLevelOnly = true,
+        CancellationToken ct = default)
+    {
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult is not null) return authResult;
+    
+        int take = Math.Clamp(limit ?? 20, 1, 100);
+        var meUid = TryGetUserId();
+    
+        const string whereTop =
+            @"c.user_id = @uid
+              AND (c.is_deleted = 0 OR c.is_deleted IS NULL)
+              AND c.parent_comment_id IS NULL
+              AND (@beforeId IS NULL OR c.comment_id < @beforeId)";
+    
+        const string whereAll =
+            @"c.user_id = @uid
+              AND (c.is_deleted = 0 OR c.is_deleted IS NULL)
+              AND (@beforeId IS NULL OR c.comment_id < @beforeId)";
+    
+        var where = topLevelOnly ? whereTop : whereAll;
+    
+        await using var conn = Open();
+        var rows = await conn.QueryAsync<CommentDto>($@"
+            SELECT c.comment_id AS CommentId,
+                   c.match_id   AS MatchId,
+                   c.user_id    AS UserId,
+                   c.parent_comment_id AS ParentCommentId,
+                   m.href       AS Href,
+                   c.text       AS Text,
+                   c.title      AS Title,
+                   c.created_at AS CreatedAtUtc,
+                   c.updated_at AS UpdatedAtUtc,
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
+              FROM comments c
+              JOIN matches  m  ON m.match_id = c.match_id
+         LEFT JOIN user_profile up ON up.user_id = c.user_id
+             WHERE {where}
+          ORDER BY c.comment_id DESC
+             LIMIT @take;",
+            new { uid = userId, beforeId, take, meUid });
+    
+        ulong? next = rows.Any() ? rows.Last().CommentId : null;
+        return Ok(new { items = rows, nextBeforeId = next });
+    }
+
+    // GET /v1/comments/replies-to-me?limit=20&beforeId=...&includeMyOwn=false
+    [HttpGet("replies-to-me")]
+    [Authorize]
+    [Produces("application/json")]
+    public async Task<IActionResult> ListRepliesToMe(
+        [FromQuery] int? limit,
+        [FromQuery] ulong? beforeId,
+        [FromQuery] bool includeMyOwn = false,
+        CancellationToken ct = default)
+    {
+        var authResult = GetRequiredUserId(out var userId);
+        if (authResult is not null) return authResult;
+    
+        int take = Math.Clamp(limit ?? 20, 1, 100);
+        var meUid = TryGetUserId();
+    
+        // Replies c whose parent p belongs to me.
+        // (Optionally exclude my own replies for a cleaner inbox.)
+        var extraSelfFilter = includeMyOwn ? "" : "AND c.user_id <> @uid";
+    
+        await using var conn = Open();
+        var rows = await conn.QueryAsync<CommentDto>($@"
+            SELECT c.comment_id AS CommentId,
+                   c.match_id   AS MatchId,
+                   c.user_id    AS UserId,
+                   c.parent_comment_id AS ParentCommentId,
+                   m.href       AS Href,
+                   c.text       AS Text,
+                   c.title      AS Title,
+                   c.created_at AS CreatedAtUtc,
+                   c.updated_at AS UpdatedAtUtc,
+                   c.is_deleted AS IsDeleted,
+                   up.display_name AS DisplayName,
+                   up.avatar_url   AS AvatarUrl,
+                   (SELECT COUNT(*) FROM comment_likes cl WHERE cl.comment_id = c.comment_id) AS LikeCount,
+                   (SELECT COUNT(*) FROM comments r WHERE r.parent_comment_id = c.comment_id) AS ReplyCount,
+                   (SELECT COUNT(*) FROM comments r
+                      WHERE r.parent_comment_id = c.comment_id
+                        AND (r.is_deleted = 0 OR r.is_deleted IS NULL)) AS ReplyCountVisible,
+                   EXISTS(SELECT 1 FROM comment_likes me
+                       WHERE me.comment_id = c.comment_id AND me.user_id = @meUid) AS IsLikedByMe
+              FROM comments c
+              JOIN comments p ON p.comment_id = c.parent_comment_id
+              JOIN matches  m ON m.match_id = c.match_id
+         LEFT JOIN user_profile up ON up.user_id = c.user_id
+             WHERE p.user_id = @uid
+               AND (c.is_deleted = 0 OR c.is_deleted IS NULL)
+               AND (@beforeId IS NULL OR c.comment_id < @beforeId)
+               {extraSelfFilter}
+          ORDER BY c.comment_id DESC
+             LIMIT @take;",
+            new { uid = userId, beforeId, take, meUid });
+    
+        ulong? next = rows.Any() ? rows.Last().CommentId : null;
+        return Ok(new { items = rows, nextBeforeId = next });
+    }
+
     [HttpGet("count-by-date")]
     [Produces("application/json")]
     public async Task<IActionResult> CountByDateAllMatches(
