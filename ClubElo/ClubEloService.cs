@@ -332,11 +332,13 @@ public sealed class ClubEloRefreshJob : BackgroundService
     private readonly ClubEloScraperService _svc;
     private readonly ClubEloStore _store;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly ILogger<ClubEloRefreshJob> _log;
 
-    public ClubEloRefreshJob(ClubEloScraperService svc, ClubEloStore store)
+    public ClubEloRefreshJob(ClubEloScraperService svc, ClubEloStore store, ILogger<ClubEloRefreshJob> log)
     {
         _svc = svc;
         _store = store;
+        _log = log;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
