@@ -1646,7 +1646,7 @@ async (
     [FromQuery] string href,
     // When true (default), if the href is missing or the stored payload looks empty,
     // we will fetch+store once and then return the mapped DTO.
-    [FromQuery] bool fetchIfMissing = true,
+    
     [FromQuery] string? teamsInfo,
     [FromQuery] string? matchBetween,
     [FromQuery] string? separateMatches,
@@ -1654,7 +1654,8 @@ async (
     [FromQuery] string? facts,
     [FromQuery] string? lastTeamsMatches,
     [FromQuery] string? teamsStatistics,
-    [FromQuery] string? teamStandings
+    [FromQuery] string? teamStandings,
+	[FromQuery] bool fetchIfMissing = true
 
 ) =>
 {
