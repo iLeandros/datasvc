@@ -4049,7 +4049,6 @@ public record LiveScoreItem(
 	string MatchID,
 	HalfTimeScore? HalfTime
 );
-public record HalfTimeScore(int Home, int Away);
 
 public record LiveScoreGroup(
     string Competition,
