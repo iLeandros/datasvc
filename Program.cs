@@ -1641,9 +1641,12 @@ app.MapGet("/data/details/allhrefs/date/{date}",
 
 // GET /data/details/item?href=...
 app.MapGet("/data/details/item",
-(
+async (
     [FromServices] DetailsStore store,
     [FromQuery] string href,
+    // When true (default), if the href is missing or the stored payload looks empty,
+    // we will fetch+store once and then return the mapped DTO.
+    [FromQuery] bool fetchIfMissing = true,
     [FromQuery] string? teamsInfo,
     [FromQuery] string? matchBetween,
     [FromQuery] string? separateMatches,
@@ -1652,12 +1655,51 @@ app.MapGet("/data/details/item",
     [FromQuery] string? lastTeamsMatches,
     [FromQuery] string? teamsStatistics,
     [FromQuery] string? teamStandings
+
 ) =>
 {
     if (string.IsNullOrWhiteSpace(href))
         return Results.BadRequest(new { message = "href is required" });
 
+    static bool PayloadLooksEmpty(DetailsPayload? p)
+    {
+        if (p is null) return true;
+        // Treat "all or almost all" empty as missing.
+        // (We keep this strict enough to avoid unnecessary refetches.)
+        return string.IsNullOrWhiteSpace(p.TeamsInfoHtml)
+            && string.IsNullOrWhiteSpace(p.MatchBetweenHtml)
+            && string.IsNullOrWhiteSpace(p.TeamMatchesSeparateHtml)
+            && string.IsNullOrWhiteSpace(p.LastTeamsMatchesHtml)
+            && string.IsNullOrWhiteSpace(p.TeamsStatisticsHtml)
+            && string.IsNullOrWhiteSpace(p.TeamsBetStatisticsHtml)
+            && string.IsNullOrWhiteSpace(p.FactsHtml)
+            && string.IsNullOrWhiteSpace(p.TeamStandingsHtml);
+    }
+
+    // 1) Try the cache.
     var rec = store.Get(href);
+
+    // 2) If missing/empty and allowed, fetch once and store.
+    if (fetchIfMissing && (rec is null || PayloadLooksEmpty(rec.Payload)))
+    {
+        try
+        {
+            var existing = rec;
+            var fresh = await DetailsScraperService.FetchOneWithRetryAsync(href);
+            var merged = DetailsMerge.Merge(existing, fresh);
+            store.Set(merged);
+            await DetailsFiles.SaveAsync(store);
+            rec = merged;
+        }
+        catch (Exception ex)
+        {
+            // If we still have something cached, fall back to it.
+            // Otherwise surface a 404-ish response to the caller.
+            if (rec is null)
+                return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href), error = ex.Message });
+        }
+    }
+
     if (rec is null)
         return Results.NotFound(new { message = "No details for href (yet)", normalized = DetailsStore.Normalize(href) });
 
@@ -2019,12 +2061,96 @@ public sealed class ParsedTipsService
 {
     private readonly LiveScoresStore _live;
 	private readonly ClubEloStore _clubEloStore;
+	private readonly DetailsStore _detailsStore;
 
-    public ParsedTipsService(LiveScoresStore live, ClubEloStore clubEloStore)
+    public ParsedTipsService(LiveScoresStore live, ClubEloStore clubEloStore, DetailsStore detailsStore)
     {
         _live = live;
 		_clubEloStore = clubEloStore;
+		_detailsStore = detailsStore;
     }
+
+	private static bool IsDetailsDtoEmpty(DetailsItemDto? d)
+	{
+		if (d is null) return true;
+		// Treat the DTO as "empty" if none of the parsed sections are present.
+		// (TipAnalyzer relies on these.)
+		var chartsEmpty = d.BarCharts is null || d.BarCharts.Count == 0;
+		return d.TeamsInfo is null
+			&& d.MatchFacts is null
+			&& d.TeamStandings is null
+			&& d.MatchDataBetween is null
+			&& chartsEmpty;
+	}
+
+	private static bool PayloadLooksEmpty(DetailsPayload? p)
+	{
+		if (p is null) return true;
+		return string.IsNullOrWhiteSpace(p.TeamsInfoHtml)
+			&& string.IsNullOrWhiteSpace(p.MatchBetweenHtml)
+			&& string.IsNullOrWhiteSpace(p.TeamMatchesSeparateHtml)
+			&& string.IsNullOrWhiteSpace(p.LastTeamsMatchesHtml)
+			&& string.IsNullOrWhiteSpace(p.TeamsStatisticsHtml)
+			&& string.IsNullOrWhiteSpace(p.TeamsBetStatisticsHtml)
+			&& string.IsNullOrWhiteSpace(p.FactsHtml)
+			&& string.IsNullOrWhiteSpace(p.TeamStandingsHtml);
+	}
+
+	/// <summary>
+	/// Fallback path when the per-date details file is missing the href OR the DTO is empty:
+	/// try to resolve via the same logic as GET /data/details/item?href= (cache → fetch+store → map).
+	/// </summary>
+	private async Task<DetailsItemDto?> TryGetDetailsDtoByHrefAsync(string href, CancellationToken ct)
+	{
+		var norm = DetailsStore.Normalize(href);
+		var rec = _detailsStore.Get(norm);
+
+		// If missing or obviously empty, scrape once (with retry), merge, store, and persist.
+		if (rec is null || PayloadLooksEmpty(rec.Payload))
+		{
+			try
+			{
+				var existing = rec;
+				var fresh = await DetailsScraperService.FetchOneWithRetryAsync(norm, ct).ConfigureAwait(false);
+				var merged = DetailsMerge.Merge(existing, fresh);
+				_detailsStore.Set(merged);
+				await DetailsFiles.SaveAsync(_detailsStore).ConfigureAwait(false);
+				rec = merged;
+			}
+			catch
+			{
+				// best-effort fallback: if we had *any* cached record, keep going;
+				// otherwise signal failure with null.
+				if (rec is null) return null;
+			}
+		}
+
+		if (rec is null) return null;
+
+		// Map using the same mapping used by /data/details/allhrefs and /data/details/item.
+		var mapped = AllhrefsMapper.MapDetailsRecordToAllhrefsItem(
+			rec,
+			preferTeamsInfoHtml: false,
+			preferMatchBetweenHtml: false,
+			preferSeparateMatchesHtml: false,
+			preferBetStatsHtml: false,
+			preferFactsHtml: false,
+			preferLastTeamsHtml: false,
+			preferTeamsStatisticsHtml: false,
+			preferTeamStandingsHtml: false);
+
+		// MapDetailsRecordToAllhrefsItem may return an anonymous object; deserialize defensively.
+		if (mapped is DetailsItemDto dto) return dto;
+		try
+		{
+			var json = JsonSerializer.Serialize(mapped, _json);
+			return JsonSerializer.Deserialize<DetailsItemDto>(json, _json);
+		}
+		catch
+		{
+			return null;
+		}
+	}
 
 	private Dictionary<string, double> _eloByTeam = new(StringComparer.OrdinalIgnoreCase);
 	private DateTimeOffset? _eloStampUtc = null;
@@ -2189,6 +2315,7 @@ public sealed class ParsedTipsService
 	    // ---------- 1) Load per-date details JSON (already in the DetailsItemDto shape) ----------
 	    var detailsByHref = LoadPerDateDetails(date); // href (normalized) → DetailsItemDto
 		int total = 0, missingHref = 0, noDetail = 0, schemeMismatch = 0, analyzed = 0, analyzeFailed = 0, emptyProposed = 0;
+		int detailsFallbackUsed = 0, detailsFallbackFailed = 0, detailsDtoEmpty = 0;
 		var samples = new List<object>(); // keep small
 		
 		string ForceScheme(string absUri, string scheme)
@@ -2223,28 +2350,61 @@ public sealed class ParsedTipsService
 				}
 	
 	            var normHref = DetailsStore.Normalize(href);
-	            if (!detailsByHref.TryGetValue(normHref, out var detailDto) || detailDto is null)
-				{
-				    noDetail++;
+	            var hasDetail = detailsByHref.TryGetValue(normHref, out var detailDto) && detailDto is not null;
 				
+				// If missing OR empty, try fallbacks:
+				//  1) alternate scheme key (http/https mismatch)
+				//  2) the same logic as GET /data/details/item?href= (cache → fetch+store → map)
+				if (!hasDetail || IsDetailsDtoEmpty(detailDto))
+				{
 				    // detect likely “looks same but differs” cases:
 				    var https = ForceScheme(normHref, "https");
 				    var http  = ForceScheme(normHref, "http");
 				
-				    var hasHttps = detailsByHref.ContainsKey(https);
-				    var hasHttp  = detailsByHref.ContainsKey(http);
+				    if (!hasDetail)
+				    {
+				        if (detailsByHref.TryGetValue(https, out var altHttps) && altHttps is not null && !IsDetailsDtoEmpty(altHttps))
+				        {
+				            detailDto = altHttps;
+				            detailsByHref[normHref] = altHttps; // alias for future lookups
+				            hasDetail = true;
+				            schemeMismatch++;
+				        }
+				        else if (detailsByHref.TryGetValue(http, out var altHttp) && altHttp is not null && !IsDetailsDtoEmpty(altHttp))
+				        {
+				            detailDto = altHttp;
+				            detailsByHref[normHref] = altHttp;
+				            hasDetail = true;
+				            schemeMismatch++;
+				        }
+				    }
 				
-				    if ((hasHttps || hasHttp) && !(hasHttps && hasHttp))
+				    // If still missing/empty, fetch via href (fallback endpoint logic)
+				    if (!hasDetail || IsDetailsDtoEmpty(detailDto))
 				    {
-				        schemeMismatch++;
-				        if (debugTips && samples.Count < 25)
-				            samples.Add(new { reason = "scheme-mismatch", raw = href, norm = normHref, alt = hasHttps ? https : http });
+				        var fallback = await TryGetDetailsDtoByHrefAsync(normHref, ct).ConfigureAwait(false);
+				        if (fallback is not null && !IsDetailsDtoEmpty(fallback))
+				        {
+				            detailDto = fallback;
+				            detailsByHref[normHref] = fallback;
+				            hasDetail = true;
+				            detailsFallbackUsed++;
+				        }
+				        else
+				        {
+				            detailsFallbackFailed++;
+				        }
 				    }
-				    else
-				    {
-				        if (debugTips && samples.Count < 25)
-				            samples.Add(new { reason = "no-details", raw = href, norm = normHref });
-				    }
+				}
+				
+				// If after all fallbacks we still have nothing useful, skip the item.
+				if (!hasDetail || IsDetailsDtoEmpty(detailDto))
+				{
+				    noDetail++;
+				    if (hasDetail && IsDetailsDtoEmpty(detailDto)) detailsDtoEmpty++;
+				
+				    if (debugTips && samples.Count < 25)
+				        samples.Add(new { reason = hasDetail ? "details-empty" : "no-details", raw = href, norm = normHref });
 				
 				    continue;
 				}
@@ -2440,7 +2600,8 @@ public sealed class ParsedTipsService
 
 				Console.WriteLine(
 			    $"[Tips][{dateKey}] total={total} detailsKeys={detailsByHref.Count} " +
-			    $"missingHref={missingHref} noDetail={noDetail} schemeMismatch={schemeMismatch} " +
+		    $"missingHref={missingHref} noDetail={noDetail} schemeMismatch={schemeMismatch} " +
+		    $"detailsFallbackUsed={detailsFallbackUsed} detailsFallbackFailed={detailsFallbackFailed} detailsDtoEmpty={detailsDtoEmpty} " +
 			    $"analyzed={analyzed} analyzeFailed={analyzeFailed} emptyProposed={emptyProposed}");
 			
 			if (debugTips && samples.Count > 0)
