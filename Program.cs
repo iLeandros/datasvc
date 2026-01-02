@@ -3897,7 +3897,12 @@ public static class GetStartupMainTableDataGroup2024
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "name")?
                                 .Element("a")?.Attributes["href"].Value;
 
-                            if (hrefs != null) hrefs = hrefs.Replace(" ", "%20");
+                            //if (hrefs != null) hrefs = hrefs.Replace(" ", "%20");
+							if (!string.IsNullOrWhiteSpace(hrefs))
+							{
+							    hrefs = hrefs.Replace(" ", "%20");
+							    hrefs = DetailsStore.Normalize(hrefs);
+							}
 
                             var teamonescore = matchItem.Descendants("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "teams")?
@@ -4213,7 +4218,14 @@ public sealed class DetailsStore
     private readonly object _saveGate = new();
     public DateTimeOffset? LastSavedUtc { get; private set; }
 
-    public void Set(DetailsRecord rec) => _map[rec.Href] = rec;
+    public void Set(DetailsRecord rec)
+	{
+	    var norm = Normalize(rec.Href);
+	    if (!string.Equals(rec.Href, norm, StringComparison.OrdinalIgnoreCase))
+	        rec = rec with { Href = norm };
+	
+	    _map[norm] = rec;
+	}
     public DetailsRecord? Get(string href) => _map.TryGetValue(Normalize(href), out var rec) ? rec : null;
 
     public List<(string href, DateTimeOffset lastUpdatedUtc)> Index()
