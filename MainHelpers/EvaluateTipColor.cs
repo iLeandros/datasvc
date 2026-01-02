@@ -20,7 +20,8 @@ public static class EvaluationHelper
             .Trim()
             .ToUpperInvariant()
             .Replace("BTTS", "BTS")
-            .Replace(" ", string.Empty);
+            .Replace(" ", string.Empty)
+            .Replace(",", ".");
     
         bool isFinal = IsFinal(live?.LiveTime);
         int? minute = TimeStringToMinutes(live?.LiveTime);
@@ -39,65 +40,55 @@ public static class EvaluationHelper
         if (ts.Length >= 2 && (ts[0] == 'O' || ts[0] == 'U') && TryParseThreshold(ts.AsSpan(1), out double thr))
         {
             bool isOver = ts[0] == 'O';
-    
-            // --- Early resolution rules ---
-            // Over: if already above the threshold at any time => permanently won.
-            if (isOver && total > thr) return AppColors.Green;
-    
-            // Under: if already above the threshold at any time => permanently lost.
-            if (!isOver && total > thr) return AppColors.Red;
-    
-            // For HT markets: only judge at/before HT; otherwise pending.
-            /*
+
+            // HT O/U markets (HTO1.5 / HTU1.5): evaluate using HALF-TIME score once at/after HT.
             if (isHTMarket)
             {
-                if (!minute.HasValue) return AppColors.Black; // no clock yet
-                bool atHT = string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase)
-                            || minute.Value >= 45; // treat 45+ as HT boundary
-    
-                if (!atHT) return AppColors.Black; // still pending before HT whistle
-    
-                // decide at HT whistle
-                return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
-                              : (total < thr ? AppColors.Green : AppColors.Red);
-            }
-            */
-            // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
-            // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
-            if (isHTMarket)
-            {
-                if (!minute.HasValue) return AppColors.Black;
-            
-                // We evaluate HT O/U using FIRST-HALF goals only
+                // If we don't have a match clock, we can still early-resolve from the current score,
+                // but we cannot finalize without HT info.
                 bool atOrAfterHT = isFinal
                     || string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase)
-                    || minute.Value >= 46;
-            
-                int cutoff = atOrAfterHT ? 45 : Math.Min(minute.Value, 45); // 45+stoppage capped
-                int htGoalsSoFar = CountGoalsUpToMinute(live, cutoff);
-            
-                // Early resolution (first half only):
-                // Over wins as soon as htGoalsSoFar > thr
-                if (isOver)
+                    || (minute.HasValue && minute.Value >= 46);
+
+                if (!atOrAfterHT)
                 {
-                    if (htGoalsSoFar > thr) return AppColors.Green;
-                    return atOrAfterHT ? AppColors.Red : AppColors.Black;
+                    // First half: current score is first-half score so far → early resolution allowed.
+                    if (isOver && total > thr) return AppColors.Green;
+                    if (!isOver && total > thr) return AppColors.Red;
+                    return AppColors.Black;
                 }
-                else
+
+                // At/after HT (including FT): decide from parsed half-time score
+                if (live.HasHalfTime)
                 {
-                    // Under loses as soon as htGoalsSoFar > thr
-                    if (htGoalsSoFar > thr) return AppColors.Red;
-                    return atOrAfterHT ? AppColors.Green : AppColors.Black;
+                    int htTotal = live.HalfTimeHomeGoals!.Value + live.HalfTimeAwayGoals!.Value;
+                    return isOver ? (htTotal > thr ? AppColors.Green : AppColors.Red)
+                                  : (htTotal < thr ? AppColors.Green : AppColors.Red);
                 }
+
+                // Fallback: if feed shows "HT", the displayed score should be HT score
+                if (string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase))
+                {
+                    return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
+                                  : (total < thr ? AppColors.Green : AppColors.Red);
+                }
+
+                // We are past HT but we don't have HT score → don't guess
+                return AppColors.Black;
             }
-            
+
+            // Full-time O/U early resolution
+            if (isOver && total > thr) return AppColors.Green;
+            if (!isOver && total > thr) return AppColors.Red;
+
             // Full-time O/U: decide at FT if not early-resolved
             if (!isFinal) return AppColors.Black;
-    
+
             return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
                           : (total < thr ? AppColors.Green : AppColors.Red);
         }
 
+    
         // ---------- Other markets ----------
         if (!isFinal)
         {
@@ -155,87 +146,6 @@ public static class EvaluationHelper
                 return AppColors.Black;
         }
     }
-    private static int CountGoalsUpToMinute(LiveTableDataItemDto live, int maxMinute)
-    {
-        var acts = live?.Action;
-        if (acts == null || acts.Count == 0)
-            return 0; // IMPORTANT: 0 actions => 0 goals, not "unknown"
-    
-        int goals = 0;
-        foreach (var a in acts)
-        {
-            if (a == null || !a.Minute.HasValue) continue;
-    
-            // If in your feed "Penalty" means "penalty scored", keep it.
-            // If it means only "penalty awarded", remove Penalty from this condition.
-            bool isGoal = a.Kind == ActionKind.Goal || a.Kind == ActionKind.Penalty;
-    
-            if (isGoal && a.Minute.Value <= maxMinute)
-                goals++;
-        }
-        return goals;
-    }
-
-    private static bool IsAtOrAfterHT(string? liveTime, int minute, bool isFinal)
-    {
-        if (isFinal) return true;
-        if (!string.IsNullOrWhiteSpace(liveTime) &&
-            liveTime.Trim().Equals("HT", StringComparison.OrdinalIgnoreCase))
-            return true;
-    
-        // If the clock is already in the second half, HT outcome is fixed.
-        return minute >= 46;
-    }
-    
-    private static bool TryGetHalfTimeScore(LiveTableDataItemDto live, out int htHome, out int htAway)
-    {
-        htHome = 0; htAway = 0;
-    
-        var acts = live?.Action;
-        if (acts == null || acts.Count == 0) return false;
-    
-        // Heuristic: include normal first-half goals (<=45) and stoppage-time goals (46..49) as "45+X".
-        // If your source stores "45+2" as 47, this captures it. If this ever misclassifies true 46' goals,
-        // tighten to <=45 only.
-        const int HT_MAX_MINUTE = 45;
-    
-        foreach (var a in acts)
-        {
-            if (a == null) continue;
-            if (!a.Minute.HasValue) continue;
-    
-            int m = a.Minute.Value;
-            if (m > HT_MAX_MINUTE) continue;
-    
-            if (!IsScoringAction(a.Kind)) continue;
-    
-            if (IsHomeSide(a.Side)) htHome++;
-            else if (IsAwaySide(a.Side)) htAway++;
-            // else: unknown side label -> ignore (safer than miscount)
-        }
-    
-        // If we found nothing, we still “computed” it, but returning false is safer (prevents wrong red/green)
-        return (htHome + htAway) > 0 || acts.Any(x => x?.Minute.HasValue == true && x.Minute.Value <= HT_MAX_MINUTE);
-    }
-    
-    private static bool IsScoringAction(ActionKind k)
-    {
-        // If in your feed Penalty means “penalty awarded” (not scored), remove Penalty here.
-        return k == ActionKind.Goal || k == ActionKind.Penalty;
-    }
-    
-    private static bool IsHomeSide(TeamSide side)
-    {
-        var s = side.ToString().ToLowerInvariant();
-        return s.Contains("home") || s.Contains("host");
-    }
-    
-    private static bool IsAwaySide(TeamSide side)
-    {
-        var s = side.ToString().ToLowerInvariant();
-        return s.Contains("away") || s.Contains("guest");
-    }
-
     public static bool TryParseThreshold(ReadOnlySpan<char> s, out double thr)
         => double.TryParse(s, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out thr);
 
