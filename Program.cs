@@ -2448,7 +2448,7 @@ public sealed class ParsedTipsService
 					var vip = TipAnalyzer.PickVip(
 					    detailDto, hostSafe, guestSafe, probsVIP, homeElo, awayElo
 					);
-					//item.VIPTip = vip.code;
+					item.VIPTip = vip.code;
 	            }
 	            catch (Exception ex)
 	            {
