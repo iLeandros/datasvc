@@ -2227,10 +2227,10 @@ public sealed class ParsedTipsService
 	                AwayTeam = m.AwayTeam,
 	                Action = m.Action,     // same type in both models
 	                MatchID = m.MatchID,
-					HalfTimeHomeGoals = m.HalfTime?.host.ToString(),
-					HalfTimeAwayGoals = m.HalfTime?.guest.ToString(),
-					//HalfTimeHomeGoals = item.HalfTime?.Home.ToString(),
-					//HalfTimeAwayGoals = item.HalfTime?.Away.ToString()
+					//HalfTimeHomeGoals = m.HalfTime?.host.ToString(),
+					//HalfTimeAwayGoals = m.HalfTime?.guest.ToString(),
+					HalfTimeHomeGoals = m.HalfTime?.Home.ToString(),
+					HalfTimeAwayGoals = m.HalfTime?.Away.ToString()
 	            }).ToList() ?? new List<LiveScoreItemResponse>()
 	        }).ToList() ?? new List<LiveScoreGroupResponse>()
 	    };
