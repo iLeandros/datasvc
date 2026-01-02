@@ -2229,8 +2229,8 @@ public sealed class ParsedTipsService
 	                MatchID = m.MatchID,
 					//HalfTimeHomeGoals = m.HalfTime?.host.ToString(),
 					//HalfTimeAwayGoals = m.HalfTime?.guest.ToString(),
-					HalfTimeHomeGoals = m.HalfTime?.Home.ToString(),
-					HalfTimeAwayGoals = m.HalfTime?.Away.ToString()
+					HalfTimeHomeGoals = m.HalfTime?.Host.ToString(),
+					HalfTimeAwayGoals = m.HalfTime?.Guest.ToString()
 	            }).ToList() ?? new List<LiveScoreItemResponse>()
 	        }).ToList() ?? new List<LiveScoreGroupResponse>()
 	    };
