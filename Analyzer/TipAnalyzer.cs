@@ -57,19 +57,23 @@ public static class TipAnalyzer
 
         // --- apply prior --------------------------------------------------------
         // Stronger prior for 1X2, milder for single markets
-        const double TAU_1X2 = 0.45;
-        const double TAU_SOLO = 0.35;
+        double evidenceTotal = wChart1x2 + wH2H + wStand + wElo + wSqrt(sepHome.N + sepAway.N);
+        double TAU_1X2 = 0.40 + 0.12 * Math.Clamp(evidenceTotal / 20.0, 0.0, 1.0); // 0.40 → 0.52
+        double TAU_SOLO = 0.30 + 0.10 * Math.Clamp(evidenceTotal / 20.0, 0.0, 1.0); // 0.30 → 0.40
+        double lo = evidenceTotal < 5.0 ? 0.10 : 0.05;
+        double hi = evidenceTotal < 5.0 ? 0.90 : 0.95;
 
         // 1X2 family handling (bump selected, then renormalize and rebuild double chance)
         if (tip is "1" or "X" or "2")
         {
             double p1 = Get("1"), px = Get("X"), p2 = Get("2");
+
             if (!double.IsNaN(p1 + px + p2) && p1 + px + p2 > 1e-9)
             {
                 // bump selected
-                if (tip == "1") p1 = LogitBump(p1, TAU_1X2);
-                else if (tip == "X") px = LogitBump(px, TAU_1X2);
-                else p2 = LogitBump(p2, TAU_1X2);
+                if (tip == "1") p1 = LogitBump(p1, TAU_1X2, lo, hi);
+                else if (tip == "X") px = LogitBump(px, TAU_1X2, lo, hi);
+                else p2 = LogitBump(p2, TAU_1X2, lo, hi);
 
                 // renormalize to sum=1, preserving ratio of the non-bumped two
                 double s = p1 + px + p2;
@@ -267,76 +271,50 @@ public static class TipAnalyzer
         
         if (homeElo is double he && awayElo is double ae)
         {
-            // Keep consistent with EloTo1X2
             const double hfa = 60.0;
             var diff = (he + hfa) - ae;
             var absDiff = Math.Abs(diff);
         
             (p1Elo, pxElo, p2Elo) = EloTo1X2(he, ae);
         
-            // --- Evidence already in your analyzer (same scale you blend with) ---
-            double evidence =
-                  wChart1x2
-                + wSqrt(h2h.NH2H)
-                + wSqrt(sepHome.N + sepAway.N)
-                + wSqrt(factsHome.N + factsAway.N)
-                + wStand;
+            double evidence = wChart1x2 + wSqrt(h2h.NH2H) + wSqrt(sepHome.N + sepAway.N)
+                            + wSqrt(factsHome.N + factsAway.N) + wStand;
         
-            // --- Your requested scarcityBoost steps ---
-            double scarcityBoost;
-            if (evidence < 5.0) scarcityBoost = 1.65;
-            else if (evidence < 10.0) scarcityBoost = 1.45;
-            else if (evidence < 15.0) scarcityBoost = 1.35;
-            else scarcityBoost = 1.20;
-        
-            // --- Gap factor: 0 at 0 Elo, 1 at 200 Elo, 2 at 400 Elo (capped) ---
+            // Dynamic scarcity & level boosts
+            double scarcityBoost = evidence < 5.0 ? 1.70 : evidence < 10.0 ? 1.50 : evidence < 15.0 ? 1.35 : 1.15;
             var gap = Math.Clamp(absDiff / 200.0, 0.0, 2.0);
-        
-            // --- Elo level factor: depends on average Elo (higher avg -> more trust) ---
-            // Tune the range if your dataset differs; these work well for typical club Elo.
             var avgElo = (he + ae) / 2.0;
-            var level01 = Math.Clamp((avgElo - 1500.0) / 600.0, 0.0, 1.0); // 1500..2100 -> 0..1
-            var levelBoost = 1.0 + 0.60 * level01;                         // 1.00 .. 1.60
+            var level01 = Math.Clamp((avgElo - 1500.0) / 600.0, 0.0, 1.0);
+            var levelBoost = 1.0 + 0.60 * level01;
         
-            // --- Base Elo weight: make it strong, and increase with mismatch ---
-            // At gap=0 -> ~3.0 * boosts
-            // At gap=1 (200 Elo) -> ~5.0 * boosts
-            // At gap=2 (400 Elo) -> ~7.0 * boosts
             var baseW = 3.0 + 2.0 * gap;
-        
             wElo = baseW * scarcityBoost * levelBoost;
         
-            // If chart 1X2 is missing, Elo becomes even more backbone
-            if (wChart1x2 <= 0.0)
-                wElo *= 1.25;
+            if (wChart1x2 <= 0.0) wElo *= 1.25;
         
-            // --- Guarantee: Elo is a MAJOR share of total blend weight ---
-            // (Set this higher/lower based on how dominant you want Elo to be.)
-            // Example: 60% of evidence means Elo often becomes the largest single contributor.
-            var targetShare = 0.75;
+            // Reduced target share for low evidence
+            var targetShare = evidence < 10.0 ? 0.60 : 0.75;
             wElo = Math.Max(wElo, targetShare * evidence);
         
-            // Hard caps (avoid crazy weights)
-            wElo = Math.Clamp(wElo, 2.5, 12.0);
-            
-            //(htsElo, gtsElo) = EloToTeamScores(he, ae);
+            wElo = Math.Clamp(wElo, 2.5, 14.0); // slight upper cap increase
         
-            // Make goals follow Elo strongly, but slightly less than 1X2
-            // (If you want: set equal to wElo)
-            //wEloGoals = 0.75 * wElo;
             (lamHElo, lamAElo) = EloToLambdas(he, ae);
-
+        
+            // NEW: Inflate goals slightly in big mismatches
+            double mismatchInflation = 1.0 + 0.12 * gap;
+            lamHElo *= mismatchInflation;
+            lamAElo *= mismatchInflation;
+        
             htsElo = 1.0 - Math.Exp(-lamHElo);
             gtsElo = 1.0 - Math.Exp(-lamAElo);
-            
+        
             var lamTElo = lamHElo + lamAElo;
             o15Elo = OverFromLambda(lamTElo, 1.5);
             o25Elo = OverFromLambda(lamTElo, 2.5);
             o35Elo = OverFromLambda(lamTElo, 3.5);
-            
-            // weights for goal-derived markets
-            wEloGoals = 0.75 * wElo;
-            wEloOU    = 0.75 * wElo;
+        
+            wEloGoals = avgElo > 1800 ? 0.85 * wElo : 0.75 * wElo; // stronger for high Elo
+            wEloOU = wEloGoals;
         }
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
@@ -510,6 +488,27 @@ public static class TipAnalyzer
         UpOnly(ref gts, gtsStand, wStand);
         UpOnly(ref btts, bttsStand, wStand);
 
+        // Inside Positive-only overlay section — add after existing UpOnly calls
+        double pressureSum = pressureHome + pressureAway;
+        
+        // NEW: Downward pressure on overs if low stakes
+        if (pressureSum < 0.5)
+        {
+            double lowStakesFactor = 0.10 * (0.5 - pressureSum);
+            o15 = Clamp01(o15 * (1.0 - lowStakesFactor));
+            o25 = Clamp01(o25 * (1.0 - lowStakesFactor));
+            o35 = Clamp01(o35 * (1.0 - lowStakesFactor));
+        }
+        
+        // NEW: Filter for O1.5 if low BTTS expectation
+        if (btts < 0.40)
+        {
+            double lowBttsPenalty = 0.08 * (0.40 - btts) / 0.40;
+            o15 = Clamp01(o15 * (1.0 - lowBttsPenalty));
+        }
+        
+        u15 = 1 - o15; u25 = 1 - o25; u35 = 1 - o35;
+
         // Draw: push DOWN only; redistribute mass to 1 and 2
         DownOnlyDraw(ref p1, ref px, ref p2, pxStand, wStand);
 
@@ -528,6 +527,14 @@ public static class TipAnalyzer
         // Half-time O/U not reliably present in your feed -> NaN
         double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
         double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
+        
+        double lamTFull = (lamHElo ?? 0) + (lamAElo ?? 0);
+        if (double.IsNaN(hto15) && lamTFull > 0)
+        {
+            double lamTHalf = 0.45 * lamTFull; // empirical first-half ratio
+            hto15 = OverFromLambda(lamTHalf, 1.5);
+            htu15 = 1.0 - hto15;
+        }
         // === DC '12' filters & pumps (no feedback into 1X2/DC normalization) ===
         double dec1 = Dc12FilterPx(px, p2);
         double dec2 = Dc12FilterHomeDom(p1, p2);
@@ -567,7 +574,103 @@ public static class TipAnalyzer
 
     // ====================== helpers ======================
     // ============ VIP eligibility + guards ============
+    // ====================== NEW/REFRACTORED HELPERS ======================
 
+    private static double PressureScore(int teamRank, int teamPts, int matchesPlayed,
+        LeagueRules rules, bool targetUp, int targetRank, int targetPts,
+        int seasonMatches = 38)
+    {
+        int remaining = Math.Max(0, seasonMatches - matchesPlayed);
+        int rankGap = targetUp ? Math.Max(0, teamRank - targetRank) : Math.Max(0, targetRank - teamRank);
+        int ptsGap = Math.Max(0, targetUp ? (targetPts - teamPts) : (teamPts - targetPts));
+    
+        double r = rankGap / Math.Max(1.0, rules.TotalTeams - 1.0);
+        double p = ptsGap / Math.Max(1.0, 3.0 * remaining + 1);
+        double time = 1.0 - (double)remaining / Math.Max(1, seasonMatches);
+    
+        // NEW: Stronger emphasis on relegation pressure
+        double relegationFactor = 1.0 + 0.2 * (rules.RelegationSlots / (double)rules.TotalTeams);
+    
+        return Math.Max(0, Math.Min(1, 0.5 * r + 0.5 * p)) * (0.5 + 0.5 * time) * relegationFactor;
+    }
+    
+    private static (double attH, double attA, double drawMult) MotivationMultipliers(double pressureHome, double pressureAway)
+    {
+        // Increased base boost for higher impact
+        double baseBoost = 0.15; // was 0.10 → up to +15% attack
+        double desperationBoost = pressureHome > 0.7 ? 1.25 : (pressureAway > 0.7 ? 1.25 : 1.0);
+    
+        double attH = 1.0 + baseBoost * pressureHome * desperationBoost;
+        double attA = 1.0 + baseBoost * pressureAway * desperationBoost;
+    
+        double drawCut = 0.15 * Math.Max(pressureHome, pressureAway); // was 0.10 → stronger draw suppression
+        double drawMult = Math.Max(0.75, 1.0 - drawCut);
+    
+        return (attH, attA, drawMult);
+    }
+    
+    private static (double lamH, double lamA, double weight) LambdasFromStandings(
+        StandingsContext s, double hfa = 1.10, double shrink = 0.70)
+    {
+        double mu = Math.Max(0.4, Math.Min(2.0, s.LeagueMu));
+    
+        double GFh = (double)s.Home.GF / Math.Max(1, s.Home.Matches);
+        double GAh = (double)s.Home.GA / Math.Max(1, s.Home.Matches);
+        double GFa = (double)s.Away.GF / Math.Max(1, s.Away.Matches);
+        double GAa = (double)s.Away.GA / Math.Max(1, s.Away.Matches);
+    
+        double Ah = SafeDiv(GFh, mu);
+        double Va = SafeDiv(GAa, mu);
+        double Aa = SafeDiv(GFa, mu);
+        double Vh = SafeDiv(GAh, mu);
+    
+        Ah = 1 + shrink * (Ah - 1);
+        Va = 1 + shrink * (Va - 1);
+        Aa = 1 + shrink * (Aa - 1);
+        Vh = 1 + shrink * (Vh - 1);
+    
+        // NEW: Reduce HFA if home team has low motivation
+        double effectiveHfa = (PressureScore(s.Home.Position, s.Home.Points, s.Home.Matches, 
+            GuessRules(s.Rows.Count, true), true, 1, 0, 38) < 0.3) ? 1.05 : hfa;
+    
+        double lamH = mu * Ah * Va * effectiveHfa;
+        double lamA = mu * Aa * Vh;
+    
+        int n = Math.Min(s.Home.Matches, s.Away.Matches);
+        double w = Math.Min(3.0, Math.Sqrt(Math.Max(0, n))); // slight cap increase
+    
+        return (lamH, lamA, w);
+    
+        static double SafeDiv(double a, double b) => b <= 0 ? 1.0 : Math.Max(0.2, Math.Min(5.0, a / b));
+    }
+    
+    private static double OverFromLambda(double lambdaTotal, double line)
+    {
+        int k = (int)Math.Floor(line);
+        double lam = Math.Max(1e-6, lambdaTotal);
+        double term = Math.Exp(-lam), cdf = term;
+        for (int i = 1; i <= k; i++) { term *= lam / i; cdf += term; }
+    
+        // NEW: Conservatism for unders in low-lambda games
+        if (line > 2.0 && lam < 2.8)
+        {
+            double underBias = 0.05 * (2.8 - lam) / 2.8;
+            cdf *= (1.0 + underBias);
+        }
+    
+        return Clamp01(1.0 - Math.Min(1.0, cdf));
+    }
+    
+    private static double FactsOver(double pScoreHome, double pConcedeAway,
+        double pScoreAway, double pConcedeHome,
+        double line, double gamma = 0.85) // lowered from 0.90
+    {
+        if (double.IsNaN(pScoreHome) || double.IsNaN(pConcedeAway) ||
+            double.IsNaN(pScoreAway) || double.IsNaN(pConcedeHome))
+            return double.NaN;
+    
+        return OverFromFacts(pScoreHome, pConcedeAway, pScoreAway, pConcedeHome, line, gamma);
+    }
     // Read "without goal" for a given team from the "Time of first goal" chart(s)
     private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
     {
@@ -964,11 +1067,21 @@ public static class TipAnalyzer
     private static double wSqrt(int n) => Math.Sqrt(Math.Max(0, n)); // adaptive weight
 
     private sealed record Contrib(double P, double W);
+    const double HALF_LIFE_DAYS = 240.0;     // reduced from 365 → stronger recency
+    const double MIN_W = 0.15;               // increased from 0.10
     private static Contrib C(double p, double w) => new(Clamp01(p), w);
     private static double Blend(IEnumerable<Contrib> parts)
     {
+        var valid = parts.Where(x => !double.IsNaN(x.P) && x.W > 0).ToList();
+        
+        if (valid.Count < 2) // low evidence fallback
+        {
+            var eloPart = valid.FirstOrDefault(x => x.W == wElo); // prefer Elo
+            if (eloPart.P > 0) return Clamp01(eloPart.P);
+        }
+    
         double sumW = 0, sumPW = 0;
-        foreach (var (p, w) in parts.Where(x => !double.IsNaN(x.P) && x.W > 0))
+        foreach (var (p, w) in valid)
         {
             sumPW += p * w;
             sumW += w;
