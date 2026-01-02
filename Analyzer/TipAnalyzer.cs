@@ -528,8 +528,7 @@ public static class TipAnalyzer
         double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
         double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
         
-        double lamTFull = ((lamHElo is not null) ? lamHElo.Value : 0.0)
-                + ((lamAElo is not null) ? lamAElo.Value : 0.0);
+        double lamTFull = (lamHElo ?? 0.0) + (lamAElo ?? 0.0);
 
         if (double.IsNaN(hto15) && lamTFull > 0)
         {
