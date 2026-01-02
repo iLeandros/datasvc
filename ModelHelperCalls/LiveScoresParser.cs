@@ -18,6 +18,7 @@ public static class LiveScoresParser
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
     /// </summary>
+    
     public static async Task<LiveScoreDay> ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
@@ -93,6 +94,27 @@ public static class LiveScoresParser
     }
 
     // ----------------- helpers -----------------
+    private static HalfTimeScore? ParseHalfTimeFromMatchActions(HtmlNode root)
+    {
+        // Works for your sample:
+        // <div class="matchactions"><div class="info"><div class="goals">0</div><div class="goals">1</div><div class="label">half time result</div>...
+    
+        var info = root.SelectSingleNode(
+            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]" +
+            "//div[contains(concat(' ', normalize-space(@class), ' '), ' info ')]"
+        ) ?? root.SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' info ')]");
+    
+        if (info == null) return null;
+    
+        var label = Normalize(info.SelectSingleNode(".//div[contains(@class,'label')]")?.InnerText ?? "");
+        if (!label.ToLowerInvariant().Contains("half")) return null; // "half time result"
+    
+        var goals = info.SelectNodes(".//div[contains(@class,'goals')]") ?? new HtmlNodeCollection(null);
+        if (goals.Count < 2) return null;
+    
+        return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
+    }
+
    private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
@@ -122,6 +144,7 @@ public static class LiveScoresParser
             var awayGoals     = Clean(awayGoalsNode);
     
             var actionsList = new List<MatchAction>();
+            HalfTimeScore? ht = null;
             /*
             // ---- 1) ORIGINAL LOGIC: parse any inline .matchactions on the page ----
     
