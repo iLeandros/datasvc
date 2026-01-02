@@ -435,7 +435,12 @@ public static class LiveScoresParser
         var goals = info.SelectNodes(".//div[contains(@class,'goals')]");
         if (goals == null || goals.Count < 2) return null;
 
-        return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
+        int h = ParseIntSafe(goals[0].InnerText);
+        int a = ParseIntSafe(goals[1].InnerText);
+    
+        //return new HalfTimeScore(h, a);   // ✅ if DataSvc.Models.HalfTimeScore is a record/ctor
+        return new HalfTimeScore { Home = h, Away = a };
+        //return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
     }
 
         private static ActionKind ClassToActionKind(string cls)
