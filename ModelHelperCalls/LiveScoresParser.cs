@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using DataSvc.Models; // BarChart, MatchFactData
+using HalfTimeScore = DataSvc.Models.HalfTimeScore;
 
 namespace DataSvc.ModelHelperCalls;
 
