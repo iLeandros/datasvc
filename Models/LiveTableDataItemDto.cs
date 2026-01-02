@@ -20,4 +20,10 @@ public class LiveTableDataItemDto
     public string Score => $"{HomeGoals ?? ""} - {AwayGoals ?? ""}";
     public List<MatchAction> Action { get; set; }
     public string MatchID { get; set; }
+
+    public int? HalfTimeHomeGoals { get; set; }
+    public int? HalfTimeAwayGoals { get; set; }
+    public bool HasHalfTime => HalfTimeHomeGoals.HasValue && HalfTimeAwayGoals.HasValue;
+    public string HalfTimeScore => HasHalfTime ? $"{HalfTimeHomeGoals} - {HalfTimeAwayGoals}" : string.Empty;
+
 }
