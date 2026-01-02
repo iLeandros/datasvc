@@ -18,7 +18,6 @@ public static class LiveScoresParser
     /// Parse one day of livescores HTML into a LiveScoreDay (dateIso = "yyyy-MM-dd").
     /// Expects the records LiveScoreItem, LiveScoreGroup, LiveScoreDay to already exist.
     /// </summary>
-    
     public static async Task<LiveScoreDay> ParseDay(string html, string dateIso)
     {
         var doc = new HtmlDocument();
@@ -94,27 +93,6 @@ public static class LiveScoresParser
     }
 
     // ----------------- helpers -----------------
-    private static HalfTimeScore? ParseHalfTimeFromMatchActions(HtmlNode root)
-    {
-        // Works for your sample:
-        // <div class="matchactions"><div class="info"><div class="goals">0</div><div class="goals">1</div><div class="label">half time result</div>...
-    
-        var info = root.SelectSingleNode(
-            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]" +
-            "//div[contains(concat(' ', normalize-space(@class), ' '), ' info ')]"
-        ) ?? root.SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' info ')]");
-    
-        if (info == null) return null;
-    
-        var label = Normalize(info.SelectSingleNode(".//div[contains(@class,'label')]")?.InnerText ?? "");
-        if (!label.ToLowerInvariant().Contains("half")) return null; // "half time result"
-    
-        var goals = info.SelectNodes(".//div[contains(@class,'goals')]") ?? new HtmlNodeCollection(null);
-        if (goals.Count < 2) return null;
-    
-        return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
-    }
-
    private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
@@ -145,6 +123,7 @@ public static class LiveScoresParser
     
             var actionsList = new List<MatchAction>();
             HalfTimeScore? ht = null;
+
             /*
             // ---- 1) ORIGINAL LOGIC: parse any inline .matchactions on the page ----
     
@@ -238,6 +217,49 @@ public static class LiveScoresParser
             //actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, 11, matchId));
             // actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, matchNodes.Count, actionsRoot?.InnerHtml ?? ""));
             */
+
+            // Fetch match actions snippet to populate Action list and Half-Time score.
+            // This is the same snippet that contains:
+            // <div class="matchactions"><div class="info">... half time result ...
+            if (!string.IsNullOrWhiteSpace(matchId))
+            {
+                try
+                {
+                    var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
+                    if (!string.IsNullOrWhiteSpace(ajaxHtml))
+                    {
+                        var ajaxDoc = new HtmlDocument();
+                        ajaxDoc.LoadHtml(ajaxHtml);
+
+                        ht ??= ParseHalfTimeFromMatchActions(ajaxDoc.DocumentNode);
+
+                        var actionNodes = ajaxDoc.DocumentNode.SelectNodes(
+                            ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]" +
+                            "//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]"
+                        ) ?? new HtmlNodeCollection(null);
+
+                        foreach (var a in actionNodes)
+                        {
+                            var side = SideFromAction(a);
+
+                            var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/*[1]");
+                            var cls = iconNode?.GetAttributeValue("class", string.Empty) ?? string.Empty;
+                            var kind = ClassToActionKind(cls);
+
+                            var playerRaw = a.SelectSingleNode(".//div[contains(@class,'player')]")?.InnerText ?? string.Empty;
+                            var (min, player) = ParseMinuteAndPlayer(playerRaw);
+
+                            actionsList.Add(new MatchAction(side, kind, min, player));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Keep livescores resilient; don't fail the whole day because one actions request failed.
+                    actionsList.Add(new MatchAction(TeamSide.Host, ActionKind.Unknown, null, $"actions fetch failed: {ex.Message}"));
+                }
+            }
+
             list.Add(new LiveScoreItem(
                 time,
                 status,
@@ -246,7 +268,8 @@ public static class LiveScoresParser
                 awayGoals,
                 awayName,
                 actionsList,
-                matchId
+                matchId,
+                ht
             ));
         }
     
@@ -389,6 +412,30 @@ public static class LiveScoresParser
             return new HalfTimeScore(0, 0);
         }
 
+
+
+    private static HalfTimeScore? ParseHalfTimeFromMatchActions(HtmlNode root)
+    {
+        // Expected (your sample):
+        // <div class="matchactions"><div class="info">
+        //   <div class="goals">0</div><div class="goals">1</div>
+        //   <div class="label">half time result</div>
+
+        var actionsRoot = root.SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]")
+                         ?? root;
+
+        var info = actionsRoot.SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' info ')]");
+        if (info == null) return null;
+
+        var label = Normalize(info.SelectSingleNode(".//div[contains(@class,'label')]")?.InnerText ?? string.Empty)
+            .ToLowerInvariant();
+        if (!(label.Contains("half") && label.Contains("time"))) return null;
+
+        var goals = info.SelectNodes(".//div[contains(@class,'goals')]");
+        if (goals == null || goals.Count < 2) return null;
+
+        return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
+    }
 
         private static ActionKind ClassToActionKind(string cls)
         {
