@@ -852,12 +852,9 @@ public static class TipAnalyzer
             W += w;
     
             // outcomes
-            if (hg > gg)
-                (SameTeam(host, home) ? wHome : wAway) += w;
-            else if (hg < gg)
-                (SameTeam(guest, home) ? wHome : wAway) += w;
-            else
-                wDraw += w;
+            if (hg > gg)      AddWin(ref wHome, ref wAway, SameTeam(host, home),  w);
+            else if (hg < gg) AddWin(ref wHome, ref wAway, SameTeam(guest, home), w);
+            else              wDraw += w;
     
             // totals
             int total = hg + gg;
@@ -893,6 +890,10 @@ public static class TipAnalyzer
             PHomeScored: toP(wHSc), PAwayScored: toP(wASc),
             LamH2H: lamH, LamA2H: lamA
         );
+    }
+    static void AddWin(ref double wHome, ref double wAway, bool isHomeWin, double w)
+    {
+        if (isHomeWin) wHome += w; else wAway += w;
     }
     
     // helper: try to read a date from common fields via your reflection helpers
