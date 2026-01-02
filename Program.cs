@@ -2226,7 +2226,9 @@ public sealed class ParsedTipsService
 	                AwayGoals = m.AwayGoals,
 	                AwayTeam = m.AwayTeam,
 	                Action = m.Action,     // same type in both models
-	                MatchID = m.MatchID
+	                MatchID = m.MatchID,
+					HalfTimeHomeGoals = item.HalfTime?.Home.ToString(),
+					HalfTimeAwayGoals = item.HalfTime?.Away.ToString()
 	            }).ToList() ?? new List<LiveScoreItemResponse>()
 	        }).ToList() ?? new List<LiveScoreGroupResponse>()
 	    };
@@ -4044,8 +4046,10 @@ public record LiveScoreItem(
     string AwayGoals,
     string AwayTeam,
 	List<MatchAction> Action,
-	string MatchID
+	string MatchID,
+	HalfTimeScore? HalfTime
 );
+public record HalfTimeScore(int Home, int Away);
 
 public record LiveScoreGroup(
     string Competition,
