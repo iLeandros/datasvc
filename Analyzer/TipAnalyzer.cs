@@ -689,7 +689,118 @@ public static class TipAnalyzer
             new[] { 0.8 * wH2H, wStand, wEloGoals }
         );
     }
+    // --- read "without goal" from your First-Goal charts (coherence signal)
+    private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
+    {
+        if (d?.BarCharts == null) return double.NaN;
     
+        bool TitleMatch(string? t) =>
+            t?.IndexOf("time of first", StringComparison.OrdinalIgnoreCase) >= 0;
+    
+        double? read(string halfId)
+            => d.BarCharts.FirstOrDefault(c =>
+                    TitleMatch(c.Title) &&
+                    string.Equals(c.HalfContainerId, halfId, StringComparison.OrdinalIgnoreCase))
+                 ?.Items?.FirstOrDefault(i =>
+                    string.Equals(i.Name, "without goal", StringComparison.OrdinalIgnoreCase))
+                 ?.Percentage;
+    
+        var vals = new[] { read("HalfContainer1"), read("HalfContainer2") }
+                   .Where(v => v.HasValue).Select(v => v!.Value).ToArray();
+        if (vals.Length == 0) return double.NaN;
+        return Math.Clamp(vals.Average() / 100.0, 0.0, 1.0);
+    }
+    
+    private static double WeightedMean(double[] ps, double[] ws)
+    {
+        double sw = 0, sp = 0;
+        for (int i = 0; i < ps.Length; i++)
+        {
+            var p = ps[i]; var w = ws[i];
+            if (!double.IsNaN(p) && w > 0) { sw += w; sp += p * w; }
+        }
+        return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
+    }
+
+    public static (string code, double probability, string reason) PickVip(
+        DetailsItemDto d,
+        string homeName,
+        string awayName,
+        List<ProposedResult> results,
+        double? homeElo,
+        double? awayElo)
+    {
+        // quick lookup
+        var P = results.ToDictionary(r => r.Code.ToUpperInvariant(), r => r.Probability);
+        double Get(string code) => P.TryGetValue(code.ToUpperInvariant(), out var v) ? v : double.NaN;
+    
+        // coherence: "no goal" mass for home from First-Goal chart
+        double pNoGoalHome = ReadNoGoalFromFirstGoalChart(d, homeName);
+    
+        // Poisson hint for HTS from H2H lambdas + Elo lambdas (time-decayed H2H already implemented)
+        var h2h = ComputeH2H(d, homeName, awayName);             // has LamH2H/LamA2H
+        double wH2H = wSqrt(h2h.NH2H);
+    
+        double htsH = double.IsNaN(h2h.LamH2H) ? double.NaN : (1 - Math.Exp(-h2h.LamH2H));
+    
+        double htsElo = double.NaN;
+        double wEloGoals = 0.0;
+        if (homeElo is double he && awayElo is double ae)
+        {
+            var (htsE, gtsE) = EloToTeamScores(he, ae); // returns P(home scores), P(away scores)
+            htsElo = htsE;
+            wEloGoals = 3.0; // solid default weight
+        }
+    
+        double pHtsPois = WeightedMean(
+            new[] { htsH, htsElo },
+            new[] { 0.8 * wH2H, wEloGoals }
+        );
+    
+        // raw model outputs
+        double pHTS  = Get("HTS");
+        double pO15  = Get("O 1.5");
+        double pBTTS = Get("BTS");
+        double pGTS  = Get("GTS");
+        double pU35  = Get("U 3.5");
+    
+        // --- guards ---
+        // coherence cap
+        double tau = 0.04;
+        if (!double.IsNaN(pNoGoalHome)) pHTS = Math.Min(pHTS, 1.0 - pNoGoalHome + tau);
+    
+        // blend with Poisson hint (keeps spikes in check)
+        pHTS = WeightedMean(new[] { pHTS, pHtsPois }, new[] { 1.2, 1.0 });
+    
+        // floors / confirmations
+        bool ok = !double.IsNaN(pHTS) && pHTS >= 0.70
+                  && (double.IsNaN(pO15) || pO15 >= 0.60)
+                  && !( !double.IsNaN(pU35) && !double.IsNaN(pBTTS) && pU35 > 0.75 && pBTTS < 0.45 );
+    
+        // nil-nil trap (any 2)
+        int traps = 0;
+        if (!double.IsNaN(pNoGoalHome) && pNoGoalHome >= 0.15) traps++;
+        if (!double.IsNaN(pBTTS) && pBTTS <= 0.55) traps++;
+        if (!double.IsNaN(pO15) && pO15 <= 0.62) traps++;
+        if (traps >= 2) ok = false;
+    
+        if (ok) return ("HTS", Get("HTS"), "HTS passed guards (coherence + totals/BTTS + trap).");
+    
+        // --- fallback: safer high-hit markets ---
+        // prefer O1.5 if strong
+        if (!double.IsNaN(pO15) && pO15 >= 0.65) return ("O 1.5", pO15, "HTS blocked; fallback O1.5.");
+    
+        // else best Double Chance >= 0.70
+        (string code, double p) dc = new();
+        foreach (var code in new[] { "1X", "X2", "12" })
+            if (!double.IsNaN(Get(code)) && Get(code) > dc.p) dc = (code, Get(code));
+        if (!string.IsNullOrEmpty(dc.code) && dc.p >= 0.70)
+            return (dc.code, dc.p, "HTS blocked; fallback Double Chance.");
+    
+        // else best overall
+        var best = results.OrderByDescending(r => r.Probability).First();
+        return (best.Code, best.Probability, "HTS blocked; fallback to top model probability.");
+    }
     // Public helper: run after Analyze(...) to finalize a VIP suggestion with guards+fallback.
     public static (string code, double probability, string reason) SuggestVip(
         DetailsItemDto d,
