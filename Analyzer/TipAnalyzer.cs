@@ -171,6 +171,24 @@ public static class TipAnalyzer
 
         // Historical signals
         var h2h = ComputeH2H(d, homeName, awayName);             // includes 1X2 + OU + BTTS from H2H
+        // right after: var h2h = ComputeH2H(d, homeName, awayName);
+        double wH2H = wSqrt(h2h.NH2H); // already decayed by time
+        double p1H=double.NaN, pxH=double.NaN, p2H=double.NaN;
+        double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
+        double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
+        
+        if (!double.IsNaN(h2h.LamH2H) && !double.IsNaN(h2h.LamA2H))
+        {
+            (p1H, pxH, p2H) = OneXTwoFromLambdas(h2h.LamH2H, h2h.LamA2H);
+            htsH = 1.0 - Math.Exp(-h2h.LamH2H);
+            gtsH = 1.0 - Math.Exp(-h2h.LamA2H);
+            bttsH = htsH * gtsH;
+        
+            double lamT = h2h.LamH2H + h2h.LamA2H;
+            o15H = OverFromLambda(lamT, 1.5);
+            o25H = OverFromLambda(lamT, 2.5);
+            o35H = OverFromLambda(lamT, 3.5);
+        }
         var sepHome = ComputeTeamRatesFromSeparate(d, homeName);
         var sepAway = ComputeTeamRatesFromSeparate(d, awayName);
         var factsHome = ComputeTeamRatesFromFacts(d, homeName);
@@ -326,6 +344,7 @@ public static class TipAnalyzer
         {
             C(chart1x2.Home,   w: wChart1x2),
             C(h2h.PHome,       w: wSqrt(h2h.NH2H)),
+            C(p1H,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepHome.WinRate,  sepAway.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.WinRate, factsAway.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
             C(p1Stand,         w: wStand), // NEW
@@ -336,6 +355,7 @@ public static class TipAnalyzer
                 {
             C(chart1x2.Draw,   w: wChart1x2),
             C(h2h.PDraw,       w: wSqrt(h2h.NH2H)),
+            C(pxH,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepHome.DrawRate,  sepAway.DrawRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.DrawRate, factsAway.DrawRate), w: wSqrt(factsHome.N + factsAway.N)),
             C(pxStand,         w: wStand), // NEW
@@ -346,6 +366,7 @@ public static class TipAnalyzer
         {
             C(chart1x2.Away,   w: wChart1x2),
             C(h2h.PAway,       w: wSqrt(h2h.NH2H)),
+            C(p2H,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepAway.WinRate,  sepHome.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsAway.WinRate, factsHome.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
             C(p2Stand,         w: wStand), // NEW
@@ -367,6 +388,7 @@ public static class TipAnalyzer
         {
             C(chartBtts,                       w: wChartBtts),
             C(h2h.PBTTS,                       w: wSqrt(h2h.NH2H)),
+            C(bttsH,                           w: 0.8 * wH2H),     // NEW
             // Independence-ish: P(BTTS) ≈ P(home scores)*P(away scores)
             C(sepHome.ScoreRate * sepAway.ScoreRate,                  w: wSqrt(sepHome.N + sepAway.N)),
             C(factsHome.ScoreChance * factsAway.ScoreChance,          w: 1.5),
@@ -389,6 +411,7 @@ public static class TipAnalyzer
         {
             C(Avg(factsHome.ScoreChance, factsAway.ConcedeChance), w: 2),
             C(h2h.PHomeScored,                                     w: wSqrt(h2h.NH2H)),
+            C(htsH,                                                w: 0.8 * wH2H), // NEW
             C(Avg(sepHome.ScoreRate,   sepAway.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
             C(htsStand,                                            w: wStand), // NEW
             C(htsElo,                                              w: wEloGoals)
@@ -398,6 +421,7 @@ public static class TipAnalyzer
         {
             C(Avg(factsAway.ScoreChance, factsHome.ConcedeChance), w: 2),
             C(h2h.PAwayScored,                                     w: wSqrt(h2h.NH2H)),
+            C(gtsH,                                                w: 0.8 * wH2H), // NEW
             C(Avg(sepAway.ScoreRate,   sepHome.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
             C(gtsStand,                                            w: wStand), // NEW
             C(gtsElo,                                              w: wEloGoals)
@@ -408,6 +432,7 @@ public static class TipAnalyzer
         {
             C(chartOU15,                                     w: wChartOU15),
             C(h2h.POver15,                                   w: wSqrt(h2h.NH2H)),
+            C(o15H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over15Rate, sepAway.Over15Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(o15Facts,                                      w: 1.3),
             C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
@@ -419,6 +444,7 @@ public static class TipAnalyzer
         {
             C(chartOU25,                                     w: wChartOU25),
             C(h2h.POver25,                                   w: wSqrt(h2h.NH2H)),
+            C(o25H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over25Rate, sepAway.Over25Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.Over25RateFacts, factsAway.Over25RateFacts), w: wSqrt(factsHome.N + factsAway.N)),
             C(o25Facts,                                      w: 1.3),
@@ -431,6 +457,7 @@ public static class TipAnalyzer
         {
             C(chartOU35,                                     w: wChartOU35),
             C(h2h.POver35,                                   w: wSqrt(h2h.NH2H)),
+            C(o35H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over35Rate, sepAway.Over35Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(o35Facts,                                      w: 1.3),
             C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
@@ -775,56 +802,100 @@ public static class TipAnalyzer
     }
 
     // ---------- H2H AGGREGATION ----------
-    private sealed record H2HStats(
-        int NH2H,
-        double PHome, double PDraw, double PAway,
-        double POver15, double POver25, double POver35,
-        double PBTTS, double POnlyOne,
-        double PHomeScored, double PAwayScored
-    );
-
     private static H2HStats ComputeH2H(DetailsItemDto d, string home, string away)
     {
         var matches = d?.MatchDataBetween?.Matches ?? new List<MatchBetweenItemDto>();
-        int n = 0, hW = 0, dW = 0, aW = 0, over15 = 0, over25 = 0, over35 = 0, btts = 0, onlyOne = 0, hScored = 0, aScored = 0;
-
+    
+        // --- decay parameters (tune) ---
+        const double HALF_LIFE_DAYS = 365.0;     // every ~1 year halves the impact
+        const double MIN_W = 0.10;               // floor weight so very old games aren’t zeroed
+        DateTime today = DateTime.UtcNow;
+    
+        // weighted tallies
+        double W = 0, wHome = 0, wDraw = 0, wAway = 0,
+               wOv15 = 0, wOv25 = 0, wOv35 = 0,
+               wBTTS = 0, wOnlyOne = 0, wHSc = 0, wASc = 0;
+    
+        // weighted goals (relative to *current* home/away)
+        double gH = 0.0, gA = 0.0;
+    
         foreach (var m in matches)
         {
             if (!TryInt(m.HostGoals, out var hg) || !TryInt(m.GuestGoals, out var gg)) continue;
             string host = m.HostTeam ?? "", guest = m.GuestTeam ?? "";
             if (!(SameTeam(host, home) && SameTeam(guest, away)) &&
                 !(SameTeam(host, away) && SameTeam(guest, home))) continue;
-
-            n++;
+    
+            // --- time decay weight ---
+            double w = 1.0;
+            if (TryReadMatchDate(m, out var md))
+            {
+                var ageDays = Math.Max(0.0, (today - md).TotalDays);
+                w = Math.Exp(-Math.Log(2.0) * ageDays / Math.Max(1.0, HALF_LIFE_DAYS));
+                if (w < MIN_W) w = MIN_W;
+            }
+    
+            // normalize goal orientation to CURRENT home/away
+            int relHomeGoals = SameTeam(host, home) ? hg : gg;
+            int relAwayGoals = SameTeam(host, home) ? gg : hg;
+    
+            W += w;
+    
+            // outcomes
+            if (hg > gg)
+                (SameTeam(host, home) ? wHome : wAway) += w;
+            else if (hg < gg)
+                (SameTeam(guest, home) ? wHome : wAway) += w;
+            else
+                wDraw += w;
+    
+            // totals
             int total = hg + gg;
-            if (hg > gg) { if (SameTeam(host, home)) hW++; else aW++; }
-            else if (hg < gg) { if (SameTeam(guest, home)) hW++; else aW++; }
-            else dW++;
-
-            if (total > 1) over15++;
-            if (total > 2) over25++;
-            if (total > 3) over35++;
-
-            bool hs = (SameTeam(host, home) ? hg : gg) > 0;
-            bool as_ = (SameTeam(host, home) ? gg : hg) > 0;
-            if (hs) hScored++;
-            if (as_) aScored++;
-
-            if (hg > 0 && gg > 0) btts++;
-            if ((hg > 0) ^ (gg > 0)) onlyOne++;
+            if (total > 1) wOv15 += w;
+            if (total > 2) wOv25 += w;
+            if (total > 3) wOv35 += w;
+    
+            // scoring flags (relative)
+            if (relHomeGoals > 0) wHSc += w;
+            if (relAwayGoals > 0) wASc += w;
+    
+            if (hg > 0 && gg > 0) wBTTS += w;
+            if ((hg > 0) ^ (gg > 0)) wOnlyOne += w;
+    
+            // Poisson lambdas from weighted goals
+            gH += w * relHomeGoals;
+            gA += w * relAwayGoals;
         }
-
-        double toPOld(int x) => n == 0 ? 0 : (double)x / n;
-        // In ComputeH2H, replace the local toP:
-        double toP(int x) => n == 0 ? double.NaN : (double)x / n;  // was 0
-
+    
+        double toP(double x) => W <= 1e-9 ? double.NaN : x / W;
+    
+        // Effective N becomes the decayed sample mass W (rounded to int to preserve your wSqrt(N) API)
+        int nEff = (int)Math.Round(W);
+    
+        double lamH = (W <= 1e-9) ? double.NaN : Math.Max(1e-6, gH / W);
+        double lamA = (W <= 1e-9) ? double.NaN : Math.Max(1e-6, gA / W);
+    
         return new H2HStats(
-            n,
-            toP(hW), toP(dW), toP(aW),
-            toP(over15), toP(over25), toP(over35),
-            toP(btts), toP(onlyOne),
-            toP(hScored), toP(aScored)
+            NH2H: nEff,
+            PHome: toP(wHome), PDraw: toP(wDraw), PAway: toP(wAway),
+            POver15: toP(wOv15), POver25: toP(wOv25), POver35: toP(wOv35),
+            PBTTS: toP(wBTTS), POnlyOne: toP(wOnlyOne),
+            PHomeScored: toP(wHSc), PAwayScored: toP(wASc),
+            LamH2H: lamH, LamA2H: lamA
         );
+    }
+    
+    // helper: try to read a date from common fields via your reflection helpers
+    private static bool TryReadMatchDate(object m, out DateTime when)
+    {
+        static bool TryParse(object? o, out DateTime dt)
+            => DateTime.TryParse(Convert.ToString(o), CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out dt);
+    
+        foreach (var name in new[] { "MatchDate", "Date", "UtcDate", "Kickoff", "StartTime" })
+            if (TryParse(GetProp(m, name), out when)) return true;
+    
+        when = default;
+        return false;
     }
 
     // ---------- SEPARATE MATCHES + FACTS ----------
