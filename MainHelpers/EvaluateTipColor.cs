@@ -66,32 +66,29 @@ public static class EvaluationHelper
             // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
             if (isHTMarket)
             {
-                // Still allow early resolution before HT:
-                // - Over already handled above (total > thr => Green)
-                // - Under already handled above (total > thr => Red)
-            
                 if (!minute.HasValue) return AppColors.Black;
             
-                if (!IsAtOrAfterHT(live?.LiveTime, minute.Value, isFinal))
-                    return AppColors.Black; // still pending (pre-HT, not early-resolved)
+                // We evaluate HT O/U using FIRST-HALF goals only
+                bool atOrAfterHT = isFinal
+                    || string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase)
+                    || minute.Value >= 46;
             
-                // We are at/after HT (or FT): evaluate with HT score
-                if (TryGetHalfTimeScore(live, out int htHome, out int htAway))
+                int cutoff = atOrAfterHT ? 49 : Math.Min(minute.Value, 49); // 45+stoppage capped
+                int htGoalsSoFar = CountGoalsUpToMinute(live, cutoff);
+            
+                // Early resolution (first half only):
+                // Over wins as soon as htGoalsSoFar > thr
+                if (isOver)
                 {
-                    int htTotal = htHome + htAway;
-                    return isOver ? (htTotal > thr ? AppColors.Green : AppColors.Red)
-                                  : (htTotal < thr ? AppColors.Green : AppColors.Red);
+                    if (htGoalsSoFar > thr) return AppColors.Green;
+                    return atOrAfterHT ? AppColors.Red : AppColors.Black;
                 }
-            
-                // Fallback: if feed shows exactly "HT", the displayed score should be the HT score
-                if (string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase))
+                else
                 {
-                    return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
-                                  : (total < thr ? AppColors.Green : AppColors.Red);
+                    // Under loses as soon as htGoalsSoFar > thr
+                    if (htGoalsSoFar > thr) return AppColors.Red;
+                    return atOrAfterHT ? AppColors.Green : AppColors.Black;
                 }
-            
-                // Past HT / FT but we can’t compute HT score -> don’t guess
-                return AppColors.Black;
             }
             
             // Full-time O/U: decide at FT if not early-resolved
@@ -158,6 +155,27 @@ public static class EvaluationHelper
                 return AppColors.Black;
         }
     }
+    private static int CountGoalsUpToMinute(LiveTableDataItemDto live, int maxMinute)
+    {
+        var acts = live?.Action;
+        if (acts == null || acts.Count == 0)
+            return 0; // IMPORTANT: 0 actions => 0 goals, not "unknown"
+    
+        int goals = 0;
+        foreach (var a in acts)
+        {
+            if (a == null || !a.Minute.HasValue) continue;
+    
+            // If in your feed "Penalty" means "penalty scored", keep it.
+            // If it means only "penalty awarded", remove Penalty from this condition.
+            bool isGoal = a.Kind == ActionKind.Goal || a.Kind == ActionKind.Penalty;
+    
+            if (isGoal && a.Minute.Value <= maxMinute)
+                goals++;
+        }
+        return goals;
+    }
+
     private static bool IsAtOrAfterHT(string? liveTime, int minute, bool isFinal)
     {
         if (isFinal) return true;
