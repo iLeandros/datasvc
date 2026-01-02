@@ -73,7 +73,7 @@ public static class EvaluationHelper
                     || string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase)
                     || minute.Value >= 46;
             
-                int cutoff = atOrAfterHT ? 49 : Math.Min(minute.Value, 49); // 45+stoppage capped
+                int cutoff = atOrAfterHT ? 45 : Math.Min(minute.Value, 45); // 45+stoppage capped
                 int htGoalsSoFar = CountGoalsUpToMinute(live, cutoff);
             
                 // Early resolution (first half only):
