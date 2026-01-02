@@ -216,12 +216,12 @@ public static class TipAnalyzer
         double o15Stand = double.NaN, o25Stand = double.NaN, o35Stand = double.NaN;
         double htsStand = double.NaN, gtsStand = double.NaN, bttsStand = double.NaN;
         double p1Stand = double.NaN, pxStand = double.NaN, p2Stand = double.NaN;
-
+        double pressureHome = 0, pressureAway = 0;
         var stCtx = TryReadStandings(d, homeName, awayName);
         if (stCtx is not null)
         {
             // Pressure: relegation/Europe (top tier guess) scaled by time & gaps
-            double pressureHome = 0, pressureAway = 0;
+            
             int seasonMatches = (stCtx.Rows.Count == 18) ? 34 : 38;
             bool topTier = true; // if you can detect tiers, set appropriately
             var rules = GuessRules(stCtx.Rows.Count, topTier);
@@ -528,7 +528,7 @@ public static class TipAnalyzer
         double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
         double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
         
-        double lamTFull = (lamHElo ?? 0) + (lamAElo ?? 0);
+        double lamTFull = (lamHElo ?? 0.0) + (lamAElo ?? 0.0);
         if (double.IsNaN(hto15) && lamTFull > 0)
         {
             double lamTHalf = 0.45 * lamTFull; // empirical first-half ratio
@@ -1071,6 +1071,7 @@ public static class TipAnalyzer
     const double HALF_LIFE_DAYS = 240.0;     // reduced from 365 → stronger recency
     const double MIN_W = 0.15;               // increased from 0.10
     private static Contrib C(double p, double w) => new(Clamp01(p), w);
+    /*
     private static double Blend(IEnumerable<Contrib> parts)
     {
         var valid = parts.Where(x => !double.IsNaN(x.P) && x.W > 0).ToList();
@@ -1089,7 +1090,17 @@ public static class TipAnalyzer
         }
         return sumW <= 0 ? double.NaN : Clamp01(sumPW / sumW);
     }
-
+    */
+    private static double Blend(IEnumerable<Contrib> parts)
+    {
+        double sumW = 0, sumPW = 0;
+        foreach (var (p, w) in parts.Where(x => !double.IsNaN(x.P) && x.W > 0))
+        {
+            sumPW += p * w;
+            sumW += w;
+        }
+        return sumW <= 0 ? double.NaN : Clamp01(sumPW / sumW);
+    }
     // ---------- CHART READS ----------
     private static (double Home, double Draw, double Away) Read1X2FromCharts(DetailsItemDto d, string home, string away)
     {
