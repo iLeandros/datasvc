@@ -575,7 +575,7 @@ public static class TipAnalyzer
     // ====================== helpers ======================
     // ============ VIP eligibility + guards ============
     // ====================== NEW/REFRACTORED HELPERS ======================
-
+    /*
     private static double PressureScore(int teamRank, int teamPts, int matchesPlayed,
         LeagueRules rules, bool targetUp, int targetRank, int targetPts,
         int seasonMatches = 38)
@@ -671,6 +671,7 @@ public static class TipAnalyzer
     
         return OverFromFacts(pScoreHome, pConcedeAway, pScoreAway, pConcedeHome, line, gamma);
     }
+    */
     // Read "without goal" for a given team from the "Time of first goal" chart(s)
     private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
     {
