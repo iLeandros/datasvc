@@ -558,8 +558,8 @@ public static class TipAnalyzer
         */
 
         // Half-time O/U proxy from full-time lambdas (fallback only)
-        double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
-        double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
+        double hto15 = double.NaN;//, hto25 = double.NaN, hto35 = double.NaN;
+        double htu15 = double.NaN;//, htu25 = double.NaN, htu35 = double.NaN;
         
         // Build a blended full-time total lambda from whatever we have (Standings/Elo/H2H)
         double lamTFull = double.NaN;
@@ -593,12 +593,12 @@ public static class TipAnalyzer
             double lamTHalf = 0.45 * lamTFull;
         
             hto15 = OverFromLambda(lamTHalf, 1.5);
-            hto25 = OverFromLambda(lamTHalf, 2.5);
-            hto35 = OverFromLambda(lamTHalf, 3.5);
+            //hto25 = OverFromLambda(lamTHalf, 2.5);
+            //hto35 = OverFromLambda(lamTHalf, 3.5);
         
             htu15 = 1.0 - hto15;
-            htu25 = 1.0 - hto25;
-            htu35 = 1.0 - hto35;
+            //htu25 = 1.0 - hto25;
+            //htu35 = 1.0 - hto35;
         }
         // === DC '12' filters & pumps (no feedback into 1X2/DC normalization) ===
         double dec1 = Dc12FilterPx(px, p2);
