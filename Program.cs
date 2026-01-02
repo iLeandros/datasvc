@@ -2446,7 +2446,7 @@ public sealed class ParsedTipsService
 					    ct
 					).ConfigureAwait(false);
 					var vip = TipAnalyzer.PickVip(
-					    detailDto, hostSafe, guestSafe, results, homeElo, awayElo
+					    detailDto, hostSafe, guestSafe, probsVIP, homeElo, awayElo
 					);
 					item.VIPTip = vip.code;
 	            }
