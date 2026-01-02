@@ -38,10 +38,10 @@ namespace DataSvc.ModelHelperCalls
                         HomeGoals = m.HomeGoals,
                         AwayGoals = m.AwayGoals,
                         AwayTeam = m.AwayTeam,
+                        HalfTimeHomeGoals = ParseNullableInt(m.HalfTimeHomeGoals),
+                        HalfTimeAwayGoals = ParseNullableInt(m.HalfTimeAwayGoals),
                         Action = m.Action,
-                        MatchID = m.MatchID,
-                        HalfTimeHomeGoals = m.HalfTimeHomeGoals,
-                        HalfTimeAwayGoals = m.HalfTimeAwayGoals
+                        MatchID = m.MatchID
                     });
                 }
     
@@ -52,6 +52,12 @@ namespace DataSvc.ModelHelperCalls
             return groups;
         }
     
+        private static int? ParseNullableInt(string? s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            return int.TryParse(s.Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+        }
+
         private static Microsoft.Maui.Graphics.Color LiveStatusColor(string status)
         {
             if (string.IsNullOrWhiteSpace(status)) return Microsoft.Maui.Graphics.Colors.Black;
