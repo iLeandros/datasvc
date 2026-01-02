@@ -689,6 +689,7 @@ public static class TipAnalyzer
             new[] { 0.8 * wH2H, wStand, wEloGoals }
         );
     }
+    /*
     // --- read "without goal" from your First-Goal charts (coherence signal)
     private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
     {
@@ -711,6 +712,7 @@ public static class TipAnalyzer
         return Math.Clamp(vals.Average() / 100.0, 0.0, 1.0);
     }
     
+    
     private static double WeightedMean(double[] ps, double[] ws)
     {
         double sw = 0, sp = 0;
@@ -721,7 +723,7 @@ public static class TipAnalyzer
         }
         return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
     }
-
+    */
     public static (string code, double probability, string reason) PickVip(
         DetailsItemDto d,
         string homeName,
