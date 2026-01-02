@@ -212,46 +212,53 @@ public static class TipAnalyzer
         double o15Stand = double.NaN, o25Stand = double.NaN, o35Stand = double.NaN;
         double htsStand = double.NaN, gtsStand = double.NaN, bttsStand = double.NaN;
         double p1Stand = double.NaN, pxStand = double.NaN, p2Stand = double.NaN;
-
+        
+        // NEW: hoisted so we can use them later (OU filters + HT proxies)
+        double pressureHome = double.NaN, pressureAway = double.NaN;
+        double lamHStand = double.NaN, lamAStand = double.NaN;
+        
         var stCtx = TryReadStandings(d, homeName, awayName);
         if (stCtx is not null)
         {
             // Pressure: relegation/Europe (top tier guess) scaled by time & gaps
-            double pressureHome = 0, pressureAway = 0;
             int seasonMatches = (stCtx.Rows.Count == 18) ? 34 : 38;
             bool topTier = true; // if you can detect tiers, set appropriately
             var rules = GuessRules(stCtx.Rows.Count, topTier);
-
+        
             int safeRank = Math.Max(1, stCtx.Rows.Count - rules.RelegationSlots);
             int safePts = stCtx.Rows.FirstOrDefault(r => r.Position == safeRank)?.Points ?? stCtx.Home.Points;
-
+        
             pressureHome = PressureScore(stCtx.Home.Position, stCtx.Home.Points, stCtx.Home.Matches,
                                          rules, targetUp: true, targetRank: safeRank, targetPts: safePts,
                                          seasonMatches: seasonMatches);
             pressureAway = PressureScore(stCtx.Away.Position, stCtx.Away.Points, stCtx.Away.Matches,
                                          rules, targetUp: true, targetRank: safeRank, targetPts: safePts,
                                          seasonMatches: seasonMatches);
-
+        
             // Lambdas from standings (attack/defense) + apply motivation multipliers
             var (lamH0, lamA0, w) = LambdasFromStandings(stCtx, hfa: 1.10, shrink: 0.70);
             var (attH, attA, drawM) = MotivationMultipliers(pressureHome, pressureAway);
             double lamH = lamH0 * attH;
             double lamA = lamA0 * attA;
+        
+            // NEW: store for half-time proxies later
+            lamHStand = lamH;
+            lamAStand = lamA;
+        
             wStand = w;
-
+        
             // Turn lambdas into market hints
             o15Stand = OverFromLambda(lamH + lamA, 1.5);
             o25Stand = OverFromLambda(lamH + lamA, 2.5);
             o35Stand = OverFromLambda(lamH + lamA, 3.5);
-
+        
             htsStand = 1 - Math.Exp(-lamH);
             gtsStand = 1 - Math.Exp(-lamA);
             bttsStand = htsStand * gtsStand;
-
+        
             (p1Stand, pxStand, p2Stand) = OneXTwoFromLambdas(lamH, lamA);
-            pxStand = Clamp01(pxStand * drawM);       // soften draw if either side “must win”
-
-            // Renormalize standings 1X2 hint to a proper distribution
+            pxStand = Clamp01(pxStand * drawM);
+        
             double s1x2 = p1Stand + pxStand + p2Stand;
             if (s1x2 > 1e-9) { p1Stand /= s1x2; pxStand /= s1x2; p2Stand /= s1x2; }
         }
@@ -510,6 +517,31 @@ public static class TipAnalyzer
         UpOnly(ref gts, gtsStand, wStand);
         UpOnly(ref btts, bttsStand, wStand);
 
+        // NEW: Low-stakes OU dampening (only when we actually have pressure)
+        if (!double.IsNaN(pressureHome) && !double.IsNaN(pressureAway))
+        {
+            double pressureSum = pressureHome + pressureAway; // 0..2-ish
+            if (pressureSum < 0.5)
+            {
+                // up to -5% when pressureSum -> 0
+                double lowStakesFactor = 0.10 * (0.5 - pressureSum);
+                o15 = Clamp01(o15 * (1.0 - lowStakesFactor));
+                o25 = Clamp01(o25 * (1.0 - lowStakesFactor));
+                o35 = Clamp01(o35 * (1.0 - lowStakesFactor));
+            }
+        }
+        
+        // NEW: Filter for O1.5 if low BTTS expectation
+        if (!double.IsNaN(btts) && btts < 0.40)
+        {
+            double lowBttsPenalty = 0.08 * (0.40 - btts) / 0.40; // up to -8%
+            o15 = Clamp01(o15 * (1.0 - lowBttsPenalty));
+        }
+        
+        // Refresh unders after any OU adjustments (you already do this earlier; this keeps it consistent)
+        u15 = 1 - o15; u25 = 1 - o25; u35 = 1 - o35;
+
+
         // Draw: push DOWN only; redistribute mass to 1 and 2
         DownOnlyDraw(ref p1, ref px, ref p2, pxStand, wStand);
 
@@ -525,9 +557,49 @@ public static class TipAnalyzer
         p12 = Clamp01(p1 + p2);
         */
 
-        // Half-time O/U not reliably present in your feed -> NaN
+        // Half-time O/U proxy from full-time lambdas (fallback only)
         double hto15 = double.NaN, hto25 = double.NaN, hto35 = double.NaN;
         double htu15 = double.NaN, htu25 = double.NaN, htu35 = double.NaN;
+        
+        // Build a blended full-time total lambda from whatever we have (Standings/Elo/H2H)
+        double lamTFull = double.NaN;
+        {
+            double sw = 0.0, sLam = 0.0;
+        
+            void AddLam(double lamT, double w)
+            {
+                if (!double.IsNaN(lamT) && lamT > 0 && w > 0)
+                {
+                    sLam += lamT * w;
+                    sw += w;
+                }
+            }
+        
+            // standings lambda total (stored earlier)
+            AddLam(lamHStand + lamAStand, wStand);
+        
+            // elo lambda total (already computed earlier in your Elo block)
+            AddLam(lamHElo + lamAElo, wEloOU);
+        
+            // h2h lambda total (use a slightly reduced weight)
+            AddLam(h2h.LamH2H + h2h.LamA2H, 0.8 * wH2H);
+        
+            if (sw > 0) lamTFull = sLam / sw;
+        }
+        
+        if (!double.IsNaN(lamTFull) && lamTFull > 0)
+        {
+            // empirical first-half ratio
+            double lamTHalf = 0.45 * lamTFull;
+        
+            hto15 = OverFromLambda(lamTHalf, 1.5);
+            hto25 = OverFromLambda(lamTHalf, 2.5);
+            hto35 = OverFromLambda(lamTHalf, 3.5);
+        
+            htu15 = 1.0 - hto15;
+            htu25 = 1.0 - hto25;
+            htu35 = 1.0 - hto35;
+        }
         // === DC '12' filters & pumps (no feedback into 1X2/DC normalization) ===
         double dec1 = Dc12FilterPx(px, p2);
         double dec2 = Dc12FilterHomeDom(p1, p2);
