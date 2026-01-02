@@ -4045,9 +4045,9 @@ public record LiveScoreItem(
     string HomeGoals,
     string AwayGoals,
     string AwayTeam,
-	List<MatchAction> Action,
-	string MatchID,
-	HalfTimeScore? HalfTime
+    List<MatchAction> Action,
+    string MatchID,
+    HalfTimeScore? HalfTime = null
 );
 
 public record LiveScoreGroup(
