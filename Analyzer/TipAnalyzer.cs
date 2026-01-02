@@ -801,6 +801,16 @@ public static class TipAnalyzer
         return item?.Percentage;
     }
 
+    private sealed record H2HStats(
+        int NH2H,
+        double PHome, double PDraw, double PAway,
+        double POver15, double POver25, double POver35,
+        double PBTTS, double POnlyOne,
+        double PHomeScored, double PAwayScored,
+        // NEW: Poisson from H2H (time-decayed)
+        double LamH2H, double LamA2H
+    );
+
     // ---------- H2H AGGREGATION ----------
     private static H2HStats ComputeH2H(DetailsItemDto d, string home, string away)
     {
