@@ -94,6 +94,29 @@ public static class LiveScoresParser
     }
 
     // ----------------- helpers -----------------
+    private static void ParseActionsFromRoot(HtmlNode root, List<MatchAction> actionsList)
+    {
+        var actionNodes = root.SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
+                        ?? new HtmlNodeCollection(null);
+    
+        foreach (var a in actionNodes)
+        {
+            var playerNode = a.SelectSingleNode(".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]");
+            var raw = Normalize(playerNode?.InnerText ?? string.Empty);
+    
+            var side = SideFromAction(a);
+    
+            var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
+            var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
+            var kind = ClassToActionKind(classStr);
+    
+            var (minute, player) = ParseMinuteAndPlayer(raw);
+            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
+    
+            actionsList.Add(new MatchAction(side, kind, minute, player));
+        }
+    }
+
     private static HalfTimeScore? ParseHalfTimeFromMatchActions(HtmlNode root)
     {
         // Works for your sample:
@@ -142,49 +165,35 @@ public static class LiveScoresParser
             var awayGoalsNode = m.SelectSingleNode(".//*[contains(@class,'teams')]//*[contains(@class,'guestteam')]//*[contains(@class,'goals')]");
             var awayName      = Clean(awayNameNode);
             var awayGoals     = Clean(awayGoalsNode);
-    
+
             var actionsList = new List<MatchAction>();
-
             HalfTimeScore? ht = null;
-
-            if (!string.IsNullOrWhiteSpace(matchId))
+            
+            // ✅ 1) Parse inline <div class="matchactions"> that is already inside this match node
+            var inlineActionsRoot = m.SelectSingleNode(
+                ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
+            );
+            
+            if (inlineActionsRoot != null)
+            {
+                ht ??= ParseHalfTimeFromMatchActions(inlineActionsRoot);
+                ParseActionsFromRoot(inlineActionsRoot, actionsList);
+            }
+            
+            // ✅ 2) Fallback to AJAX only if we still have nothing
+            if ((ht is null || actionsList.Count == 0) && !string.IsNullOrWhiteSpace(matchId))
             {
                 try
                 {
-                    // If you already have a helper that works, use it:
-                    // var client = new GetLiveMatchActionHelper();
-                    // var ajaxHtml = await client.GetLivescoreMatchActionsAsync(matchId, dateIso);
-            
                     var ajaxHtml = await FetchMatchActionsHtml(matchId, dateIso);
                     if (!string.IsNullOrWhiteSpace(ajaxHtml))
                     {
                         var ajaxDoc = new HtmlDocument();
                         ajaxDoc.LoadHtml(ajaxHtml);
             
-                        // ✅ THIS is the missing part: parse HT from the <div class="info"> header
                         ht ??= ParseHalfTimeFromMatchActions(ajaxDoc.DocumentNode);
-            
-                        // parse actions (you already have the helpers)
-                        var actionNodes = ajaxDoc.DocumentNode
-                            .SelectNodes(".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]")
-                            ?? new HtmlNodeCollection(null);
-            
-                        foreach (var a in actionNodes)
-                        {
-                            var playerNode = a.SelectSingleNode(".//*[contains(concat(' ', normalize-space(@class), ' '), ' player ')]");
-                            var raw = Normalize(playerNode?.InnerText ?? string.Empty);
-            
-                            var side = SideFromAction(a);
-            
-                            var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
-                            var classStr = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
-                            var kind = ClassToActionKind(classStr);
-            
-                            var (minute, player) = ParseMinuteAndPlayer(raw);
-                            if (string.IsNullOrWhiteSpace(player) && !minute.HasValue) continue;
-            
-                            actionsList.Add(new MatchAction(side, kind, minute, player));
-                        }
+                        if (actionsList.Count == 0)
+                            ParseActionsFromRoot(ajaxDoc.DocumentNode, actionsList);
                     }
                 }
                 catch (Exception ex)
@@ -192,6 +201,7 @@ public static class LiveScoresParser
                     Console.WriteLine($"[LiveScoresParser] actions/ht fetch failed for matchId={matchId}: {ex.Message}");
                 }
             }
+
 
             list.Add(new LiveScoreItem(
                 time,
