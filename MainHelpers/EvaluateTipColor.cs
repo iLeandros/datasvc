@@ -177,7 +177,7 @@ public static class EvaluationHelper
         // Heuristic: include normal first-half goals (<=45) and stoppage-time goals (46..49) as "45+X".
         // If your source stores "45+2" as 47, this captures it. If this ever misclassifies true 46' goals,
         // tighten to <=45 only.
-        const int HT_MAX_MINUTE = 49;
+        const int HT_MAX_MINUTE = 45;
     
         foreach (var a in acts)
         {
