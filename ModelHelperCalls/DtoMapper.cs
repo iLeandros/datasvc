@@ -39,7 +39,9 @@ namespace DataSvc.ModelHelperCalls
                         AwayGoals = m.AwayGoals,
                         AwayTeam = m.AwayTeam,
                         Action = m.Action,
-                        MatchID = m.MatchID
+                        MatchID = m.MatchID,
+                        HalfTimeHomeGoals = m.HalfTimeHomeGoals,
+                        HalfTimeAwayGoals = m.HalfTimeAwayGoals
                     });
                 }
     
