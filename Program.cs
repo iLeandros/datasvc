@@ -2064,6 +2064,165 @@ public sealed class ParsedTipsService
 	private readonly ClubEloStore _clubEloStore;
 	private readonly DetailsStore _detailsStore;
 
+	// ============ VIP eligibility + guards ============
+
+// Read "without goal" for a given team from the "Time of first goal" chart(s)
+private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
+{
+    if (d?.BarCharts == null) return double.NaN;
+
+    bool TitleMatch(string? t)
+        => t?.IndexOf("time of first", StringComparison.OrdinalIgnoreCase) >= 0
+        || t?.IndexOf("time of first goal", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    double? read(string halfId, string item)
+    {
+        var chart = d.BarCharts.FirstOrDefault(c =>
+            TitleMatch(c.Title) &&
+            string.Equals(c.HalfContainerId, halfId, StringComparison.OrdinalIgnoreCase));
+
+        var it = chart?.Items?.FirstOrDefault(i =>
+            string.Equals(i.Name, item, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(i.Name, "without goal", StringComparison.OrdinalIgnoreCase));
+
+        return it?.Percentage;
+    }
+
+    // Try both halves, prefer current home when teamName == home later, but here we just avg both
+    var c1 = read("HalfContainer1", "without goal");
+    var c2 = read("HalfContainer2", "without goal");
+
+    var xs = new[] { c1, c2 }.Where(v => v.HasValue).Select(v => v!.Value).ToArray();
+    if (xs.Length == 0) return double.NaN;
+    return Math.Clamp(xs.Average() / 100.0, 0.0, 1.0);
+}
+
+// Small weighted mean with NaN-skip
+private static double WeightedMean(double[] ps, double[] ws)
+{
+    double sw = 0, sp = 0;
+    for (int i = 0; i < ps.Length; i++)
+    {
+        double p = ps[i], w = ws[i];
+        if (!double.IsNaN(p) && w > 0) { sw += w; sp += p * w; }
+    }
+    return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
+}
+
+// Build a fast lookup from Analyze(...) results
+private static Dictionary<string, double> ToMap(List<TipAnalyzer.ProposedResult> results)
+    => results.ToDictionary(r => r.Code.ToUpperInvariant(), r => r.Probability);
+
+// Choose the safest high-hit fallback when VIP HTS is blocked
+private static (string code, double p) ChooseSafeFallback(Dictionary<string, double> P)
+{
+    // 1) O 1.5 if strong
+    if (P.TryGetValue("O 1.5", out var o15) && o15 >= 0.65) return ("O 1.5", o15);
+
+    // 2) Best Double Chance
+    var dc = new[] { "1X", "X2", "12" }
+        .Where(P.ContainsKey)
+        .Select(code => (code, P[code]))
+        .OrderByDescending(t => t.Item2)
+        .FirstOrDefault();
+    if (!string.IsNullOrEmpty(dc.code) && dc.Item2 >= 0.70) return dc;
+
+    // 3) As a last resort, pick the top probability overall
+    var best = P.OrderByDescending(kv => kv.Value).FirstOrDefault();
+    return (best.Key ?? "1X", best.Value);
+}
+
+// Eligibility with all guards & coherence cap
+private static bool HtsVipEligible(
+    Dictionary<string, double> P,
+    double pNoGoalHome,          // from charts (coherence)
+    double pHtsPoisBlend         // from H2H/Standings/Elo lambdas
+)
+{
+    double Get(string code) => P.TryGetValue(code.ToUpperInvariant(), out var v) ? v : double.NaN;
+
+    double pHTS_raw = Get("HTS");
+    double pO15     = Get("O 1.5");
+    double pBTTS    = Get("BTS");
+    double pGTS     = Get("GTS");
+    double pU35     = Get("U 3.5");
+
+    // 1) Coherence cap against "no goal" signal
+    double tau = 0.04; // small slack
+    double pHtsCoh = double.IsNaN(pNoGoalHome) ? pHTS_raw : Math.Min(pHTS_raw, 1.0 - pNoGoalHome + tau);
+
+    // 2) Blend with Poisson-based estimate (from H2H/Standings/Elo)
+    double pHTS = WeightedMean(
+        new[] { pHTS_raw, pHtsCoh, pHtsPoisBlend },
+        new[] { 1.0,      1.2,     1.0 }  // give small priority to the coherence-capped value
+    );
+
+    if (double.IsNaN(pHTS)) return false;
+
+    // 3) Hard guards
+    if (pHTS < 0.70) return false;                 // floor (tune 0.65–0.75)
+    if (!double.IsNaN(pO15) && pO15 < 0.60) return false; // environment too low-scoring
+    if (!double.IsNaN(pU35) && !double.IsNaN(pBTTS) && pU35 > 0.75 && pBTTS < 0.45) return false;
+
+    // Nil-nil trap: any 2 true -> block
+    int traps = 0;
+    if (!double.IsNaN(pNoGoalHome) && pNoGoalHome >= 0.15) traps++;
+    if (!double.IsNaN(pBTTS) && pBTTS <= 0.55) traps++;
+    if (!double.IsNaN(pO15) && pO15 <= 0.62) traps++;
+    if (traps >= 2) return false;
+
+    // Extra confirmation: allow if GTS is reasonably high even when BTTS is modest
+    if (!double.IsNaN(pGTS) && pGTS >= 0.60) return true;
+
+    return true;
+}
+
+// Build an HTS Poisson hint from whatever lambdas you already computed
+private static double HtsPoisHint(
+    double htsH, double htsStand, double htsElo,
+    double wH2H, double wStand, double wEloGoals)
+{
+    return WeightedMean(
+        new[] { htsH, htsStand, htsElo },
+        new[] { 0.8 * wH2H, wStand, wEloGoals }
+    );
+}
+
+// Public helper: run after Analyze(...) to finalize a VIP suggestion with guards+fallback.
+public static (string code, double probability, string reason) SuggestVip(
+    DetailsItemDto d,
+    string homeName,
+    string awayName,
+    List<TipAnalyzer.ProposedResult> results,
+    // pass through key internals you already compute in Analyze(...)
+    double htsH, double htsStand, double htsElo,
+    double wH2H, double wStand, double wEloGoals
+)
+{
+    var P = ToMap(results);
+
+    // 1) compute "home no-goal" from chart for coherence (if absent, becomes NaN)
+    double pNoGoalHome = ReadNoGoalFromFirstGoalChart(d, homeName);
+
+    // 2) Poisson blend hint for HTS
+    double pHtsPois = HtsPoisHint(htsH, htsStand, htsElo, wH2H, wStand, wEloGoals);
+
+    // 3) If caller proposed HTS, check eligibility; else we'll just choose the best safe market
+    bool wantHTS = P.ContainsKey("HTS");
+
+    if (wantHTS && HtsVipEligible(P, pNoGoalHome, pHtsPois))
+    {
+        return ("HTS", P["HTS"], "HTS passed all guards (coherence, totals/BTTS, trap check).");
+    }
+
+    // 4) Fallback if HTS blocked or not proposed
+    var fb = ChooseSafeFallback(P);
+    string why = wantHTS
+        ? "HTS blocked by guards; promoting safer high-hit market."
+        : "No VIP preference given; selecting safest high-probability market.";
+    return (fb.code, fb.p, why);
+}
+
     public ParsedTipsService(LiveScoresStore live, ClubEloStore clubEloStore, DetailsStore detailsStore)
     {
         _live = live;
@@ -3519,166 +3678,6 @@ public sealed class ParsedTipsRefreshJob : BackgroundService
     private readonly SnapshotPerDateStore _perDate;
     private readonly ParsedTipsService _tips;
     private readonly SemaphoreSlim _gate = new(1, 1);
-
-	// ============ VIP eligibility + guards ============
-
-// Read "without goal" for a given team from the "Time of first goal" chart(s)
-private static double ReadNoGoalFromFirstGoalChart(DetailsItemDto d, string teamName)
-{
-    if (d?.BarCharts == null) return double.NaN;
-
-    bool TitleMatch(string? t)
-        => t?.IndexOf("time of first", StringComparison.OrdinalIgnoreCase) >= 0
-        || t?.IndexOf("time of first goal", StringComparison.OrdinalIgnoreCase) >= 0;
-
-    double? read(string halfId, string item)
-    {
-        var chart = d.BarCharts.FirstOrDefault(c =>
-            TitleMatch(c.Title) &&
-            string.Equals(c.HalfContainerId, halfId, StringComparison.OrdinalIgnoreCase));
-
-        var it = chart?.Items?.FirstOrDefault(i =>
-            string.Equals(i.Name, item, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(i.Name, "without goal", StringComparison.OrdinalIgnoreCase));
-
-        return it?.Percentage;
-    }
-
-    // Try both halves, prefer current home when teamName == home later, but here we just avg both
-    var c1 = read("HalfContainer1", "without goal");
-    var c2 = read("HalfContainer2", "without goal");
-
-    var xs = new[] { c1, c2 }.Where(v => v.HasValue).Select(v => v!.Value).ToArray();
-    if (xs.Length == 0) return double.NaN;
-    return Math.Clamp(xs.Average() / 100.0, 0.0, 1.0);
-}
-
-// Small weighted mean with NaN-skip
-private static double WeightedMean(double[] ps, double[] ws)
-{
-    double sw = 0, sp = 0;
-    for (int i = 0; i < ps.Length; i++)
-    {
-        double p = ps[i], w = ws[i];
-        if (!double.IsNaN(p) && w > 0) { sw += w; sp += p * w; }
-    }
-    return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
-}
-
-// Build a fast lookup from Analyze(...) results
-private static Dictionary<string, double> ToMap(List<ProposedResult> results)
-    => results.ToDictionary(r => r.Code.ToUpperInvariant(), r => r.Probability);
-
-// Choose the safest high-hit fallback when VIP HTS is blocked
-private static (string code, double p) ChooseSafeFallback(Dictionary<string, double> P)
-{
-    // 1) O 1.5 if strong
-    if (P.TryGetValue("O 1.5", out var o15) && o15 >= 0.65) return ("O 1.5", o15);
-
-    // 2) Best Double Chance
-    var dc = new[] { "1X", "X2", "12" }
-        .Where(P.ContainsKey)
-        .Select(code => (code, P[code]))
-        .OrderByDescending(t => t.Item2)
-        .FirstOrDefault();
-    if (!string.IsNullOrEmpty(dc.code) && dc.Item2 >= 0.70) return dc;
-
-    // 3) As a last resort, pick the top probability overall
-    var best = P.OrderByDescending(kv => kv.Value).FirstOrDefault();
-    return (best.Key ?? "1X", best.Value);
-}
-
-// Eligibility with all guards & coherence cap
-private static bool HtsVipEligible(
-    Dictionary<string, double> P,
-    double pNoGoalHome,          // from charts (coherence)
-    double pHtsPoisBlend         // from H2H/Standings/Elo lambdas
-)
-{
-    double Get(string code) => P.TryGetValue(code.ToUpperInvariant(), out var v) ? v : double.NaN;
-
-    double pHTS_raw = Get("HTS");
-    double pO15     = Get("O 1.5");
-    double pBTTS    = Get("BTS");
-    double pGTS     = Get("GTS");
-    double pU35     = Get("U 3.5");
-
-    // 1) Coherence cap against "no goal" signal
-    double tau = 0.04; // small slack
-    double pHtsCoh = double.IsNaN(pNoGoalHome) ? pHTS_raw : Math.Min(pHTS_raw, 1.0 - pNoGoalHome + tau);
-
-    // 2) Blend with Poisson-based estimate (from H2H/Standings/Elo)
-    double pHTS = WeightedMean(
-        new[] { pHTS_raw, pHtsCoh, pHtsPoisBlend },
-        new[] { 1.0,      1.2,     1.0 }  // give small priority to the coherence-capped value
-    );
-
-    if (double.IsNaN(pHTS)) return false;
-
-    // 3) Hard guards
-    if (pHTS < 0.70) return false;                 // floor (tune 0.65–0.75)
-    if (!double.IsNaN(pO15) && pO15 < 0.60) return false; // environment too low-scoring
-    if (!double.IsNaN(pU35) && !double.IsNaN(pBTTS) && pU35 > 0.75 && pBTTS < 0.45) return false;
-
-    // Nil-nil trap: any 2 true -> block
-    int traps = 0;
-    if (!double.IsNaN(pNoGoalHome) && pNoGoalHome >= 0.15) traps++;
-    if (!double.IsNaN(pBTTS) && pBTTS <= 0.55) traps++;
-    if (!double.IsNaN(pO15) && pO15 <= 0.62) traps++;
-    if (traps >= 2) return false;
-
-    // Extra confirmation: allow if GTS is reasonably high even when BTTS is modest
-    if (!double.IsNaN(pGTS) && pGTS >= 0.60) return true;
-
-    return true;
-}
-
-// Build an HTS Poisson hint from whatever lambdas you already computed
-private static double HtsPoisHint(
-    double htsH, double htsStand, double htsElo,
-    double wH2H, double wStand, double wEloGoals)
-{
-    return WeightedMean(
-        new[] { htsH, htsStand, htsElo },
-        new[] { 0.8 * wH2H, wStand, wEloGoals }
-    );
-}
-
-// Public helper: run after Analyze(...) to finalize a VIP suggestion with guards+fallback.
-public static (string code, double probability, string reason) SuggestVip(
-    DetailsItemDto d,
-    string homeName,
-    string awayName,
-    List<ProposedResult> results,
-    // pass through key internals you already compute in Analyze(...)
-    double htsH, double htsStand, double htsElo,
-    double wH2H, double wStand, double wEloGoals
-)
-{
-    var P = ToMap(results);
-
-    // 1) compute "home no-goal" from chart for coherence (if absent, becomes NaN)
-    double pNoGoalHome = ReadNoGoalFromFirstGoalChart(d, homeName);
-
-    // 2) Poisson blend hint for HTS
-    double pHtsPois = HtsPoisHint(htsH, htsStand, htsElo, wH2H, wStand, wEloGoals);
-
-    // 3) If caller proposed HTS, check eligibility; else we'll just choose the best safe market
-    bool wantHTS = P.ContainsKey("HTS");
-
-    if (wantHTS && HtsVipEligible(P, pNoGoalHome, pHtsPois))
-    {
-        return ("HTS", P["HTS"], "HTS passed all guards (coherence, totals/BTTS, trap check).");
-    }
-
-    // 4) Fallback if HTS blocked or not proposed
-    var fb = ChooseSafeFallback(P);
-    string why = wantHTS
-        ? "HTS blocked by guards; promoting safer high-hit market."
-        : "No VIP preference given; selecting safest high-probability market.";
-    return (fb.code, fb.p, why);
-}
-
 
     public ParsedTipsRefreshJob(
         SnapshotPerDateStore perDateStore,
