@@ -48,6 +48,7 @@ public static class EvaluationHelper
             if (!isOver && total > thr) return AppColors.Red;
     
             // For HT markets: only judge at/before HT; otherwise pending.
+            /*
             if (isHTMarket)
             {
                 if (!minute.HasValue) return AppColors.Black; // no clock yet
@@ -60,7 +61,37 @@ public static class EvaluationHelper
                 return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
                               : (total < thr ? AppColors.Green : AppColors.Red);
             }
-    
+            */
+            // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
+            if (isHTMarket)
+            {
+                // Still allow early resolution before HT:
+                // - Over already handled above (total > thr => Green)
+                // - Under already handled above (total > thr => Red)
+            
+                if (!minute.HasValue) return AppColors.Black;
+            
+                if (!IsAtOrAfterHT(live?.LiveTime, minute.Value, isFinal))
+                    return AppColors.Black; // still pending (pre-HT, not early-resolved)
+            
+                // We are at/after HT (or FT): evaluate with HT score
+                if (TryGetHalfTimeScore(live, out int htHome, out int htAway))
+                {
+                    int htTotal = htHome + htAway;
+                    return isOver ? (htTotal > thr ? AppColors.Green : AppColors.Red)
+                                  : (htTotal < thr ? AppColors.Green : AppColors.Red);
+                }
+            
+                // Fallback: if feed shows exactly "HT", the displayed score should be the HT score
+                if (string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase))
+                {
+                    return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
+                                  : (total < thr ? AppColors.Green : AppColors.Red);
+                }
+            
+                // Past HT / FT but we can’t compute HT score -> don’t guess
+                return AppColors.Black;
+            }
             // Full-time O/U: decide at FT if not early-resolved
             if (!isFinal) return AppColors.Black;
     
@@ -125,6 +156,66 @@ public static class EvaluationHelper
                 return AppColors.Black;
         }
     }
+    private static bool IsAtOrAfterHT(string? liveTime, int minute, bool isFinal)
+    {
+        if (isFinal) return true;
+        if (!string.IsNullOrWhiteSpace(liveTime) &&
+            liveTime.Trim().Equals("HT", StringComparison.OrdinalIgnoreCase))
+            return true;
+    
+        // If the clock is already in the second half, HT outcome is fixed.
+        return minute >= 46;
+    }
+    
+    private static bool TryGetHalfTimeScore(LiveTableDataItemDto live, out int htHome, out int htAway)
+    {
+        htHome = 0; htAway = 0;
+    
+        var acts = live?.Action;
+        if (acts == null || acts.Count == 0) return false;
+    
+        // Heuristic: include normal first-half goals (<=45) and stoppage-time goals (46..49) as "45+X".
+        // If your source stores "45+2" as 47, this captures it. If this ever misclassifies true 46' goals,
+        // tighten to <=45 only.
+        const int HT_MAX_MINUTE = 49;
+    
+        foreach (var a in acts)
+        {
+            if (a == null) continue;
+            if (!a.Minute.HasValue) continue;
+    
+            int m = a.Minute.Value;
+            if (m > HT_MAX_MINUTE) continue;
+    
+            if (!IsScoringAction(a.Kind)) continue;
+    
+            if (IsHomeSide(a.Side)) htHome++;
+            else if (IsAwaySide(a.Side)) htAway++;
+            // else: unknown side label -> ignore (safer than miscount)
+        }
+    
+        // If we found nothing, we still “computed” it, but returning false is safer (prevents wrong red/green)
+        return (htHome + htAway) > 0 || acts.Any(x => x?.Minute.HasValue == true && x.Minute.Value <= HT_MAX_MINUTE);
+    }
+    
+    private static bool IsScoringAction(ActionKind k)
+    {
+        // If in your feed Penalty means “penalty awarded” (not scored), remove Penalty here.
+        return k == ActionKind.Goal || k == ActionKind.Penalty;
+    }
+    
+    private static bool IsHomeSide(TeamSide side)
+    {
+        var s = side.ToString().ToLowerInvariant();
+        return s.Contains("home") || s.Contains("host");
+    }
+    
+    private static bool IsAwaySide(TeamSide side)
+    {
+        var s = side.ToString().ToLowerInvariant();
+        return s.Contains("away") || s.Contains("guest");
+    }
+
     public static bool TryParseThreshold(ReadOnlySpan<char> s, out double thr)
         => double.TryParse(s, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture, out thr);
 
