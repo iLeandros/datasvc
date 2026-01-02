@@ -626,8 +626,8 @@ public static class TipAnalyzer
             new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
             new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),
 
-            new("HTO 1.5", hto15), new("HTO 2.5", hto25), new("HTO 3.5", hto35),
-            new("HTU 1.5", htu15), new("HTU 2.5", htu25), new("HTU 3.5", htu35),
+            new("HTO 1.5", hto15),
+            new("HTU 1.5", htu15),
         };
 
         // Hide empty markets entirely
