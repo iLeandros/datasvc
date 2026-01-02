@@ -63,42 +63,44 @@ public static class EvaluationHelper
             }
             */
             // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
-            if (isHTMarket)
-            {
-                // Still allow early resolution before HT:
-                // - Over already handled above (total > thr => Green)
-                // - Under already handled above (total > thr => Red)
             
-                if (!minute.HasValue) return AppColors.Black;
-            
-                if (!IsAtOrAfterHT(live?.LiveTime, minute.Value, isFinal))
-                    return AppColors.Black; // still pending (pre-HT, not early-resolved)
-            
-                // We are at/after HT (or FT): evaluate with HT score
-                if (TryGetHalfTimeScore(live, out int htHome, out int htAway))
-                {
-                    int htTotal = htHome + htAway;
-                    return isOver ? (htTotal > thr ? AppColors.Green : AppColors.Red)
-                                  : (htTotal < thr ? AppColors.Green : AppColors.Red);
-                }
-            
-                // Fallback: if feed shows exactly "HT", the displayed score should be the HT score
-                if (string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase))
-                {
-                    return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
-                                  : (total < thr ? AppColors.Green : AppColors.Red);
-                }
-            
-                // Past HT / FT but we can’t compute HT score -> don’t guess
-                return AppColors.Black;
-            }
             // Full-time O/U: decide at FT if not early-resolved
             if (!isFinal) return AppColors.Black;
     
             return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
                           : (total < thr ? AppColors.Green : AppColors.Red);
         }
-    
+        // HT markets: decide using HALF-TIME score (not current/full score) once we’re at/after HT.
+        if (isHTMarket)
+        {
+            // Still allow early resolution before HT:
+            // - Over already handled above (total > thr => Green)
+            // - Under already handled above (total > thr => Red)
+        
+            if (!minute.HasValue) return AppColors.Black;
+        
+            if (!IsAtOrAfterHT(live?.LiveTime, minute.Value, isFinal))
+                return AppColors.Black; // still pending (pre-HT, not early-resolved)
+        
+            // We are at/after HT (or FT): evaluate with HT score
+            if (TryGetHalfTimeScore(live, out int htHome, out int htAway))
+            {
+                int htTotal = htHome + htAway;
+                return isOver ? (htTotal > thr ? AppColors.Green : AppColors.Red)
+                              : (htTotal < thr ? AppColors.Green : AppColors.Red);
+            }
+        
+            // Fallback: if feed shows exactly "HT", the displayed score should be the HT score
+            if (string.Equals(live?.LiveTime?.Trim(), "HT", StringComparison.OrdinalIgnoreCase))
+            {
+                return isOver ? (total > thr ? AppColors.Green : AppColors.Red)
+                              : (total < thr ? AppColors.Green : AppColors.Red);
+            }
+        
+            // Past HT / FT but we can’t compute HT score -> don’t guess
+            return AppColors.Black;
+        }
+
         // ---------- Other markets ----------
         if (!isFinal)
         {
