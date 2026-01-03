@@ -171,6 +171,7 @@ app.Use(async (ctx, next) =>
             || path.StartsWith("/legal") || path.StartsWith("/v1/legal")
             || path.StartsWith("/account/delete")     // allow HTML confirm page
             || path.StartsWith("/v1/auth/account")
+			|| path.StartsWith("/app-version") 
 			|| path.StartsWith("/app-version.txt")
 		    || path.StartsWith("/app-ads.txt"))   // allow the DELETE API
         {
@@ -292,6 +293,153 @@ app.MapGet("/v1/time/now", () =>
         epochSec = nowUtc.ToUnixTimeSeconds()
     });
 });
+
+// === App Version editor (HTML + write) ===
+app.MapGet("/app-version", async ctx =>
+{
+    var filePath = Environment.GetEnvironmentVariable("APP_VERSION_FILE")
+                 ?? "/var/lib/datasvc/app-version.txt";
+
+    string current = System.IO.File.Exists(filePath)
+        ? await System.IO.File.ReadAllTextAsync(filePath)
+        : "AI Scores Predictor, v?.?.?, code ?, date ?";
+
+    // Gentle parse: Product, vX.Y.Z, code N, date dd/MM/yyyy
+    string product = "AI Scores Predictor";
+    string version = "v1.0.0";
+    string buildCode = "0";
+    string date = DateTime.UtcNow.ToString("dd/MM/yyyy");
+
+    try
+    {
+        // Expected format: "AI Scores Predictor, v1.0.2, code 33, date 03/01/2026"
+        // Split by commas to stay resilient
+        var parts = current.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length >= 1) product = parts[0];
+        if (parts.Length >= 2) version = parts[1];                     // e.g. "v1.2.3"
+        if (parts.Length >= 3) buildCode = parts[2].Replace("code","", StringComparison.OrdinalIgnoreCase).Trim();
+        if (parts.Length >= 4) date = parts[3].Replace("date","", StringComparison.OrdinalIgnoreCase).Trim();
+    }
+    catch { /* keep defaults */ }
+
+    var html = $@"<!doctype html>
+<html>
+<head>
+  <meta charset=""utf-8"">
+  <title>Edit App Version</title>
+  <meta name=""viewport"" content=""width=device-width, initial-scale=1"">
+  <style>
+    body{{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:560px;margin:3rem auto;padding:0 1rem}}
+    label{{display:block;margin:.5rem 0 .25rem}}
+    input{{width:100%;padding:.6rem;border:1px solid #ccc;border-radius:.5rem}}
+    .row{{display:grid;grid-template-columns:1fr 1fr;gap:.75rem}}
+    button{{margin-top:1rem;padding:.7rem 1rem;border:0;border-radius:.6rem;background:#0a7cff;color:#fff;font-weight:600;cursor:pointer}}
+    .muted{{color:#666;margin-top:.75rem;font-size:.9em}}
+  </style>
+</head>
+<body>
+  <h1>Edit app version</h1>
+  <form method=""post"" action=""/app-version"">
+    <label>Product</label>
+    <input name=""product"" value=""{WebUtility.HtmlEncode(product)}"" required>
+
+    <div class=""row"">
+      <div>
+        <label>Version (e.g. v1.0.2)</label>
+        <input name=""version"" value=""{WebUtility.HtmlEncode(version)}"" pattern=""v\\d+\\.\\d+\\.\\d+"" required>
+      </div>
+      <div>
+        <label>Build code (integer)</label>
+        <input name=""buildCode"" value=""{WebUtility.HtmlEncode(buildCode)}"" pattern=""\\d+"" required>
+      </div>
+    </div>
+
+    <label>Date (dd/MM/yyyy)</label>
+    <input name=""date"" value=""{WebUtility.HtmlEncode(date)}"" pattern=""\\d{{2}}/\\d{{2}}/\\d{{4}}"" required>
+
+    <label>Code</label>
+    <input name=""code"" type=""password"" autocomplete=""one-time-code"" required>
+
+    <button type=""submit"">Save</button>
+    <p class=""muted"">Saves to {WebUtility.HtmlEncode(filePath)} and updates <code>/app-version.txt</code>.</p>
+  </form>
+  <p class=""muted"">Current line:<br><code>{WebUtility.HtmlEncode(current)}</code></p>
+</body>
+</html>";
+    ctx.Response.Headers["Cache-Control"] = "no-store";
+    ctx.Response.ContentType = "text/html; charset=utf-8";
+    await ctx.Response.WriteAsync(html);
+});
+
+app.MapPost("/app-version", async ctx =>
+{
+    var form = await ctx.Request.ReadFormAsync();
+    var product   = (form["product"].ToString()   ?? "").Trim();
+    var version   = (form["version"].ToString()   ?? "").Trim();
+    var buildCode = (form["buildCode"].ToString() ?? "").Trim();
+    var dateStr   = (form["date"].ToString()      ?? "").Trim();
+    var code      = (form["code"].ToString()      ?? "");
+
+    var expected = Environment.GetEnvironmentVariable("APP_VERSION_CODE");
+    if (string.IsNullOrEmpty(expected) || !string.Equals(code, expected, StringComparison.Ordinal))
+    {
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        await ctx.Response.WriteAsync("Invalid code.");
+        return;
+    }
+
+    // Validate fields
+    if (!Regex.IsMatch(version, @"^v\d+\.\d+\.\d+$"))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsync("Version must look like v1.2.3");
+        return;
+    }
+    if (!Regex.IsMatch(buildCode, @"^\d+$"))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsync("Build code must be an integer.");
+        return;
+    }
+    if (!DateTime.TryParseExact(dateStr, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+    {
+        ctx.Response.StatusCode = 400;
+        await ctx.Response.WriteAsync("Date must be dd/MM/yyyy.");
+        return;
+    }
+
+    var filePath = Environment.GetEnvironmentVariable("APP_VERSION_FILE")
+                 ?? "/var/lib/datasvc/app-version.txt";
+
+    var line = $"{product}, {version}, code {buildCode}, date {dateStr}\n";
+    Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+    await System.IO.File.WriteAllTextAsync(filePath, line, Encoding.UTF8);
+
+    // Redirect back to GET page
+    ctx.Response.Redirect("/app-version", permanent: false);
+});
+
+// Optional raw writer for scripts: PUT /app-version.txt?code=XXXX (body is whole line)
+app.MapMethods("/app-version.txt", new[] { "PUT" }, async ctx =>
+{
+    var code = ctx.Request.Query["code"].ToString();
+    var expected = Environment.GetEnvironmentVariable("APP_VERSION_CODE");
+    if (string.IsNullOrEmpty(expected) || !string.Equals(code, expected, StringComparison.Ordinal))
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+
+    using var sr = new StreamReader(ctx.Request.Body, Encoding.UTF8);
+    var line = (await sr.ReadToEndAsync()).Trim();
+    if (string.IsNullOrWhiteSpace(line))
+        return Results.BadRequest(new { error = "empty body" });
+
+    var filePath = Environment.GetEnvironmentVariable("APP_VERSION_FILE")
+                 ?? "/var/lib/datasvc/app-version.txt";
+
+    Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
+    await System.IO.File.WriteAllTextAsync(filePath, line + "\n", Encoding.UTF8);
+    return Results.NoContent();
+});
+
 
 app.MapGet("/app-ads.txt", async ctx =>
 {
