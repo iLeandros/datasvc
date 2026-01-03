@@ -2610,10 +2610,12 @@ public sealed class ParsedTipsService
 					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
 					    ct
 					).ConfigureAwait(false);
+					/*
 					var vip = TipAnalyzer.PickVip(
 					    detailDto, hostSafe, guestSafe, probsVIP, homeElo, awayElo
 					);
 					item.VIPTip = vip.code;
+					*/
 	            }
 	            catch (Exception ex)
 	            {
@@ -2629,7 +2631,7 @@ public sealed class ParsedTipsService
 				item.ProposedResultsVIP = probsVIP ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
 				if (item.ProposedResults.Count == 0) emptyProposed++;
 	            //item.Tip = tipCode?.Code ?? item.Tip;
-				item.Tip = tipCode?.Code ?? item.Tip;
+				item.VIPTip = tipCode?.Code ?? item.Tip;
 				item.VIPTipElo = tipCodeVIP?.Code ?? item.Tip;
 	
 	            var backgroundTipColour = item.BackgroundTipColour;
