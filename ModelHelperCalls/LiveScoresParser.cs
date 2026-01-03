@@ -225,57 +225,86 @@ public static class LiveScoresParser
     /// </summary>
     private static async Task<string> FetchMatchActionsHtml(string matchId, string dateIso)
     {
-        // This mirrors the curl you just ran:
-        // POST https://www.statarea.com/actions/controller/
-        // Content-Type: application/x-www-form-urlencoded; charset=UTF-8
-        // body: object={"action":"getLivescoreMatchActions","matchid":"1455348"}
     
         using var http = new HttpClient();
     
-        var payloadObject = new
+        var payload = new
         {
-            action  = "getLivescoreMatchActions",
+            action = "getLivescoreMatchActions",
             matchid = matchId
         };
-        /*
-        var json = JsonSerializer.Serialize(payloadObject);
-    
-        using var form = new FormUrlEncodedContent(new[]
+        
+        string jsonObject = JsonSerializer.Serialize(payload);
+        
+        var formContent = new FormUrlEncodedContent(new[]
         {
-            new KeyValuePair<string, string>("object", json),
-        });
-        */
-        using var form = new FormUrlEncodedContent(new[]
-        {
-            new KeyValuePair<string,string>("action", "getLivescoreMatchActions"),
-            new KeyValuePair<string,string>("matchid", matchId),
+            new KeyValuePair<string, string>("object", jsonObject)
         });
     
-        using var req = new HttpRequestMessage(
-            HttpMethod.Post,
-            //"http://www.statarea.com/actions/controller/")
-            "https://www.statarea.com/actions/controller/")
+        try
         {
-            Content = form
-        };
-    
-        req.Headers.Accept.Clear();
-        req.Headers.Accept.ParseAdd("*/*");
-        req.Headers.Add("X-Requested-With", "XMLHttpRequest");
-        req.Headers.UserAgent.ParseAdd(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/142.0.0.0 Safari/537.36");
-    
-        // Optional; you can pass a date if you want the referrer to match
-        req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
-        //req.Headers.Referrer = new Uri($"http://www.statarea.com/livescore/date/{dateIso}/");
-    
-        var resp = await http.SendAsync(req);
-        resp.EnsureSuccessStatusCode();
-    
-        var html = await resp.Content.ReadAsStringAsync();
-        return html;
+            var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "https://www.statarea.com/actions/controller/"
+            )
+            {
+                Content = formContent
+            };
+        
+            // Headers from your curl
+            request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+            request.Headers.Add("Origin", "https://www.statarea.com");
+        
+            // Use today's date in the referer URL (or hard-code if you prefer)
+            var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
+        
+            // User-Agent
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/142.0.0.0 Safari/537.36"
+            );
+        
+            // Content-Type will be set automatically to application/x-www-form-urlencoded; charset=utf-8
+        
+            var response = await http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+        
+            return await response.Content.ReadAsStringAsync();
+        }
+        catch(HttpRequestException ex)
+        {
+            var request = new HttpRequestMessage(
+                HttpMethod.Post,
+                "http://www.statarea.com/actions/controller/"
+            )
+            {
+                Content = formContent
+            };
+        
+            // Headers from your curl
+            request.Headers.Add("X-Requested-With", "XMLHttpRequest");
+            request.Headers.Add("Origin", "https://www.statarea.com");
+        
+            // Use today's date in the referer URL (or hard-code if you prefer)
+            var refererDate = DateTime.UtcNow.ToString("yyyy-MM-dd");
+            request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
+        
+            // User-Agent
+            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                "Chrome/142.0.0.0 Safari/537.36"
+            );
+        
+            // Content-Type will be set automatically to application/x-www-form-urlencoded; charset=utf-8
+        
+            var response = await http.SendAsync(request);
+            response.EnsureSuccessStatusCode();
+        
+            return await response.Content.ReadAsStringAsync();
+        }
     }
     
     private static TeamSide SideFromAction(HtmlNode actionNode)
