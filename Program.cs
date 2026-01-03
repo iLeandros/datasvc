@@ -339,14 +339,14 @@ app.MapGet("/app-version", async ctx =>
 </head>
 <body>
   <h1>Edit app version</h1>
-  <form method=""post"" action=""/app-version"">
+  <form method=""post"" action=""/app-version"" novalidate>
     <label>Product</label>
     <input name=""product"" value=""{WebUtility.HtmlEncode(product)}"" required>
 
     <div class=""row"">
       <div>
         <label>Version (e.g. v1.0.2)</label>
-        <input name=""version"" value=""{WebUtility.HtmlEncode(version)}"" pattern=""v\\d+\\.\\d+\\.\\d+"" required>
+		<input name=""version"" value=""{WebUtility.HtmlEncode(version)}"" pattern=""[vV]?\d+(\.\d+){2}"" title=""Use v1.2.3 or 1.2.3"" required>
       </div>
       <div>
         <label>Build code (integer)</label>
@@ -389,12 +389,15 @@ app.MapPost("/app-version", async ctx =>
     }
 
     // Validate fields
-    if (!Regex.IsMatch(version, @"^v\d+\.\d+\.\d+$"))
-    {
-        ctx.Response.StatusCode = 400;
-        await ctx.Response.WriteAsync("Version must look like v1.2.3");
-        return;
-    }
+    if (!Regex.IsMatch(version, @"^[vV]?\d+(\.\d+){2}$"))
+	{
+	    ctx.Response.StatusCode = 400;
+	    await ctx.Response.WriteAsync("Version must look like 1.2.3 or v1.2.3");
+	    return;
+	}
+	// Normalize to always write with leading 'v'
+	if (!version.StartsWith('v') && !version.StartsWith('V'))
+	    version = "v" + version;
     if (!Regex.IsMatch(buildCode, @"^\d+$"))
     {
         ctx.Response.StatusCode = 400;
