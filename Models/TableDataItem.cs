@@ -41,16 +41,17 @@ public class TableDataItem
     public string? Href { get; set; }
     public string? RowBackground { get; set; }
     public MatchDetails Details { get; set; } // set after construction
-    public List<TipAnalyzer.ProposedResult> ProposedResults { get; set; }
-    public List<TipAnalyzer.ProposedResult> ProposedResultsVIP { get; set; }
     public bool IsVipMatch { get; set; }
     public bool IsLocked { get; set; } = false;
     public bool TipIsVisible { get; set; } = true;
     public string BackgroundColor { get; set; } = "#D3D3D3"; // LightGray
+    public int Comments { get; set; }
+    public HalfTimeScore? HalfTime { get; set; }
     //public Microsoft.Maui.Graphics.Color BackgroundColor { get; set; } = Microsoft.Maui.Graphics.Colors.LightGray // Default to LightGray
     //public DetailsItemDto DetailsDto { get; set; }
+    public List<TipAnalyzer.ProposedResult> ProposedResults { get; set; }
+    public List<TipAnalyzer.ProposedResult> ProposedResultsVIP { get; set; }
     public DetailsItemDto DetailsItemDto { get; set; }
-    public int Comments { get; set; }
     
 
     public TableDataItem() { }
