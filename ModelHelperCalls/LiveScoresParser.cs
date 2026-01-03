@@ -260,7 +260,7 @@ public static class LiveScoresParser
             request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
         
             // User-Agent
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/142.0.0.0 Safari/537.36"
@@ -292,7 +292,7 @@ public static class LiveScoresParser
             request.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{refererDate}/");
         
             // User-Agent
-            _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd(
+            http.DefaultRequestHeaders.UserAgent.ParseAdd(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
                 "AppleWebKit/537.36 (KHTML, like Gecko) " +
                 "Chrome/142.0.0.0 Safari/537.36"
