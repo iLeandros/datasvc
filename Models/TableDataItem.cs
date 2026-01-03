@@ -11,7 +11,7 @@ public class TableDataItem
     [JsonPropertyName("BackgroundTipColourVIP")] public string? BackgroundTipColourVIP { get; set; }
     [JsonPropertyName("BackgroundTipColourVIPELO")] public string? BackgroundTipColourVIPELO { get; set; }
     [JsonPropertyName("Time")] public string? Time { get; set; }
-    public string? Status { get; set; }
+    //public string? Status { get; set; }
 
     [JsonPropertyName("TeamOne")] public string? HostTeam { get; set; }
     [JsonPropertyName("ScoreTeamOne")] public string? HostScore { get; set; }
