@@ -420,25 +420,35 @@ app.MapPost("/app-version", async ctx =>
 });
 
 // Optional raw writer for scripts: PUT /app-version.txt?code=XXXX (body is whole line)
-app.MapMethods("/app-version.txt", new[] { "PUT" }, async ctx =>
+app.MapMethods("/app-version.txt", new[] { "PUT" }, async (HttpContext ctx) =>
 {
     var code = ctx.Request.Query["code"].ToString();
     var expected = Environment.GetEnvironmentVariable("APP_VERSION_CODE");
+
     if (string.IsNullOrEmpty(expected) || !string.Equals(code, expected, StringComparison.Ordinal))
-        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    {
+        ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+        return;
+    }
 
     using var sr = new StreamReader(ctx.Request.Body, Encoding.UTF8);
     var line = (await sr.ReadToEndAsync()).Trim();
     if (string.IsNullOrWhiteSpace(line))
-        return Results.BadRequest(new { error = "empty body" });
+    {
+        ctx.Response.StatusCode = StatusCodes.Status400BadRequest;
+        await ctx.Response.WriteAsJsonAsync(new { error = "empty body" });
+        return;
+    }
 
     var filePath = Environment.GetEnvironmentVariable("APP_VERSION_FILE")
                  ?? "/var/lib/datasvc/app-version.txt";
 
     Directory.CreateDirectory(Path.GetDirectoryName(filePath)!);
     await System.IO.File.WriteAllTextAsync(filePath, line + "\n", Encoding.UTF8);
-    return Results.NoContent();
+
+    ctx.Response.StatusCode = StatusCodes.Status204NoContent;
 });
+
 
 
 app.MapGet("/app-ads.txt", async ctx =>
