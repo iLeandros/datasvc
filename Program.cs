@@ -2547,9 +2547,9 @@ public sealed class ParsedTipsService
 				    halfTime = new HalfTimeScore(htH, htA);
 				}
 				
-				if (livePick?.Status is not null)
+				if (livePick?.Status is string st)
 				{
-				    item.Status = livePick?.Status;
+				    item.Status = st;
 				}
 				
 	            string srcHome = (matched?.Item?.HomeGoals ?? item.HostScore) ?? string.Empty;
