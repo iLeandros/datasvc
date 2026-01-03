@@ -2629,7 +2629,7 @@ public sealed class ParsedTipsService
 				item.ProposedResultsVIP = probsVIP ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
 				if (item.ProposedResults.Count == 0) emptyProposed++;
 	            //item.Tip = tipCode?.Code ?? item.Tip;
-				//item.VIPTip = tipCode?.Code ?? item.Tip;
+				item.Tip = tipCode?.Code ?? item.Tip;
 				item.VIPTipElo = tipCodeVIP?.Code ?? item.Tip;
 	
 	            var backgroundTipColour = item.BackgroundTipColour;
