@@ -2523,6 +2523,9 @@ public sealed class ParsedTipsService
 	
 	            // Compute color off-thread, but APPLY on UI
 	            string? scoreOne = item.HostScore, scoreTwo = item.GuestScore;
+				
+				HalfTimeScore? halfTime = item.HalfTime; // keep existing unless we have a better value
+				
 	            if (matched is not null)
 	            {
 	                try
@@ -2534,6 +2537,15 @@ public sealed class ParsedTipsService
 	                }
 	                catch { /* keep previous values if anything is off */ }
 	            }
+
+				// Pick the same live dto you’re using for scoring
+				var livePick = matched?.Item ?? live;
+				
+				// NEW: set halftime if available (both sides present)
+				if (livePick?.HalfTimeHomeGoals is int htH && livePick?.HalfTimeAwayGoals is int htA)
+				{
+				    halfTime = new HalfTimeScore(htH, htA);
+				}
 	
 	            string srcHome = (matched?.Item?.HomeGoals ?? item.HostScore) ?? string.Empty;
 	            string srcAway = (matched?.Item?.AwayGoals ?? item.GuestScore) ?? string.Empty;
@@ -2587,6 +2599,9 @@ public sealed class ParsedTipsService
 	
 	            item.HostScore = scoreOne;
 	            item.GuestScore = scoreTwo;
+
+				// NEW: apply halftime alongside other live-derived fields
+				item.HalfTime = halfTime;
 	
 	            item.BackgroundTipColour = backgroundTipColour;
 				item.BackgroundTipColourVIP = backgroundTipColourVIP;
