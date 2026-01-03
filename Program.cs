@@ -2546,10 +2546,10 @@ public sealed class ParsedTipsService
 				{
 				    halfTime = new HalfTimeScore(htH, htA);
 				}
-
+				
 				if (!string.IsNullOrEmpty(livePick?.Status))
 				{
-				    item.Status = livePick.Status;
+				    item.Status = "34";
 				}
 	
 	            string srcHome = (matched?.Item?.HomeGoals ?? item.HostScore) ?? string.Empty;
