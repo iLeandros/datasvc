@@ -138,7 +138,7 @@ public static class LiveScoresParser
         return new HalfTimeScore(ParseIntSafe(goals[0].InnerText), ParseIntSafe(goals[1].InnerText));
     }
 
-    private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
+   private static async Task<List<LiveScoreItem>> ParseMatchesFromScope(HtmlNode scope, string dateIso)
     {
         var list = new List<LiveScoreItem>();
     
@@ -174,53 +174,35 @@ public static class LiveScoresParser
                 ".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]"
             );
             
-            if (inlineActionsRoot != null)
+            // in ParseMatchesFromScope(...) just after you've built actionsList/ht from inlineActionsRoot
+            if ((inlineActionsRoot == null || actionsList.Count == 0 || ht == null) && !string.IsNullOrWhiteSpace(matchId))
             {
-                ht = ParseHalfTimeFromMatchActions(inlineActionsRoot);
-            
-                var inlineActionNodes = inlineActionsRoot.SelectNodes(
-                    ".//div[contains(concat(' ', normalize-space(@class), ' '), ' action ')]"
-                ) ?? new HtmlNodeCollection(null);
-            
-                foreach (var a in inlineActionNodes)
-                {
-                    var playerRaw = a.SelectSingleNode(".//div[contains(@class,'player')]")?.InnerText ?? string.Empty;
-                    var (min, player) = ParseMinuteAndPlayer(playerRaw);
-                    if (string.IsNullOrWhiteSpace(player) && !min.HasValue) continue;
-            
-                    var side = SideFromAction(a);
-            
-                    var iconNode = a.SelectSingleNode(".//div[contains(@class,'matchaction')]/div");
-                    var cls = (iconNode?.GetAttributeValue("class", "") ?? "").ToLowerInvariant();
-                    var kind = ClassToActionKind(cls);
-            
-                    actionsList.Add(new MatchAction(side, kind, min, player));
-                }
-            }
-            else if (!string.IsNullOrEmpty(matchId))
-            {
-                // Fallback: Fetch actions via AJAX if not inline
                 try
                 {
                     var actionsHtml = await FetchMatchActionsHtml(matchId, dateIso);
-                    var actionsDoc = new HtmlDocument();
-                    actionsDoc.LoadHtml(actionsHtml);
-                    var fetchedActionsRoot = actionsDoc.DocumentNode.SelectSingleNode(".//div[contains(concat(' ', normalize-space(@class), ' '), ' matchactions ')]")
-                                             ?? actionsDoc.DocumentNode;  // Fallback to root if no specific matchactions div
-
-                    if (fetchedActionsRoot != null)
+                    if (!string.IsNullOrWhiteSpace(actionsHtml))
                     {
-                        ht = ParseHalfTimeFromMatchActions(fetchedActionsRoot);
-                        ParseActionsFromRoot(fetchedActionsRoot, actionsList);
+                        var frag = new HtmlDocument();
+                        frag.LoadHtml(actionsHtml);
+            
+                        // fill halftime if still missing
+                        ht ??= ParseHalfTimeFromMatchActions(frag.DocumentNode);
+            
+                        // fill actions
+                        var fetchedActions = new List<MatchAction>();
+                        ParseActionsFromRoot(frag.DocumentNode, fetchedActions);
+            
+                        if (fetchedActions.Count > 0)
+                            actionsList.AddRange(fetchedActions);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[LiveScoresParser] Error fetching actions for matchId={matchId}: {ex.Message}");
+                    Console.WriteLine($"[LiveScoresParser] fetch-actions failed for {matchId}: {ex.Message}");
                 }
             }
 
-            Console.WriteLine($"[LiveScoresParser] matchId={matchId} inlineMatchactions={(inlineActionsRoot!=null)} fetchedActions={actionsList.Count > 0} inlineHT={(ht!=null)}");
+            Console.WriteLine($"[LiveScoresParser] matchId={matchId} inlineMatchactions={(inlineActionsRoot!=null)} inlineActions={actionsList.Count} inlineHT={(ht!=null)}");
 
             list.Add(new LiveScoreItem(
                 time,
@@ -246,20 +228,33 @@ public static class LiveScoresParser
         // This mirrors the curl you just ran:
         // POST https://www.statarea.com/actions/controller/
         // Content-Type: application/x-www-form-urlencoded; charset=UTF-8
-        // body: action="getLivescoreMatchActions"&matchid="1455348"
+        // body: object={"action":"getLivescoreMatchActions","matchid":"1455348"}
     
         using var http = new HttpClient();
     
+        var payloadObject = new
+        {
+            action  = "getLivescoreMatchActions",
+            matchid = matchId
+        };
+        /*
+        var json = JsonSerializer.Serialize(payloadObject);
+    
         using var form = new FormUrlEncodedContent(new[]
         {
-            new KeyValuePair<string, string>("action", "getLivescoreMatchActions"),
-            new KeyValuePair<string, string>("matchid", matchId)
+            new KeyValuePair<string, string>("object", json),
+        });
+        */
+        using var form = new FormUrlEncodedContent(new[]
+        {
+            new KeyValuePair<string,string>("action", "getLivescoreMatchActions"),
+            new KeyValuePair<string,string>("matchid", matchId),
         });
     
         using var req = new HttpRequestMessage(
             HttpMethod.Post,
-            ActionsUrl
-        )
+            //"http://www.statarea.com/actions/controller/")
+            "https://www.statarea.com/actions/controller/")
         {
             Content = form
         };
@@ -274,6 +269,7 @@ public static class LiveScoresParser
     
         // Optional; you can pass a date if you want the referrer to match
         req.Headers.Referrer = new Uri($"https://www.statarea.com/livescore/date/{dateIso}/");
+        //req.Headers.Referrer = new Uri($"http://www.statarea.com/livescore/date/{dateIso}/");
     
         var resp = await http.SendAsync(req);
         resp.EnsureSuccessStatusCode();
