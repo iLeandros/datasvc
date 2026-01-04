@@ -463,6 +463,16 @@ app.MapGet("/app-ads.txt", async ctx =>
     await ctx.Response.WriteAsync("google.com, pub-3388518972215761, DIRECT, f08c47fec0942fa0, facebook.com, 2656320454390110, DIRECT, c3e20eee3f780d68");
 });
 
+app.MapGet("/app-ads2.txt", async ctx =>
+{
+    ctx.Response.ContentType = "text/plain; charset=utf-8";
+    ctx.Response.Headers["Cache-Control"] = "no-store";
+    ctx.Response.Headers["X-AppAds-From"] = "kestrel-2026-01-04";
+
+    await ctx.Response.WriteAsync("TEST-2026-01-04");
+});
+
+
 app.MapGet("/app-version.txt", async ctx =>
 {
     // Allow override via env var APP_VERSION_FILE, otherwise use default path
