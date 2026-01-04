@@ -173,8 +173,7 @@ app.Use(async (ctx, next) =>
             || path.StartsWith("/v1/auth/account")
 			|| path.StartsWith("/app-version") 
 			|| path.StartsWith("/app-version.txt")
-		    || path.StartsWith("/app-ads.txt")
-		    || path.StartsWith("/app-ads2.txt"))   // allow the DELETE API
+		    || path.StartsWith("/app-ads.txt"))   // allow the DELETE API
         {
             await next();
             return;
