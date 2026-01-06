@@ -172,7 +172,8 @@ public static class TipAnalyzer
         // Historical signals
         var h2h = ComputeH2H(d, homeName, awayName);             // includes 1X2 + OU + BTTS from H2H
         // right after: var h2h = ComputeH2H(d, homeName, awayName);
-        double wH2H = wSqrt(h2h.NH2H); // already decayed by time
+        //double wH2H = wSqrt(h2h.NH2H); // already decayed by time
+        double wH2H = wSqrt((int)Math.Round(h2h.MassH2H));
         double p1H=double.NaN, pxH=double.NaN, p2H=double.NaN;
         double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
         double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
@@ -1196,7 +1197,8 @@ public static class TipAnalyzer
                 !(SameTeam(host, away) && SameTeam(guest, home))) continue;
     
             // Build a duplicate key (date if available, else "nodate")
-            string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : "nodate";
+            //string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : "nodate";
+            string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : $"nodate#{seen.Count}";
             string dupKey = $"{dateKey}|{host}|{guest}|{hg}-{gg}";
             if (!seen.Add(dupKey))
             {
