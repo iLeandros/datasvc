@@ -23,8 +23,9 @@ public static class TipAnalyzer
         if (string.IsNullOrWhiteSpace(proposedCode)) return list;
 
         // --- helpers ------------------------------------------------------------
+        /*
         static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
-        static double Sigmoid(double z) => 1.0 / (1.0 + Math.Exp(-z));
+        
         static double Logit(double p)
         {
             // protect against 0/1 to avoid +/-infinity
@@ -32,6 +33,39 @@ public static class TipAnalyzer
             p = Math.Min(1 - eps, Math.Max(eps, p));
             return Math.Log(p / (1 - p));
         }
+        */
+        // ---------- Small math helpers ----------
+        static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
+        static double Logit(double p)
+        {
+            const double eps = 1e-9;
+            p = Math.Min(1 - eps, Math.Max(eps, p));
+            return Math.Log(p / (1 - p));
+        }
+        static double InvLogit(double z) => 1.0 / (1.0 + Math.Exp(-z));
+        
+        static double EntropyClamp(double p, double p0, double bandK, double wEff)
+        {
+            if (double.IsNaN(p) || double.IsNaN(p0)) return p;
+            double z0 = Logit(p0);
+            double z  = Logit(p);
+            double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
+            return Clamp01(InvLogit(Math.Clamp(z, z0 - band, z0 + band)));
+        }
+        
+        // Weighted mean with NaN skip (you already have one; keep a single copy)
+        static double WeightedMean(double[] ps, double[] ws)
+        {
+            double sw = 0, sp = 0;
+            for (int i = 0; i < ps.Length; i++)
+            {
+                double p = ps[i], w = ws[i];
+                if (!double.IsNaN(p) && w > 0) { sw += w; sp += p * w; }
+            }
+            return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
+        }
+        
+        static double Sigmoid(double z) => 1.0 / (1.0 + Math.Exp(-z));
         static double LogitBump(double p, double tau, double lo = 0.05, double hi = 0.95)
         {
             if (double.IsNaN(p)) return p;
@@ -346,6 +380,38 @@ public static class TipAnalyzer
             wEloGoals = 0.75 * wElo;
             wEloOU    = 0.75 * wElo;
         }
+        // ===== Lambda priors (league baseline; tune per league) =====
+        double lam0H = 1.50, lam0A = 1.20;      // baseline means (HFA baked in)
+        double tauLam = 6.0;                    // "virtual matches" for prior
+        
+        // Collect priors you already have
+        double lamH_prior = WeightedMean(
+            new[] { lam0H, lamHStand, lamHElo },
+            new[] { tauLam, wStand,   wEloGoals }
+        );
+        double lamA_prior = WeightedMean(
+            new[] { lam0A, lamAStand, lamAElo },
+            new[] { tauLam, wStand,   wEloGoals }
+        );
+        
+        // Empirical (time-decayed) from H2H
+        var h2h = ComputeH2H(d, homeName, awayName);
+        double W = h2h.MassH2H;                 // decayed sample mass
+        
+        double lamH_emp = h2h.LamH2H;
+        double lamA_emp = h2h.LamA2H;
+        
+        // Posterior mean shrinkage (Gamma–Poisson style)
+        double wPrior = tauLam + wStand + wEloGoals;     // total prior weight
+        double lamH_post = (!double.IsNaN(lamH_emp) && !double.IsNaN(lamH_prior))
+            ? (wPrior * lamH_prior + W * lamH_emp) / Math.Max(1e-9, wPrior + W) : lamH_prior;
+        
+        double lamA_post = (!double.IsNaN(lamA_emp) && !double.IsNaN(lamA_prior))
+            ? (wPrior * lamA_prior + W * lamA_emp) / Math.Max(1e-9, wPrior + W) : lamA_prior;
+        
+        // Store for downstream usage if you like:
+        double lamT_post = Math.Max(1e-6, lamH_post + lamA_post);
+
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
         var p1 = Blend(new[]
@@ -472,6 +538,14 @@ public static class TipAnalyzer
             C(o35Elo,                                        w: wEloOU) // <-- NEW
         });
         var u35 = 1 - o35;
+
+        // Gate U3.5 by expected goals & agreement
+        bool agreeLow = (!double.IsNaN(o35Stand) && o35Stand < 0.35) 
+                     || (!double.IsNaN(o35Pois)  && o35Pois  < 0.35);
+        bool allowU35 = (lamT_post < 2.6) && agreeLow && (wEff >= 3.0);
+        
+        if (!allowU35) u35 = Math.Min(u35, 0.72); // soft ceiling when evidence is weak
+
 
         // ==================== Positive-only overlay ===========================
         // Only allow standings/motivation to push "positive" outcomes up (and draw down).
