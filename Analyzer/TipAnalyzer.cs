@@ -451,7 +451,7 @@ public static class TipAnalyzer
         var o25 = Blend(new[]
         {
             C(chartOU25,                                     w: wChartOU25),
-            C(h2h.POver25,                                   w: wnMass),
+            C(h2h.POver25,                                   w: nMass),
             C(o25H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over25Rate, sepAway.Over25Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.Over25RateFacts, factsAway.Over25RateFacts), w: wSqrt(factsHome.N + factsAway.N)),
@@ -814,7 +814,8 @@ public static class TipAnalyzer
     
         // Poisson hint for HTS from H2H lambdas + Elo lambdas (time-decayed H2H already implemented)
         var h2h = ComputeH2H(d, homeName, awayName);             // has LamH2H/LamA2H
-        double wH2H = wSqrt(h2h.MassH2H);
+        int nMass = (int)Math.Round(h2h.MassH2H);
+        double wH2H = nMass <= 0 ? 0.0 : wSqrt(nMass);
     
         double htsH = double.IsNaN(h2h.LamH2H) ? double.NaN : (1 - Math.Exp(-h2h.LamH2H));
     
