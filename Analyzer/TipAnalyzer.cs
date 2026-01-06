@@ -1144,6 +1144,135 @@ public static class TipAnalyzer
         return item?.Percentage;
     }
 
+    
+    private sealed record H2HStats(
+        int NH2H,
+        double PHome, double PDraw, double PAway,
+        double POver15, double POver25, double POver35,
+        double PBTTS, double POnlyOne,
+        double PHomeScored, double PAwayScored,
+        // Poisson from H2H (time-decayed)
+        double LamH2H, double LamA2H,
+        // NEW: total decayed sample mass (W) before rounding
+        double MassH2H = 0.0,
+        // NEW: diagnostics – how many matches were ignored due to hard cutoff
+        int IgnoredOld = 0,
+        // NEW: diagnostics – how many duplicate rows were skipped
+        int IgnoredDuplicates = 0
+    );
+
+    // ---------- H2H AGGREGATION (revised) ----------
+    private static H2HStats ComputeH2H(DetailsItemDto d, string home, string away)
+    {
+        var matches = d?.MatchDataBetween?.Matches ?? new List<MatchBetweenItemDto>();
+    
+        // --- decay & policy parameters (tune) ---
+        const double HALF_LIFE_DAYS = 365.0;     // halves every ~1 year
+        const double MIN_W = 0.05;               // floor weight for very old games
+        const int HARD_CUTOFF_DAYS = 3650;       // ignore > 10 years
+        const double UNKNOWN_DATE_WEIGHT = MIN_W; // conservative for undated matches
+    
+        DateTime today = DateTime.UtcNow;
+    
+        // weighted tallies
+        double W = 0, wHome = 0, wDraw = 0, wAway = 0,
+               wOv15 = 0, wOv25 = 0, wOv35 = 0,
+               wBTTS = 0, wOnlyOne = 0, wHSc = 0, wASc = 0;
+    
+        // weighted goals (relative to *current* home/away)
+        double gH = 0.0, gA = 0.0;
+    
+        // simple duplicate guard: (date|host|guest|hg-gg)
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int ignoredOld = 0;
+    
+        foreach (var m in matches)
+        {
+            if (!TryInt(m.HostGoals, out var hg) || !TryInt(m.GuestGoals, out var gg)) continue;
+    
+            string host = m.HostTeam ?? "", guest = m.GuestTeam ?? "";
+            if (!(SameTeam(host, home) && SameTeam(guest, away)) &&
+                !(SameTeam(host, away) && SameTeam(guest, home))) continue;
+    
+            // Build a duplicate key (date if available, else "nodate")
+            string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : "nodate";
+            string dupKey = $"{dateKey}|{host}|{guest}|{hg}-{gg}";
+            if (!seen.Add(dupKey)) continue; // skip exact duplicates
+    
+            // --- time decay weight ---
+            double w;
+            if (TryReadMatchDate(m, out md))
+            {
+                var ageDays = Math.Max(0.0, (today - md).TotalDays);
+    
+                // hard cutoff for very old history
+                if (ageDays > HARD_CUTOFF_DAYS)
+                {
+                    ignoredOld++;
+                    continue;
+                }
+    
+                w = Math.Exp(-Math.Log(2.0) * ageDays / Math.Max(1.0, HALF_LIFE_DAYS));
+                if (w < MIN_W) w = MIN_W;
+            }
+            else
+            {
+                // unknown date -> conservative small weight
+                w = UNKNOWN_DATE_WEIGHT;
+            }
+    
+            // normalize goal orientation to CURRENT home/away
+            bool hostIsCurrentHome = SameTeam(host, home);
+            int relHomeGoals = hostIsCurrentHome ? hg : gg;
+            int relAwayGoals = hostIsCurrentHome ? gg : hg;
+    
+            W += w;
+    
+            // outcomes
+            if (hg > gg)      AddWin(ref wHome, ref wAway, hostIsCurrentHome,  w);
+            else if (hg < gg) AddWin(ref wHome, ref wAway, !hostIsCurrentHome, w);
+            else              wDraw += w;
+    
+            // totals (strict > matches O1.5/O2.5/O3.5)
+            int total = hg + gg;
+            if (total > 1) wOv15 += w;
+            if (total > 2) wOv25 += w;
+            if (total > 3) wOv35 += w;
+    
+            // scoring flags (relative)
+            if (relHomeGoals > 0) wHSc += w;
+            if (relAwayGoals > 0) wASc += w;
+    
+            if (hg > 0 && gg > 0) wBTTS += w;
+            if ((hg > 0) ^ (gg > 0)) wOnlyOne += w;
+    
+            // Poisson lambdas from weighted goals
+            gH += w * relHomeGoals;
+            gA += w * relAwayGoals;
+        }
+    
+        double ToP(double x) => W <= 1e-9 ? double.NaN : x / W;
+    
+        // Effective N becomes the decayed sample mass W (rounded)
+        int nEff = (int)Math.Round(W);
+    
+        double lamH = (W <= 1e-9) ? double.NaN : Math.Max(1e-6, gH / W);
+        double lamA = (W <= 1e-9) ? double.NaN : Math.Max(1e-6, gA / W);
+    
+        // NOTE: Add 'MassH2H' (double) and optionally 'IgnoredOld' (int) to H2HStats
+        return new H2HStats(
+            NH2H: nEff,
+            PHome: ToP(wHome), PDraw: ToP(wDraw), PAway: ToP(wAway),
+            POver15: ToP(wOv15), POver25: ToP(wOv25), POver35: ToP(wOv35),
+            PBTTS: ToP(wBTTS), POnlyOne: ToP(wOnlyOne),
+            PHomeScored: ToP(wHSc), PAwayScored: ToP(wASc),
+            LamH2H: lamH, LamA2H: lamA,
+            MassH2H: W,
+            IgnoredOld: ignoredOld // optional: remove if not desired
+        );
+    }
+
+    /*
     private sealed record H2HStats(
         int NH2H,
         double PHome, double PDraw, double PAway,
@@ -1153,7 +1282,6 @@ public static class TipAnalyzer
         // NEW: Poisson from H2H (time-decayed)
         double LamH2H, double LamA2H
     );
-
     // ---------- H2H AGGREGATION ----------
     private static H2HStats ComputeH2H(DetailsItemDto d, string home, string away)
     {
@@ -1234,6 +1362,7 @@ public static class TipAnalyzer
             LamH2H: lamH, LamA2H: lamA
         );
     }
+    */
     static void AddWin(ref double wHome, ref double wAway, bool isHomeWin, double w)
     {
         if (isHomeWin) wHome += w; else wAway += w;
