@@ -624,7 +624,7 @@ public static class TipAnalyzer
             new("HTS", hts_disp),  new("GTS", gts_disp),
 
             new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
-            new("U 1.5", u15), new("U 2.5", u25 -0.05), new("U 3.5", u35 -0.10),
+            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),
 
             new("HTO 1.5", hto15),
             new("HTU 1.5", htu15 - 0.10),
