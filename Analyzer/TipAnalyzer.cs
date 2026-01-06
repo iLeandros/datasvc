@@ -395,9 +395,8 @@ public static class TipAnalyzer
         );
         
         // Empirical (time-decayed) from H2H
-        var h2h = ComputeH2H(d, homeName, awayName);
-        double W = h2h.MassH2H;                 // decayed sample mass
-        
+        // var h2h = ComputeH2H(d, homeName, awayName);   // ← REMOVE this duplicate
+        double W = h2h.MassH2H;
         double lamH_emp = h2h.LamH2H;
         double lamA_emp = h2h.LamA2H;
         
@@ -411,6 +410,19 @@ public static class TipAnalyzer
         
         // Store for downstream usage if you like:
         double lamT_post = Math.Max(1e-6, lamH_post + lamA_post);
+
+        // Poisson-first totals from shrunk lambdas (used for clamping + gates)
+        double o15Pois = OverFromLambda(lamT_post, 1.5);
+        double o25Pois = OverFromLambda(lamT_post, 2.5);
+        double o35Pois = OverFromLambda(lamT_post, 3.5);
+        
+        // Effective mass for entropy banding (prior mass + H2H mass)
+        double wEff = Math.Max(1e-9, wPrior + W);
+        
+        // League/tier priors for O/U (used as anchors for EntropyClamp)
+        double p0_o15 = OverFromLambda(lam0H + lam0A, 1.5);
+        double p0_o25 = OverFromLambda(lam0H + lam0A, 2.5);
+        double p0_o35 = OverFromLambda(lam0H + lam0A, 3.5);
 
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
@@ -512,6 +524,7 @@ public static class TipAnalyzer
             C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o15Elo,                                        w: wEloOU) // <-- NEW
         });
+        o15 = EntropyClamp(o15, p0_o15, bandK: 1.4, wEff: wEff);
         var u15 = 1 - o15;
         
         var o25 = Blend(new[]
@@ -525,6 +538,7 @@ public static class TipAnalyzer
             C(o25Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o25Elo,                                        w: wEloOU) // <-- NEW
         });
+        o25 = EntropyClamp(o25, p0_o25, bandK: 1.4, wEff: wEff);
         var u25 = 1 - o25;
         
         var o35 = Blend(new[]
@@ -537,6 +551,7 @@ public static class TipAnalyzer
             C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o35Elo,                                        w: wEloOU) // <-- NEW
         });
+        o35 = EntropyClamp(o35, p0_o35, bandK: 1.4, wEff: wEff);
         var u35 = 1 - o35;
 
         // Gate U3.5 by expected goals & agreement
