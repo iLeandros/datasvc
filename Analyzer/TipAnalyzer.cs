@@ -730,7 +730,7 @@ public static class TipAnalyzer
             new("HTS", hts_disp),  new("GTS", gts_disp),
 
             new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
-            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35 -0.05),
+            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),//new("U 3.5", u35 -0.05),
 
             new("HTO 1.5", hto15),
             new("HTU 1.5", htu15 - 0.10),
@@ -738,6 +738,69 @@ public static class TipAnalyzer
 
         // Hide empty markets entirely
         results = results.Where(r => !double.IsNaN(r.Probability)).ToList();
+
+        // ===== Conservative ranking (prefer DC under low evidence) =====
+        // NOTE: This changes ORDER only (does NOT change probabilities).
+        
+        static bool IsDC(string code)
+        {
+            var c = code.ToUpperInvariant();
+            return c is "1X" or "X2" or "12";
+        }
+        
+        // Optional: treat these as "goal/no-goal markets" that can spike on low data
+        static bool IsGoalMarket(string code)
+        {
+            var c = code.ToUpperInvariant();
+            return c.StartsWith("O ") || c.StartsWith("U ")
+                || c.StartsWith("HTO") || c.StartsWith("HTU")
+                || c is "BTS" or "OTS" or "HTS" or "GTS";
+        }
+        
+        // Low-evidence condition: tune thresholds if needed
+        bool lowEvidence = (wEff < 3.0) || (h2h.MassH2H < 2.0);
+        
+        // Uncertainty band (same spirit as your EntropyClamp bandK)
+        double bandK = 1.4;
+        double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
+        
+        // If draw is high, avoid promoting "12" (no-draw) as “safer”
+        bool allow12 = px < 0.32; // tune 0.30–0.35
+        
+        double Score(ProposedResult r)
+        {
+            double p = Clamp01(r.Probability);
+        
+            // Conservative score: lower bound-ish when uncertainty is high
+            double s = p - 0.60 * band;
+        
+            if (lowEvidence)
+            {
+                // Give DC a small bonus that grows when uncertainty is high
+                if (IsDC(r.Code))
+                {
+                    if (r.Code.Equals("12", StringComparison.OrdinalIgnoreCase) && !allow12)
+                        return s - 0.20 * band; // penalize 12 when draw is big
+        
+                    // Prefer 1X/X2 slightly more than 12 (even when allowed)
+                    double dcBonus = r.Code.Equals("12", StringComparison.OrdinalIgnoreCase) ? 0.20 : 0.30;
+                    s += dcBonus * band;
+                }
+        
+                // Slight penalty to volatile goal markets under low evidence
+                if (IsGoalMarket(r.Code))
+                    s -= 0.10 * band;
+            }
+        
+            return s;
+        }
+        
+        // Sort by score; keep probability as secondary tie-break
+        results = results
+            .OrderByDescending(r => Score(r))
+            .ThenByDescending(r => r.Probability)
+            .ToList();
+
 
         return results;
     }
