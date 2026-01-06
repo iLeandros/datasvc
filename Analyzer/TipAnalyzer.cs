@@ -211,6 +211,13 @@ public static class TipAnalyzer
         double p1H=double.NaN, pxH=double.NaN, p2H=double.NaN;
         double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
         double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
+        static double Logit(double p)
+        {
+            const double eps = 1e-9;
+            p = Math.Min(1 - eps, Math.Max(eps, p));
+            return Math.Log(p / (1 - p));
+        }
+        static double InvLogit(double z) => 1.0 / (1.0 + Math.Exp(-z));
         
         static double EntropyClamp(double p, double p0, double bandK, double wEff)
         {
