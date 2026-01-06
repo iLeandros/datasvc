@@ -23,9 +23,8 @@ public static class TipAnalyzer
         if (string.IsNullOrWhiteSpace(proposedCode)) return list;
 
         // --- helpers ------------------------------------------------------------
-        /*
         static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
-        
+        static double Sigmoid(double z) => 1.0 / (1.0 + Math.Exp(-z));
         static double Logit(double p)
         {
             // protect against 0/1 to avoid +/-infinity
@@ -33,39 +32,6 @@ public static class TipAnalyzer
             p = Math.Min(1 - eps, Math.Max(eps, p));
             return Math.Log(p / (1 - p));
         }
-        */
-        // ---------- Small math helpers ----------
-        static double Clamp01(double x) => x < 0 ? 0 : (x > 1 ? 1 : x);
-        static double Logit(double p)
-        {
-            const double eps = 1e-9;
-            p = Math.Min(1 - eps, Math.Max(eps, p));
-            return Math.Log(p / (1 - p));
-        }
-        static double InvLogit(double z) => 1.0 / (1.0 + Math.Exp(-z));
-        
-        static double EntropyClamp(double p, double p0, double bandK, double wEff)
-        {
-            if (double.IsNaN(p) || double.IsNaN(p0)) return p;
-            double z0 = Logit(p0);
-            double z  = Logit(p);
-            double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
-            return Clamp01(InvLogit(Math.Clamp(z, z0 - band, z0 + band)));
-        }
-        
-        // Weighted mean with NaN skip (you already have one; keep a single copy)
-        static double WeightedMean(double[] ps, double[] ws)
-        {
-            double sw = 0, sp = 0;
-            for (int i = 0; i < ps.Length; i++)
-            {
-                double p = ps[i], w = ws[i];
-                if (!double.IsNaN(p) && w > 0) { sw += w; sp += p * w; }
-            }
-            return sw <= 0 ? double.NaN : Math.Clamp(sp / sw, 0.0, 1.0);
-        }
-        
-        static double Sigmoid(double z) => 1.0 / (1.0 + Math.Exp(-z));
         static double LogitBump(double p, double tau, double lo = 0.05, double hi = 0.95)
         {
             if (double.IsNaN(p)) return p;
@@ -206,27 +172,10 @@ public static class TipAnalyzer
         // Historical signals
         var h2h = ComputeH2H(d, homeName, awayName);             // includes 1X2 + OU + BTTS from H2H
         // right after: var h2h = ComputeH2H(d, homeName, awayName);
-        //double wH2H = wSqrt(h2h.NH2H); // already decayed by time
-        double wH2H = wSqrt((int)Math.Round(h2h.MassH2H));
+        double wH2H = wSqrt(h2h.NH2H); // already decayed by time
         double p1H=double.NaN, pxH=double.NaN, p2H=double.NaN;
         double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
         double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
-        static double Logit(double p)
-        {
-            const double eps = 1e-9;
-            p = Math.Min(1 - eps, Math.Max(eps, p));
-            return Math.Log(p / (1 - p));
-        }
-        static double InvLogit(double z) => 1.0 / (1.0 + Math.Exp(-z));
-        
-        static double EntropyClamp(double p, double p0, double bandK, double wEff)
-        {
-            if (double.IsNaN(p) || double.IsNaN(p0)) return p;
-            double z0 = Logit(p0);
-            double z  = Logit(p);
-            double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
-            return Clamp01(InvLogit(Math.Clamp(z, z0 - band, z0 + band)));
-        }
         
         if (!double.IsNaN(h2h.LamH2H) && !double.IsNaN(h2h.LamA2H))
         {
@@ -396,50 +345,6 @@ public static class TipAnalyzer
             wEloGoals = 0.75 * wElo;
             wEloOU    = 0.75 * wElo;
         }
-        // ===== Lambda priors (league baseline; tune per league) =====
-        double lam0H = 1.50, lam0A = 1.20;      // baseline means (HFA baked in)
-        double tauLam = 6.0;                    // "virtual matches" for prior
-        
-        // Collect priors you already have
-        double lamH_prior = WeightedMean(
-            new[] { lam0H, lamHStand, lamHElo },
-            new[] { tauLam, wStand,   wEloGoals }
-        );
-        double lamA_prior = WeightedMean(
-            new[] { lam0A, lamAStand, lamAElo },
-            new[] { tauLam, wStand,   wEloGoals }
-        );
-        
-        // Empirical (time-decayed) from H2H
-        // var h2h = ComputeH2H(d, homeName, awayName);   // ← REMOVE this duplicate
-        double W = h2h.MassH2H;
-        double lamH_emp = h2h.LamH2H;
-        double lamA_emp = h2h.LamA2H;
-        
-        // Posterior mean shrinkage (Gamma–Poisson style)
-        double wPrior = tauLam + wStand + wEloGoals;     // total prior weight
-        double lamH_post = (!double.IsNaN(lamH_emp) && !double.IsNaN(lamH_prior))
-            ? (wPrior * lamH_prior + W * lamH_emp) / Math.Max(1e-9, wPrior + W) : lamH_prior;
-        
-        double lamA_post = (!double.IsNaN(lamA_emp) && !double.IsNaN(lamA_prior))
-            ? (wPrior * lamA_prior + W * lamA_emp) / Math.Max(1e-9, wPrior + W) : lamA_prior;
-        
-        // Store for downstream usage if you like:
-        double lamT_post = Math.Max(1e-6, lamH_post + lamA_post);
-
-        // Poisson-first totals from shrunk lambdas (used for clamping + gates)
-        double o15Pois = OverFromLambda(lamT_post, 1.5);
-        double o25Pois = OverFromLambda(lamT_post, 2.5);
-        double o35Pois = OverFromLambda(lamT_post, 3.5);
-        
-        // Effective mass for entropy banding (prior mass + H2H mass)
-        double wEff = Math.Max(1e-9, wPrior + W);
-        
-        // League/tier priors for O/U (used as anchors for EntropyClamp)
-        double p0_o15 = OverFromLambda(lam0H + lam0A, 1.5);
-        double p0_o25 = OverFromLambda(lam0H + lam0A, 2.5);
-        double p0_o35 = OverFromLambda(lam0H + lam0A, 3.5);
-
         
         // 1X2 from: charts + H2H outcomes + separate (wins/draws/loss) + facts (wins/draws/loss) + standings hint
         var p1 = Blend(new[]
@@ -540,7 +445,6 @@ public static class TipAnalyzer
             C(o15Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o15Elo,                                        w: wEloOU) // <-- NEW
         });
-        o15 = EntropyClamp(o15, p0_o15, bandK: 1.4, wEff: wEff);
         var u15 = 1 - o15;
         
         var o25 = Blend(new[]
@@ -554,7 +458,6 @@ public static class TipAnalyzer
             C(o25Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o25Elo,                                        w: wEloOU) // <-- NEW
         });
-        o25 = EntropyClamp(o25, p0_o25, bandK: 1.4, wEff: wEff);
         var u25 = 1 - o25;
         
         var o35 = Blend(new[]
@@ -567,16 +470,7 @@ public static class TipAnalyzer
             C(o35Stand,                                      w: Math.Max(1.0, 0.8*wStand)),
             C(o35Elo,                                        w: wEloOU) // <-- NEW
         });
-        o35 = EntropyClamp(o35, p0_o35, bandK: 1.4, wEff: wEff);
         var u35 = 1 - o35;
-
-        // Gate U3.5 by expected goals & agreement
-        bool agreeLow = (!double.IsNaN(o35Stand) && o35Stand < 0.35) 
-                     || (!double.IsNaN(o35Pois)  && o35Pois  < 0.35);
-        bool allowU35 = (lamT_post < 2.6) && agreeLow && (wEff >= 3.0);
-        
-        if (!allowU35) u35 = Math.Min(u35, 0.72); // soft ceiling when evidence is weak
-
 
         // ==================== Positive-only overlay ===========================
         // Only allow standings/motivation to push "positive" outcomes up (and draw down).
@@ -730,7 +624,7 @@ public static class TipAnalyzer
             new("HTS", hts_disp),  new("GTS", gts_disp),
 
             new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
-            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),//new("U 3.5", u35 -0.05),
+            new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),
 
             new("HTO 1.5", hto15),
             new("HTU 1.5", htu15 - 0.10),
@@ -738,70 +632,6 @@ public static class TipAnalyzer
 
         // Hide empty markets entirely
         results = results.Where(r => !double.IsNaN(r.Probability)).ToList();
-
-        // ===== Conservative ranking (prefer DC under low evidence) =====
-        // NOTE: This changes ORDER only (does NOT change probabilities).
-        
-        static bool IsDC(string code)
-        {
-            var c = code.ToUpperInvariant();
-            return c is "1X" or "X2" or "12";
-        }
-        
-        // Optional: treat these as "goal/no-goal markets" that can spike on low data
-        static bool IsGoalMarket(string code)
-        {
-            var c = code.ToUpperInvariant();
-            return c.StartsWith("O ") || c.StartsWith("U ")
-                || c.StartsWith("HTO") || c.StartsWith("HTU")
-                || c is "BTS" or "OTS" or "HTS" or "GTS";
-        }
-        
-        // Low-evidence condition: tune thresholds if needed
-        bool lowEvidence = (wEff < 3.0) || (h2h.MassH2H < 2.0);
-        
-        // Uncertainty band (same spirit as your EntropyClamp bandK)
-        double bandK = 1.4;
-        double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
-        
-        // If draw is high, avoid promoting "12" (no-draw) as “safer”
-        bool allow12 = px < 0.32; // tune 0.30–0.35
-        
-        double Score(ProposedResult r)
-        {
-            double p = Clamp01(r.Probability);
-        
-            // Conservative score: lower bound-ish when uncertainty is high
-            double s = p - 0.60 * band;
-        
-            if (lowEvidence)
-            {
-                // Give DC a small bonus that grows when uncertainty is high
-                if (IsDC(r.Code))
-                {
-                    if (r.Code.Equals("12", StringComparison.OrdinalIgnoreCase) && !allow12)
-                        return s - 0.20 * band; // penalize 12 when draw is big
-        
-                    // Prefer 1X/X2 slightly more than 12 (even when allowed)
-                    double dcBonus = r.Code.Equals("12", StringComparison.OrdinalIgnoreCase) ? 0.20 : 0.30;
-                    s += dcBonus * band;
-                }
-        
-                // Slight penalty to volatile goal markets under low evidence
-                if (IsGoalMarket(r.Code))
-                    s -= 0.10 * band;
-            }
-        
-            return s;
-        }
-
-        /*
-        // Sort by score; keep probability as secondary tie-break
-        results = results
-            .OrderByDescending(r => Score(r))
-            .ThenByDescending(r => r.Probability)
-            .ToList();
-        */
 
         return results;
     }
@@ -1366,8 +1196,7 @@ public static class TipAnalyzer
                 !(SameTeam(host, away) && SameTeam(guest, home))) continue;
     
             // Build a duplicate key (date if available, else "nodate")
-            //string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : "nodate";
-            string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : $"nodate#{seen.Count}";
+            string dateKey = TryReadMatchDate(m, out var md) ? md.ToString("yyyy-MM-dd") : "nodate";
             string dupKey = $"{dateKey}|{host}|{guest}|{hg}-{gg}";
             if (!seen.Add(dupKey))
             {
