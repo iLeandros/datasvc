@@ -1275,7 +1275,7 @@ public static class TipAnalyzer
         // --- decay & policy parameters (tune) ---
         const double HALF_LIFE_DAYS = 365.0;     // halves every ~1 year
         const double MIN_W = 0.05;               // floor weight for very old games
-        const int HARD_CUTOFF_DAYS = 3650;       // ignore > 10 years
+        const int HARD_CUTOFF_DAYS = 5475;       // ignore > 10 years
         const double UNKNOWN_DATE_WEIGHT = MIN_W; // conservative for undated matches
     
         DateTime today = DateTime.UtcNow;
