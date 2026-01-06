@@ -794,13 +794,14 @@ public static class TipAnalyzer
         
             return s;
         }
-        
+
+        /*
         // Sort by score; keep probability as secondary tie-break
         results = results
             .OrderByDescending(r => Score(r))
             .ThenByDescending(r => r.Probability)
             .ToList();
-
+        */
 
         return results;
     }
