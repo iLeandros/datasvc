@@ -1185,6 +1185,7 @@ public static class TipAnalyzer
         // simple duplicate guard: (date|host|guest|hg-gg)
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int ignoredOld = 0;
+        int ignoredDups = 0;
     
         foreach (var m in matches)
         {
@@ -1273,7 +1274,8 @@ public static class TipAnalyzer
             PHomeScored: ToP(wHSc), PAwayScored: ToP(wASc),
             LamH2H: lamH, LamA2H: lamA,
             MassH2H: W,
-            IgnoredOld: ignoredOld // optional: remove if not desired
+            IgnoredOld: ignoredOld, // optional: remove if not desired
+            IgnoredDuplicates: ignoredDups
         );
     }
 
