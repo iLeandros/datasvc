@@ -212,6 +212,15 @@ public static class TipAnalyzer
         double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
         double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
         
+        static double EntropyClamp(double p, double p0, double bandK, double wEff)
+        {
+            if (double.IsNaN(p) || double.IsNaN(p0)) return p;
+            double z0 = Logit(p0);
+            double z  = Logit(p);
+            double band = bandK / Math.Sqrt(Math.Max(1.0, wEff));
+            return Clamp01(InvLogit(Math.Clamp(z, z0 - band, z0 + band)));
+        }
+        
         if (!double.IsNaN(h2h.LamH2H) && !double.IsNaN(h2h.LamA2H))
         {
             (p1H, pxH, p2H) = OneXTwoFromLambdas(h2h.LamH2H, h2h.LamA2H);
