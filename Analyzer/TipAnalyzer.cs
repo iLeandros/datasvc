@@ -1200,7 +1200,7 @@ public static class TipAnalyzer
             string dupKey = $"{dateKey}|{host}|{guest}|{hg}-{gg}";
             if (!seen.Add(dupKey))
             {
-                ignoredDups++
+                ignoredDups++;
                 continue; // skip exact duplicates
             }
                 
