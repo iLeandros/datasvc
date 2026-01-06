@@ -172,7 +172,8 @@ public static class TipAnalyzer
         // Historical signals
         var h2h = ComputeH2H(d, homeName, awayName);             // includes 1X2 + OU + BTTS from H2H
         // right after: var h2h = ComputeH2H(d, homeName, awayName);
-        double wH2H = wSqrt(h2h.MassH2H); // already decayed by time
+        int nMass = (int)Math.Round(h2h.MassH2H);
+        double wH2H = nMass <= 0 ? 0.0 : wSqrt(nMass);
         double p1H=double.NaN, pxH=double.NaN, p2H=double.NaN;
         double htsH=double.NaN, gtsH=double.NaN, bttsH=double.NaN;
         double o15H=double.NaN, o25H=double.NaN, o35H=double.NaN;
@@ -284,7 +285,7 @@ public static class TipAnalyzer
             // --- Evidence already in your analyzer (same scale you blend with) ---
             double evidence =
                   wChart1x2
-                + wSqrt(h2h.MassH2H)
+                + nMass
                 + wSqrt(sepHome.N + sepAway.N)
                 + wSqrt(factsHome.N + factsAway.N)
                 + wStand;
@@ -350,7 +351,7 @@ public static class TipAnalyzer
         var p1 = Blend(new[]
         {
             C(chart1x2.Home,   w: wChart1x2),
-            C(h2h.PHome,       w: wSqrt(h2h.MassH2H)),
+            C(h2h.PHome,       w: nMass,
             C(p1H,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepHome.WinRate,  sepAway.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.WinRate, factsAway.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
@@ -361,7 +362,7 @@ public static class TipAnalyzer
         var px = Blend(new[]
                 {
             C(chart1x2.Draw,   w: wChart1x2),
-            C(h2h.PDraw,       w: wSqrt(h2h.MassH2H)),
+            C(h2h.PDraw,       w: nMass,
             C(pxH,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepHome.DrawRate,  sepAway.DrawRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.DrawRate, factsAway.DrawRate), w: wSqrt(factsHome.N + factsAway.N)),
@@ -372,7 +373,7 @@ public static class TipAnalyzer
         var p2 = Blend(new[]
         {
             C(chart1x2.Away,   w: wChart1x2),
-            C(h2h.PAway,       w: wSqrt(h2h.MassH2H)),
+            C(h2h.PAway,       w: nMass,
             C(p2H,             w: 0.8 * wH2H),                 // NEW
             C(Avg( sepAway.WinRate,  sepHome.LossRate ), w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsAway.WinRate, factsHome.LossRate), w: wSqrt(factsHome.N + factsAway.N)),
@@ -394,7 +395,7 @@ public static class TipAnalyzer
         var btts = Blend(new[]
         {
             C(chartBtts,                       w: wChartBtts),
-            C(h2h.PBTTS,                       w: wSqrt(h2h.MassH2H)),
+            C(h2h.PBTTS,                       w: nMass,
             C(bttsH,                           w: 0.8 * wH2H),     // NEW
             // Independence-ish: P(BTTS) ≈ P(home scores)*P(away scores)
             C(sepHome.ScoreRate * sepAway.ScoreRate,                  w: wSqrt(sepHome.N + sepAway.N)),
@@ -406,7 +407,7 @@ public static class TipAnalyzer
         var ots = Blend(new[]
         {
             C(chartOts,                        w: wChartOts),
-            C(h2h.POnlyOne,                    w: wSqrt(h2h.MassH2H)),
+            C(h2h.POnlyOne,                    w: nMass,
             // ≈ P(home scores)*(1-P(away scores)) + P(away scores)*(1-P(home scores))
             C(sepHome.ScoreRate*(1-sepAway.ScoreRate) + sepAway.ScoreRate*(1-sepHome.ScoreRate),
               w: wSqrt(sepHome.N + sepAway.N))
@@ -417,7 +418,7 @@ public static class TipAnalyzer
         var hts = Blend(new[]
         {
             C(Avg(factsHome.ScoreChance, factsAway.ConcedeChance), w: 2),
-            C(h2h.PHomeScored,                                     w: wSqrt(h2h.MassH2H)),
+            C(h2h.PHomeScored,                                     w: nMass,
             C(htsH,                                                w: 0.8 * wH2H), // NEW
             C(Avg(sepHome.ScoreRate,   sepAway.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
             C(htsStand,                                            w: wStand), // NEW
@@ -427,7 +428,7 @@ public static class TipAnalyzer
         var gts = Blend(new[]
         {
             C(Avg(factsAway.ScoreChance, factsHome.ConcedeChance), w: 2),
-            C(h2h.PAwayScored,                                     w: wSqrt(h2h.MassH2H)),
+            C(h2h.PAwayScored,                                     w: nMass,
             C(gtsH,                                                w: 0.8 * wH2H), // NEW
             C(Avg(sepAway.ScoreRate,   sepHome.ConcedeRate),       w: wSqrt(sepHome.N + sepAway.N)),
             C(gtsStand,                                            w: wStand), // NEW
@@ -438,7 +439,7 @@ public static class TipAnalyzer
         var o15 = Blend(new[]
         {
             C(chartOU15,                                     w: wChartOU15),
-            C(h2h.POver15,                                   w: wSqrt(h2h.MassH2H)),
+            C(h2h.POver15,                                   w: nMass,
             C(o15H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over15Rate, sepAway.Over15Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(o15Facts,                                      w: 1.3),
@@ -450,7 +451,7 @@ public static class TipAnalyzer
         var o25 = Blend(new[]
         {
             C(chartOU25,                                     w: wChartOU25),
-            C(h2h.POver25,                                   w: wSqrt(h2h.MassH2H)),
+            C(h2h.POver25,                                   w: wnMass,
             C(o25H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over25Rate, sepAway.Over25Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(Avg(factsHome.Over25RateFacts, factsAway.Over25RateFacts), w: wSqrt(factsHome.N + factsAway.N)),
@@ -463,7 +464,7 @@ public static class TipAnalyzer
         var o35 = Blend(new[]
         {
             C(chartOU35,                                     w: wChartOU35),
-            C(h2h.POver35,                                   w: wSqrt(h2h.MassH2H)),
+            C(h2h.POver35,                                   w: nMass,
             C(o35H,                                          w: 0.8 * wH2H),  // NEW
             C(Avg(sepHome.Over35Rate, sepAway.Over35Rate),   w: wSqrt(sepHome.N + sepAway.N)),
             C(o35Facts,                                      w: 1.3),
