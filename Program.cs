@@ -4131,7 +4131,7 @@ public static class GetStartupMainTableDataGroup2024
                                 else if (tipClass == "value failed") backgroundtipcolor = AppColors.Red;
                                 else backgroundtipcolor = AppColors.Black;
                             }
-
+							/*
                             var likebutton = matchItem.Descendants("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "like");
 
@@ -4154,6 +4154,7 @@ public static class GetStartupMainTableDataGroup2024
                                 .Elements("div")
                                 .Where(a => a.GetAttributeValue("class", "").Contains("coefbox")).ToList();
 							var likesRaw = likepositive ?? "1";
+							*/
 							// after you've extracted host/guest team display names:
 							var hostName = teamone ?? "A";
 							var guestName = teamtwo ?? "B";
@@ -4177,13 +4178,14 @@ public static class GetStartupMainTableDataGroup2024
 									teamtwo,
                                     //renameTeam.renameTeamNameToFitDisplayLabel(teamtwo ?? ""),
                                     tip?.InnerText,
-                                    likebuttonimage,
-                                    dislikebuttonimage,
-                                    likepositive,
-                                    likenegative,
+                                    //likebuttonimage,
+                                    //dislikebuttonimage,
+                                    //likepositive,
+                                    //likenegative,
 									computed,
 									computedFmt,
 									comments,
+									/*
                                     likesandvotes[0].InnerText,
                                     likesandvotes[1].InnerText,
                                     likesandvotes[2].InnerText,
@@ -4195,7 +4197,8 @@ public static class GetStartupMainTableDataGroup2024
                                     likesandvotes[8].InnerText,
                                     likesandvotes[9].InnerText,
                                     likesandvotes[10].InnerText,
-                                    "Beta",
+									*/
+                                    //"Beta",
                                     hrefs,
                                     AppColors.LightGray,
 									null,
