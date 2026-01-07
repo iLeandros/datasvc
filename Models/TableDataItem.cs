@@ -20,6 +20,7 @@ public class TableDataItem
 
     public string? VIPTip { get; set; }
     public string VIPTipElo { get; set; }
+    public int MassH2H { get; set; }
     [JsonPropertyName("Tip")] public string? Tip { get; set; }
     //[JsonPropertyName("Like")] public string? LikeButtonImage { get; set; }
     //[JsonPropertyName("Dislike")] public string? DislikeButtonImage { get; set; }
