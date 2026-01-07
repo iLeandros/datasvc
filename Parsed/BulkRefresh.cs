@@ -1,3 +1,16 @@
+// Parsed/BulkRefresh.cs
+using System;
+using System.Linq;
+using System.IO;
+using System.Text.Json;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
+
+
 namespace DataSvc.Parsed;
 
 public static class BulkRefresh
