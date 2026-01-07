@@ -43,16 +43,16 @@ public static class TipAnalyzer
         string tip = proposedCode.Trim().ToUpperInvariant();
 
         // index for quick lookup
-        var idx = list
+        var idx = list.Results
             .Select((r, i) => (r.Code.ToUpperInvariant(), i))
             .ToDictionary(t => t.Item1, t => t.i);
 
         // convenience getter/setter
-        double Get(string code) => idx.TryGetValue(code.ToUpperInvariant(), out var i) ? list[i].Probability : double.NaN;
+        double Get(string code) => idx.TryGetValue(code.ToUpperInvariant(), out var i) ? list.Results[i].Probability : double.NaN;
         void Set(string code, double p)
         {
             if (idx.TryGetValue(code.ToUpperInvariant(), out var i))
-                list[i] = new ProposedResult(list[i].Code, Clamp01(p));
+                list.Results[i] = new ProposedResult(list.Results[i].Code, Clamp01(p));
         }
 
         // --- apply prior --------------------------------------------------------
