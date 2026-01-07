@@ -2595,6 +2595,7 @@ public sealed class ParsedTipsService
 	            // ---- Analyzer (defensive) ----
 	            List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probs = null;
 				List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>? probsVIP = null;
+				int h2hEffMatches = 0;
 	            try
 	            {
 					analyzed++;
@@ -2608,14 +2609,16 @@ public sealed class ParsedTipsService
 					if (TryGetElo(hostSafe, out var he)) homeElo = he;
 					if (TryGetElo(guestSafe, out var ae)) awayElo = ae;
 					
-					probs = await Task.Run(
+					(probs, _) = await Task.Run(
 					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, null, null),
 					    ct
 					).ConfigureAwait(false);
-					probsVIP = await Task.Run(
+					(probsVIP, h2hEffMatches) = await Task.Run(
 					    () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
 					    ct
 					).ConfigureAwait(false);
+
+					item.MassH2H = h2hEffMatches; // <- whatever field/property you want
 					/*
 					var vip = TipAnalyzer.PickVip(
 					    detailDto, hostSafe, guestSafe, probsVIP, homeElo, awayElo
