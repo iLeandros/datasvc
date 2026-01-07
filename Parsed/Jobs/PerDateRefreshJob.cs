@@ -8,16 +8,15 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
-
 namespace DataSvc.Parsed;
 
 public sealed class PerDateRefreshJob : IHostedService, IDisposable
 {
     private readonly SnapshotPerDateStore _store;
     private readonly ILogger<PerDateRefreshJob> _log;
-    private readonly IConfiguration _cfg;          // <-- inject cfg
-	private readonly ParsedTipsService _tips;    // <-- add
-	
+    private readonly IConfiguration _cfg;
+    private readonly ParsedTipsService _tips;
+
     private Timer? _timer;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
@@ -25,12 +24,12 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
         SnapshotPerDateStore store,
         ILogger<PerDateRefreshJob> log,
         IConfiguration cfg,
-		ParsedTipsService tips)                       // <-- DI will supply this
+        ParsedTipsService tips)
     {
         _store = store;
         _log = log;
         _cfg = cfg;
-		_tips = tips;
+        _tips = tips;
     }
 
     public Task StartAsync(CancellationToken ct)
@@ -46,20 +45,20 @@ public sealed class PerDateRefreshJob : IHostedService, IDisposable
         try
         {
             var center = ScraperConfig.TodayLocal();
-			var hourUtc = DateTime.UtcNow.Hour;
+            var hourUtc = DateTime.UtcNow.Hour;
 
-            // *** pass cfg as 2nd arg, keep parameter order (or use named args) ***
             var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
-			    store: _store,
-			    cfg:   _cfg,
-				tips:   _tips, 
-			    hourUtc: hourUtc,     // << use the current hour
-			    center: center,
-			    back:   3,
-			    ahead:  3);
+                store:  _store,
+                cfg:    _cfg,
+                tips:   _tips,
+                hourUtc: hourUtc,
+                center: center,
+                back:   3,
+                ahead:  3);
 
             if (errors.Count > 0)
-                _log.LogWarning("PerDate refresh had {Count} errors: {Errors}", errors.Count, string.Join("; ", errors.Select(kv => $"{kv.Key}:{kv.Value}")));
+                _log.LogWarning("PerDate refresh had {Count} errors: {Errors}",
+                    errors.Count, string.Join("; ", errors.Select(kv => $"{kv.Key}:{kv.Value}")));
 
             // Enforce retention after refresh
             BulkRefresh.CleanupRetention(_store, center, 3, 3);
