@@ -1,4 +1,4 @@
-namespace DataSvc.Models;
+namespace DataSvc.Parsed;
 
 public static class BulkRefresh
 {
