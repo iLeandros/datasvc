@@ -138,7 +138,7 @@ public static class TipAnalyzer
         return list;
     }
 
-    public static List<ProposedResult> Analyze(
+    public static (List<ProposedResult> Results, int H2HEffectiveMatches) Analyze(
         DetailsItemDto d,
         string homeName,
         string awayName,
@@ -634,7 +634,9 @@ public static class TipAnalyzer
         // Hide empty markets entirely
         results = results.Where(r => !double.IsNaN(r.Probability)).ToList();
 
-        return results;
+        if (nMass < 0) nMass = 0;
+
+        return (results, nMass);
     }
 
 
