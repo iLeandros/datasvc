@@ -1,3 +1,14 @@
+// Parsed/Jobs/PerDateRefreshJob.cs
+using System;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+
+
 namespace DataSvc.Parsed;
 
 public sealed class PerDateRefreshJob : IHostedService, IDisposable
