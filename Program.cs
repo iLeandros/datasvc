@@ -4131,15 +4131,14 @@ public static class GetStartupMainTableDataGroup2024
                                 else if (tipClass == "value failed") backgroundtipcolor = AppColors.Red;
                                 else backgroundtipcolor = AppColors.Black;
                             }
-							/*
-                            var likebutton = matchItem.Descendants("div")
-                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "like");
-
-                            var likepositive = likebutton?.Elements("div")
+							var likepositive = likebutton?.Elements("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likepositive")?
                                 .Elements("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "value")?.InnerText;
-
+							/*
+                            var likebutton = matchItem.Descendants("div")
+                                .FirstOrDefault(p => p.GetAttributeValue("class", "") == "like");
+								
                             var likenegative = likebutton?.Elements("div")
                                 .FirstOrDefault(p => p.GetAttributeValue("class", "") == "likenegative")?
                                 .Elements("div")
@@ -4180,7 +4179,7 @@ public static class GetStartupMainTableDataGroup2024
                                     tip?.InnerText,
                                     //likebuttonimage,
                                     //dislikebuttonimage,
-                                    //likepositive,
+                                    likepositive,
                                     //likenegative,
 									computed,
 									computedFmt,
