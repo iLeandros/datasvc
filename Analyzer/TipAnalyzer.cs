@@ -10,7 +10,7 @@ namespace DataSvc.Analyzer;
 public static class TipAnalyzer
 {
     public sealed record ProposedResult(string Code, double Probability);
-    public static List<ProposedResult> Analyze(
+    public static (List<ProposedResult> Results, int H2HEffectiveMatches) Analyze(
                         DetailsItemDto d,
                         string homeName,
                         string awayName,
