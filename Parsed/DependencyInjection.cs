@@ -19,7 +19,7 @@ namespace DataSvc.Parsed
             services.AddHostedService<PerDateRefreshJob>();      // already in Program.cs
 
             // Optional: enable if you want a periodic tips re-apply pass over in-memory snapshots
-            // services.AddHostedService<ParsedTipsRefreshJob>();
+            services.AddHostedService<ParsedTipsRefreshJob>();
 
             return services;
         }
