@@ -20,6 +20,7 @@ public static class EvaluationHelper
             .Trim()
             .ToUpperInvariant()
             .Replace("BTTS", "BTS")
+            .Replace("-", string.Empty) 
             .Replace(" ", string.Empty)
             .Replace(",", ".");
     
@@ -88,23 +89,35 @@ public static class EvaluationHelper
                           : (total < thr ? AppColors.Green : AppColors.Red);
         }
 
-    
+        // ---------- Team goals threshold (H>0.5 / A>0.5) ----------
+        if (ts.Length >= 3 && (ts[0] == 'H' || ts[0] == 'A') && ts[1] == '>' &&
+            TryParseThreshold(ts.AsSpan(2), out double tthr))
+        {
+            int goals = ts[0] == 'H' ? home : away;
+        
+            // Green as soon as condition holds
+            if (goals > tthr) return AppColors.Green;
+        
+            // Otherwise red only at FT
+            return isFinal ? AppColors.Red : AppColors.Black;
+        }
+        
         // ---------- Other markets ----------
         if (!isFinal)
         {
-            // Markets that can turn later stay pending (except the “early green” ones below)
-            // 1/X/2, 1X/X2/12, OTS all wait for FT
-            // BTS/HTS/GTS can go green early (handled below)
             switch (ts)
             {
-                // 1X2 — evaluate only at full time
-                case "HTS": 
-                    if(home > 0) return AppColors.Green;
+                case "HTS":
+                case "H>0.5":
+                    if (home > 0) return AppColors.Green;
                     break;
-                case "GTS": 
-                    if(away > 0) return AppColors.Green;
+        
+                case "GTS":
+                case "A>0.5":
+                    if (away > 0) return AppColors.Green;
                     break;
-                case "BTS": 
+        
+                case "BTS":
                     if (home > 0 && away > 0) return AppColors.Green;
                     break;
             }
@@ -132,13 +145,13 @@ public static class EvaluationHelper
                 if (home > 0 && away > 0) return AppColors.Red;
                 return isFinal ? AppColors.Green : AppColors.Black;
     
-            // Home team to score — green as soon as they score; red at FT if never
             case "HTS":
+            case "H>0.5":
                 if (home > 0) return AppColors.Green;
                 return isFinal ? AppColors.Red : AppColors.Black;
-    
-            // Guest/Away team to score — same early-green idea
+            
             case "GTS":
+            case "A>0.5":
                 if (away > 0) return AppColors.Green;
                 return isFinal ? AppColors.Red : AppColors.Black;
     
