@@ -1,51 +1,73 @@
 namespace DataSvc.Parsed;
 
-public sealed class ParsedTipsRefreshJob : BackgroundService
+public sealed class PerDateRefreshJob : IHostedService, IDisposable
 {
-    private readonly SnapshotPerDateStore _perDate;
-    private readonly ParsedTipsService _tips;
+    private readonly SnapshotPerDateStore _store;
+    private readonly ILogger<PerDateRefreshJob> _log;
+    private readonly IConfiguration _cfg;          // <-- inject cfg
+	private readonly ParsedTipsService _tips;    // <-- add
+	
+    private Timer? _timer;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public ParsedTipsRefreshJob(
-        SnapshotPerDateStore perDateStore,
-        ParsedTipsService tips)
+    public PerDateRefreshJob(
+        SnapshotPerDateStore store,
+        ILogger<PerDateRefreshJob> log,
+        IConfiguration cfg,
+		ParsedTipsService tips)                       // <-- DI will supply this
     {
-        _perDate = perDateStore;
-        _tips = tips;
+        _store = store;
+        _log = log;
+        _cfg = cfg;
+		_tips = tips;
     }
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    public Task StartAsync(CancellationToken ct)
     {
-        // same 5-min cadence pattern as your other jobs
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
+        // Initial run shortly after startup; then every 5 minutes
+        _timer = new Timer(async _ => await TickAsync(), null, TimeSpan.FromSeconds(3), TimeSpan.FromMinutes(5));
+        return Task.CompletedTask;
+    }
+
+    private async Task TickAsync()
+    {
+        if (!await _gate.WaitAsync(0)) return;
         try
         {
-            // initial run
-            await RunOnceSafe(stoppingToken);
+            var center = ScraperConfig.TodayLocal();
+			var hourUtc = DateTime.UtcNow.Hour;
 
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunOnceSafe(stoppingToken);
+            // *** pass cfg as 2nd arg, keep parameter order (or use named args) ***
+            var (refreshed, errors) = await BulkRefresh.RefreshWindowAsync(
+			    store: _store,
+			    cfg:   _cfg,
+				tips:   _tips, 
+			    hourUtc: hourUtc,     // << use the current hour
+			    center: center,
+			    back:   3,
+			    ahead:  3);
+
+            if (errors.Count > 0)
+                _log.LogWarning("PerDate refresh had {Count} errors: {Errors}", errors.Count, string.Join("; ", errors.Select(kv => $"{kv.Key}:{kv.Value}")));
+
+            // Enforce retention after refresh
+            BulkRefresh.CleanupRetention(_store, center, 3, 3);
         }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunOnceSafe(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
+        catch (Exception ex)
         {
-            var center = ScraperConfig.TodayLocal(); // you already use this for windows
-            foreach (var d in ScraperConfig.DateWindow(center, back: 3, ahead: 3))
-            {
-                if (!_perDate.TryGet(d, out var snap) || snap?.Payload?.TableDataGroup is null || snap.Payload.TableDataGroup.Count == 0)
-                    continue;
-
-                await _tips.ApplyTipsForDate(d, snap.Payload.TableDataGroup, ct); // exact signature in file
-            }
+            _log.LogError(ex, "PerDate refresh tick failed");
         }
         finally
         {
             _gate.Release();
         }
     }
+
+    public Task StopAsync(CancellationToken ct)
+    {
+        _timer?.Change(Timeout.Infinite, 0);
+        return Task.CompletedTask;
+    }
+
+    public void Dispose() => _timer?.Dispose();
 }
