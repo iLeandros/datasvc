@@ -23,7 +23,7 @@ public class TableDataItem
     [JsonPropertyName("Tip")] public string? Tip { get; set; }
     //[JsonPropertyName("Like")] public string? LikeButtonImage { get; set; }
     //[JsonPropertyName("Dislike")] public string? DislikeButtonImage { get; set; }
-    //[JsonPropertyName("Likes")] public string? LikePositive { get; set; }
+    [JsonPropertyName("Likes")] public string? LikePositive { get; set; }
     //[JsonPropertyName("Dislikes")] public string? LikeNegative { get; set; }
     public long ServerComputedLikes { get; set; }           // numeric
     public string ServerComputedLikesFormatted { get; set; } // ready for UI
@@ -58,7 +58,7 @@ public class TableDataItem
     public TableDataItem() { }
     public TableDataItem(
         string flag, string backgroundTipColour, string time,
-        string hostTeam, string? hostScore, string? guestScore, string guestTeam,
+        string hostTeam, string? hostScore, string? guestScore, string guestTeam, string? likePositive,
         string? tip, long serverComputedLikes, string serverComputedLikesFormatted, int comments,
         string? href, string rowBackground, List<TipAnalyzer.ProposedResult> proposedResults, bool isVipMatch,
         string backgroundColor)
@@ -71,16 +71,10 @@ public class TableDataItem
         GuestScore = guestScore;
         GuestTeam = guestTeam;
         Tip = tip;
-        LikeButtonImage = likeButtonImage;
-        DislikeButtonImage = dislikeButtonImage;
         LikePositive = likePositive;
-        LikeNegative = likeNegative;
         ServerComputedLikes = serverComputedLikes;
         ServerComputedLikesFormatted = serverComputedLikesFormatted;
         Comments = comments;
-        One = coef1; Even = coef2; Two = coef3; HalfOne = coef4; HalfEven = coef5;
-        HalfTwo = coef6; OneAbove = coef7; TwoAbove = coef8; ThreeAbove = coef9; BTS = coef10; OTS = coef11;
-        //YourPrediction = version;
         Href = href;
         RowBackground = rowBackground;
         ProposedResults = proposedResults;
