@@ -110,27 +110,27 @@ public static class TipAnalyzer
             {
                 p = LogitBump(p, TAU_SOLO);
                 Set(tip, p);
-
+        
                 // For totals, you can optionally keep complements coherent (e.g., U = 1 - O)
                 // Try to detect matching complement and rebuild it from p to keep consistency.
                 bool isOver = tip.StartsWith("O ");
                 bool isUnder = tip.StartsWith("U ");
-                bool isHTOver = tip.StartsWith("HTO");
-                bool isHTUnder = tip.StartsWith("HTU");
-
+                bool isHTOver = tip.StartsWith("HT-O");
+                bool isHTUnder = tip.StartsWith("HT-U");
+        
                 string? complement = null;
                 if (isOver) complement = tip.Replace("O ", "U ");
                 else if (isUnder) complement = tip.Replace("U ", "O ");
-                else if (isHTOver) complement = tip.Replace("HTO", "HTU");
-                else if (isHTUnder) complement = tip.Replace("HTU", "HTO");
-
+                else if (isHTOver) complement = tip.Replace("HT-O", "HT-U");
+                else if (isHTUnder) complement = tip.Replace("HT-U", "HT-O");
+        
                 if (complement != null && idx.ContainsKey(complement))
                 {
                     // keep a clean complement
                     Set(complement, Clamp01(1.0 - p));
                 }
             }
-
+        
             return list;
         }
 
@@ -620,15 +620,15 @@ public static class TipAnalyzer
         {
             new("1", p1_disp), new("X", px_disp), new("2", p2_disp),
             new("1X",  p1x), new("X2", px2), new("12", p12_adj),
-
-            new("BTS", btts), new("OTS", ots),
-            new("HTS", hts_disp),  new("GTS", gts_disp),
-
+        
+            new("BTTS", btts), new("OTS", ots),
+            new("H>0.5", hts_disp),  new("A>0.5", gts_disp),
+        
             new("O 1.5", o15), new("O 2.5", o25), new("O 3.5", o35),
             new("U 1.5", u15), new("U 2.5", u25), new("U 3.5", u35),
-
-            new("HTO 1.5", hto15),
-            new("HTU 1.5", htu15 - 0.10),
+        
+            new("HT-O1.5", hto15),
+            new("HT-U1.5", htu15 - 0.10),
         };
 
         // Hide empty markets entirely
