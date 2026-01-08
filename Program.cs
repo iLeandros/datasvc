@@ -38,6 +38,7 @@ using DataSvc.ModelHelperCalls;
 using DataSvc.VIPHandler;
 using DataSvc.Parsed;
 using DataSvc.Details;
+using DataSvc.LiveScores;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -88,11 +89,6 @@ builder.Services.AddResponseCompression(o =>
 builder.Services.AddHostedService<LikesRefreshJob>();
 builder.Services.AddHostedService<CleanupOldMatchesHostedService>();
 
-// Livescores DI
-builder.Services.AddSingleton<LiveScoresStore>();
-builder.Services.AddSingleton<LiveScoresScraperService>();
-builder.Services.AddHostedService<LiveScoresRefreshJob>();
-
 // Trade Signal Webhook DI
 builder.Services.AddSingleton<TradeSignalStore>();
 
@@ -112,6 +108,8 @@ builder.Services.AddHostedService<Top10RefreshJob>();
 builder.Services.AddDetailsServices();
 
 builder.Services.AddParsedServices();
+
+builder.Services.AddLiveScoresServices();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
 
@@ -139,6 +137,7 @@ app.UseAuthorization();
 
 app.MapParsedEndpoints();
 app.MapDetailsEndpoints();
+app.MapLiveScoresEndpoints();
 
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Build"] = "likes-post-only";
@@ -960,186 +959,6 @@ app.MapPost("/data/refresh", async ([FromServices] ScraperService svc) =>
 {
     var snap = await svc.FetchAndStoreAsync();
     return Results.Json(new { ok = snap.Ready, snap.LastUpdatedUtc, snap.Error });
-});
-
-// -------- LiveScores API --------
-app.MapGet("/data/livescores/status", ([FromServices] LiveScoresStore store) =>
-{
-    var dates = store.Dates();
-    return Results.Json(new { totalDates = dates.Count, dates, lastSavedUtc = store.LastSavedUtc });
-});
-/*
-app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
-{
-    return Results.Json(store.Dates());
-});
-*/
-app.MapGet("/data/livescores/dates", ([FromServices] LiveScoresStore store) =>
-{
-    var center = ScraperConfig.TodayLocal();
-    var tz = ScraperConfig.TimeZone;
-
-    // Dates in the store (strings like "yyyy-MM-dd")
-    var dates = (store.Dates() ?? Array.Empty<string>())
-        .OrderBy(s => s, StringComparer.Ordinal) // ascending; use Descending if you prefer
-        .ToList();
-
-    var stats = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
-
-    foreach (var dateStr in dates)
-    {
-        var day = store.Get(dateStr); // <- matches your store signature
-        int total = 0, live = 0, finished = 0, scheduled = 0, other = 0;
-
-        if (day is not null)
-        {
-            // Items collection could be named Items / Matches / Games
-            var items = GetEnumerable(day, "Items", "Matches", "Games");
-
-            if (items is not null)
-            {
-                foreach (var item in items)
-                {
-                    total++;
-
-                    // Status could be Status / State / Phase
-                    var status = GetString(item, "Status", "State", "Phase");
-                    var st = (status ?? "").Trim().ToLowerInvariant();
-
-                    if (st is "live" or "inplay" or "in_play" or "playing")
-                        live++;
-                    else if (st is "finished" or "ended" or "ft" or "fulltime" or "full_time")
-                        finished++;
-                    else if (st is "scheduled" or "upcoming" or "not_started" or "ns" or "pre")
-                        scheduled++;
-                    else
-                        other++;
-                }
-            }
-        }
-
-        stats[dateStr] = new { total, live, finished, scheduled, other };
-    }
-
-    return Results.Ok(new
-    {
-        tz,
-        center = center.ToString("yyyy-MM-dd"),
-        dates,
-        stats,
-        lastSavedUtc = store.LastSavedUtc
-    });
-
-    // ---- local helpers (non-public, simple reflection) ----
-    static System.Collections.IEnumerable? GetEnumerable(object obj, params string[] propNames)
-    {
-        var t = obj.GetType();
-        foreach (var name in propNames)
-        {
-            var p = t.GetProperty(name);
-            if (p?.GetValue(obj) is System.Collections.IEnumerable e) return e;
-        }
-        return null;
-    }
-
-    static string? GetString(object obj, params string[] propNames)
-    {
-        var t = obj.GetType();
-        foreach (var name in propNames)
-        {
-            var p = t.GetProperty(name);
-            var v = p?.GetValue(obj)?.ToString();
-            if (!string.IsNullOrWhiteSpace(v)) return v;
-        }
-        return null;
-    }
-});
-
-
-app.MapGet("/data/livescores", ([FromServices] LiveScoresStore store, [FromQuery] string? date) =>
-{
-    var center = ScraperConfig.TodayLocal();
-    var min = center.AddDays(-3);
-    var max = center.AddDays(+3);
-
-    DateOnly d;
-    if (string.IsNullOrWhiteSpace(date))
-    {
-        d = center;
-    }
-    else if (!DateOnly.TryParse(date, out d))
-    {
-        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
-    }
-
-    if (d < min || d > max)
-    {
-        return Results.BadRequest(new
-        {
-            message = "date outside allowed window (today±3)",
-            date = d.ToString("yyyy-MM-dd"),
-            allowed = new
-            {
-                from = min.ToString("yyyy-MM-dd"),
-                to   = max.ToString("yyyy-MM-dd")
-            }
-        });
-    }
-
-    var key = d.ToString("yyyy-MM-dd");
-    var day = store.Get(key);
-    return day is null
-        ? Results.NotFound(new { message = "No livescores for date (refresh first)", date = key })
-        : Results.Json(day);
-});
-
-
-app.MapPost("/data/livescores/refresh",
-    async ([FromServices] LiveScoresScraperService svc) =>
-{
-    var (refreshed, lastUpdatedUtc) = await svc.FetchAndStoreAsync();
-    return Results.Json(new { ok = true, refreshed, lastUpdatedUtc });
-});
-
-app.MapGet("/data/livescores/download", (HttpContext ctx) =>
-{
-    var jsonPath = LiveScoresFiles.File;
-    var gzPath   = jsonPath + ".gz";
-    if (!System.IO.File.Exists(jsonPath))
-        return Results.NotFound(new { message = "No livescores file yet" });
-
-    var acceptsGzip = ctx.Request.Headers.AcceptEncoding.ToString()
-                         .Contains("gzip", StringComparison.OrdinalIgnoreCase);
-
-    var pathToSend = (acceptsGzip && System.IO.File.Exists(gzPath)) ? gzPath : jsonPath;
-    var fi = new FileInfo(pathToSend);
-
-    ctx.Response.Headers["Vary"] = "Accept-Encoding";
-    ctx.Response.Headers["X-File-Length"] = fi.Length.ToString();
-    if (pathToSend.EndsWith(".gz", StringComparison.OrdinalIgnoreCase))
-        ctx.Response.Headers["Content-Encoding"] = "gzip";
-
-    return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "livescores.json");
-});
-
-// Keep only the last N days (default 4). Also supports dryRun and explicit "keep" list for debugging.
-app.MapPost("/data/livescores/cleanup",
-    async ([FromServices] LiveScoresStore store,
-           [FromQuery] int keepDays = 7,
-           [FromQuery] bool dryRun = false) =>
-{
-    var dates = store.Dates().ToList();
-    var keep = dates
-        .OrderByDescending(d => d)
-        .Take(Math.Max(1, keepDays))
-        .ToList();
-
-    var wouldRemove = dates.Count - keep.Count;
-    if (dryRun) return Results.Json(new { ok = true, dryRun, wouldRemove, wouldKeep = keep.Count, keep });
-
-    var removed = store.ShrinkTo(keep);
-    await LiveScoresFiles.SaveAsync(store);
-    return Results.Json(new { ok = true, removed, kept = keep.Count, keep });
 });
 
 // GET /data/details/allhrefs/date/{date}  -> matches parsed per-date behavior
