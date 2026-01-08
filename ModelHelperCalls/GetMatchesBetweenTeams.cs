@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using HtmlAgilityPack;
 using DataSvc.Models;
+using DataSvc.Details;
 
 namespace DataSvc.ModelHelperCalls;
 
