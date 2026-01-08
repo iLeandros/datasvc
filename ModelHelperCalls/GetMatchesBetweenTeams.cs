@@ -2,7 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using HtmlAgilityPack;
 using DataSvc.Models;
-using DataSvc.Details;
+using DetailsModel = DataSvc.Models.Details;
 
 namespace DataSvc.ModelHelperCalls;
 
@@ -75,7 +75,8 @@ public static class GetMatchesBetweenTeamsHelper
                         new Match(
                             new hostTeam { name = hostName, goals = hostGoals },
                             new guestTeam { name = guestName, goals = guestGoals }),
-                        new Details(new info { hostHTGoals = hostHT, guestHTGoals = guestHT })
+                        //new Details(new info { hostHTGoals = hostHT, guestHTGoals = guestHT })
+                        new DetailsModel(new info { hostHTGoals = hostHT, guestHTGoals = guestHT })
                     )
                 );
             }
