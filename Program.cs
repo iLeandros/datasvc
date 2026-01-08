@@ -33,6 +33,10 @@ using DataSvc.Likes; // MainHelpers
 using DataSvc.Services; // Services
 using DataSvc.Analyzer;
 using DataSvc.ClubElo;
+using DataSvc.Models;
+using DataSvc.ModelHelperCalls;
+using DataSvc.VIPHandler;
+using DataSvc.Parsed;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -109,12 +113,7 @@ builder.Services.AddSingleton<Top10Store>();
 builder.Services.AddSingleton<Top10ScraperService>();
 builder.Services.AddHostedService<Top10RefreshJob>();
 
-builder.Services.AddSingleton<SnapshotPerDateStore>();
-builder.Services.AddHostedService<PerDateRefreshJob>();
-
-// NEW: parsed tips editor
-builder.Services.AddSingleton<ParsedTipsService>();
-//builder.Services.AddHostedService<ParsedTipsRefreshJob>();
+builder.Services.AddParsedServices();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
 
@@ -132,19 +131,15 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 
-var perDateStore = app.Services.GetRequiredService<SnapshotPerDateStore>();
-{
-    var center = ScraperConfig.TodayLocal();
-    foreach (var d in ScraperConfig.DateWindow(center, 3, 3))
-        BulkRefresh.TryLoadFromDisk(perDateStore, d);
-}
-
+app.Services.WarmParsedSnapshotsFromDisk();
 
 app.UseResponseCompression();
 app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
+
+app.MapParsedEndpoints();
 
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Build"] = "likes-post-only";
@@ -1009,33 +1004,7 @@ app.MapGet("/data/details/download", (HttpContext ctx) =>
     return Results.File(pathToSend, "application/json", enableRangeProcessing: true, fileDownloadName: "details.json");
 });
 
-app.MapPost("/data/parsed/cleanup",
-    ([FromServices] ResultStore store,
-     [FromQuery] bool clear = false,
-     [FromQuery] bool deleteFile = false) =>
-{
-    int deletedFiles = 0;
 
-    if (clear)
-    {
-        // set an empty snapshot (Payload null); /data/parsed will return 404 afterwards
-        var snap = new DataSnapshot(DateTimeOffset.UtcNow, false, null, "cleared");
-        store.Set(snap);
-    }
-
-    if (deleteFile && System.IO.File.Exists(DataFiles.File))
-    {
-        System.IO.File.Delete(DataFiles.File);
-        deletedFiles = 1;
-    }
-
-    return Results.Json(new
-    {
-        ok = true,
-        cleared = clear,
-        deletedFiles
-    });
-});
 app.MapPost("/data/details/cleanup",
     async ([FromServices] ResultStore root,
            [FromServices] DetailsStore store,
