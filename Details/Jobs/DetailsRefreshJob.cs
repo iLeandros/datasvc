@@ -102,15 +102,15 @@ namespace DataSvc.Details
             {
                 // Keep the fast “current day” details refresh…
                 var r = await _svc.RefreshAllFromCurrentAsync(ct);
-                Debug.WriteLine($"[details] {reason} current refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
+                Console.WriteLine($"[details] {reason} current refreshed={r.Refreshed} skipped={r.Skipped} errors={r.Errors.Count}");
     
                 // …and then refresh details for all hrefs that appear across parsed D±3:
                 await _refresher.RefreshAllFromParsedWindowAsync(back: 3, ahead: 3, maxConcurrency: 8, ct: ct);
-                Debug.WriteLine($"[details] {reason} window D±3 refresh completed.");
+                Console.WriteLine($"[details] {reason} window D±3 refresh completed.");
             }
             catch (Exception ex)
             {
-                Debug.WriteLine($"[details] {reason} failed: {ex}");
+                Console.WriteLine($"[details] {reason} failed: {ex}");
             }
             finally
             {
