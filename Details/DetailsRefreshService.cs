@@ -7,9 +7,20 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 using DataSvc.Parsed;   // SnapshotPerDateStore
-// using Microsoft.Extensions.Configuration; // if you end up using it in the service
+using DataSvc.Models;
+using DataSvc.ModelHelperCalls;
+using DataSvc.VIPHandler;
+using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+using DataSvc.MainHelpers; // MainHelpers
+using DataSvc.Likes; // MainHelpers
+using DataSvc.Services; // Services
+using DataSvc.Analyzer;
+using DataSvc.ClubElo;
+using DataSvc.MainHelpers;
+
 
 namespace DataSvc.Details
 {
