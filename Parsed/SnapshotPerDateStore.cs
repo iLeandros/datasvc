@@ -13,6 +13,9 @@ using DataSvc.Services; // Services
 using DataSvc.Analyzer;
 using DataSvc.ClubElo;
 using DataSvc.MainHelpers;
+using DataSvc.Parsed;
+using DataSvc.Details;
+using DataSvc.LiveScores;
 
 namespace DataSvc.Parsed;
 
