@@ -38,6 +38,35 @@ namespace DataSvc.Parsed
                 return Results.Redirect($"/data/snapshot/date/{d:yyyy-MM-dd}");
             });
 
+            // ----- Cleanup -----
+            app.MapPost("/data/parsed/cleanup",
+                ([FromServices] ResultStore store,
+                 [FromQuery] bool clear = false,
+                 [FromQuery] bool deleteFile = false) =>
+            {
+                int deletedFiles = 0;
+            
+                if (clear)
+                {
+                    // set an empty snapshot (Payload null); /data/parsed will return 404 afterwards
+                    var snap = new DataSnapshot(DateTimeOffset.UtcNow, false, null, "cleared");
+                    store.Set(snap);
+                }
+            
+                if (deleteFile && System.IO.File.Exists(DataFiles.File))
+                {
+                    System.IO.File.Delete(DataFiles.File);
+                    deletedFiles = 1;
+                }
+            
+                return Results.Json(new
+                {
+                    ok = true,
+                    cleared = clear,
+                    deletedFiles
+                });
+            });
+
             // ----- Readers (by date) -----
             app.MapGet("/data/parsed/date/{date}", (string date, SnapshotPerDateStore perDateStore) =>
             {
