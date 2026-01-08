@@ -14,7 +14,6 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.AspNetCore.Mvc; // [FromServices], [FromQuery]
 using System.IO;                // Path, Directory
 
-
 using DataSvc.Models;
 using DataSvc.ModelHelperCalls;
 using DataSvc.VIPHandler;
@@ -25,6 +24,9 @@ using DataSvc.Services; // Services
 using DataSvc.Analyzer;
 using DataSvc.ClubElo;
 using DataSvc.MainHelpers;
+using DataSvc.Parsed;
+using DataSvc.Details;
+using DataSvc.LiveScores;
 
 
 namespace DataSvc.Parsed
