@@ -4,9 +4,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Net.Http.SocketsHttpHandler; // only if you reference SocketsHttpHandler explicitly
 using System.Threading;
 using System.Threading.Tasks;
+using System.Diagnostics;  // Debug.WriteLine
+using System.IO;           // IOException, InvalidDataException
+using HtmlAgilityPack;     // HtmlDocument, HtmlNode, HtmlEntity, HtmlNodeCollection
+
 
 namespace DataSvc.Details
 {
