@@ -39,6 +39,7 @@ using DataSvc.VIPHandler;
 using DataSvc.Parsed;
 using DataSvc.Details;
 using DataSvc.LiveScores;
+using DataSvc.Top10;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -101,15 +102,13 @@ builder.Services.AddSingleton<TipsStore>();
 builder.Services.AddSingleton<TipsScraperService>();
 builder.Services.AddHostedService<TipsRefreshJob>();
 
-builder.Services.AddSingleton<Top10Store>();
-builder.Services.AddSingleton<Top10ScraperService>();
-builder.Services.AddHostedService<Top10RefreshJob>();
-
 builder.Services.AddDetailsServices();
 
 builder.Services.AddParsedServices();
 
 builder.Services.AddLiveScoresServices();
+
+builder.Services.AddTop10Services();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
 
@@ -138,6 +137,7 @@ app.UseAuthorization();
 app.MapParsedEndpoints();
 app.MapDetailsEndpoints();
 app.MapLiveScoresEndpoints();
+app.MapTop10Endpoints();
 
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Build"] = "likes-post-only";
@@ -584,21 +584,6 @@ app.MapGet("/data/tips/dates", () =>
     });
 });
 
-app.MapGet("/data/top10/dates", () =>
-{
-    var center = ScraperConfig.TodayLocal();
-    return Results.Ok(new
-    {
-        window = new {
-            today = center.ToString("yyyy-MM-dd"),
-            from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
-            to    = center.ToString("yyyy-MM-dd")
-        },
-        dates = Top10PerDateFiles.ListDates()
-    });
-});
-
-
 // /data/tips/date/{yyyy-MM-dd}
 app.MapGet("/data/tips/date/{date}", (string date) =>
 {
@@ -608,19 +593,6 @@ app.MapGet("/data/tips/date/{date}", (string date) =>
     var snap = TipsPerDateFiles.Load(d);
     if (snap?.Payload?.TableDataGroup is null)
         return Results.NotFound(new { message = "No tips for date", date });
-
-    return Results.Json(snap.Payload.TableDataGroup);
-});
-
-// /data/top10/date/{yyyy-MM-dd}
-app.MapGet("/data/top10/date/{date}", (string date) =>
-{
-    if (!DateOnly.TryParse(date, out var d))
-        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
-
-    var snap = Top10PerDateFiles.Load(d);
-    if (snap?.Payload?.TableDataGroup is null)
-        return Results.NotFound(new { message = "No top10 for date", date });
 
     return Results.Json(snap.Payload.TableDataGroup);
 });
@@ -940,17 +912,6 @@ app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
     return Results.Json(groups);
 });
 
-// /data/top10 -> groups with metadata + items (store-backed, same as /data/parsed)
-app.MapGet("/data/top10", ([FromServices] Top10Store store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null)
-        return Results.NotFound(new { message = "No data yet" });
-
-    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-    return Results.Json(groups);
-});
-
 // Saved JSON snapshot (full)
 //app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
 
@@ -1050,42 +1011,6 @@ public static class TipsPerDateFiles
         catch { return null; }
     }
 	// NEW: list available date keys (yyyy-MM-dd), sorted
-    public static IReadOnlyList<string> ListDates()
-    {
-        if (!Directory.Exists(Dir)) return Array.Empty<string>();
-        var keys = new List<string>();
-        foreach (var f in Directory.EnumerateFiles(Dir, "*.json"))
-        {
-            var name = Path.GetFileNameWithoutExtension(f);
-            if (DateOnly.TryParse(name, out _)) keys.Add(name);
-        }
-        keys.Sort(StringComparer.Ordinal);
-        return keys;
-    }
-}
-
-// ---------- Top10 per-date files ----------
-public static class Top10PerDateFiles
-{
-    public const string Dir = "/var/lib/datasvc/top10";
-    public static string PathFor(DateOnly d) => System.IO.Path.Combine(Dir, $"{d:yyyy-MM-dd}.json");
-
-    public static async Task SaveAsync(DateOnly d, DataSnapshot snap, CancellationToken ct = default)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        await File.WriteAllTextAsync(PathFor(d), json, ct);
-    }
-
-    public static DataSnapshot? Load(DateOnly d)
-    {
-        var p = PathFor(d);
-        if (!File.Exists(p)) return null;
-        try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
-        catch { return null; }
-    }
-	
-	// NEW
     public static IReadOnlyList<string> ListDates()
     {
         if (!Directory.Exists(Dir)) return Array.Empty<string>();
@@ -1277,195 +1202,6 @@ public sealed class TipsRefreshJob : BackgroundService
         catch (Exception ex)
         {
             Debug.WriteLine($"[tips] run failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
-    }
-}
-
-// ---------- Top10 storage / service / job ----------
-public static class Top10Files
-{
-    public const string Dir  = "/var/lib/datasvc";
-    public const string File = "/var/lib/datasvc/Top10.json";
-
-    public static async Task SaveAsync(DataSnapshot snap)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
-    }
-
-    public static async Task<DataSnapshot?> LoadAsync()
-    {
-        if (!System.IO.File.Exists(File)) return null;
-        try
-        {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            return JsonSerializer.Deserialize<DataSnapshot>(json);
-        }
-        catch { return null; }
-    }
-}
-
-public sealed class Top10Store
-{
-    private readonly object _gate = new();
-    private DataSnapshot? _current;
-    public DataSnapshot? Current { get { lock (_gate) return _current; } }
-    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
-}
-
-public sealed class Top10ScraperService
-{
-    private readonly Top10Store _store;
-    public Top10ScraperService([FromServices] Top10Store store) => _store = store;
-
-    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-	{
-	    try
-	    {
-	        var center = ScraperConfig.TodayLocal();                 // your existing helper
-	        var dates = ScraperConfig.DateWindow(center, 3, 0);      // back:3, ahead:0
-	
-	        DataSnapshot? lastToday = null;
-	
-	        foreach (var d in dates)
-	        {
-	            ct.ThrowIfCancellationRequested();
-	
-	            var iso = d.ToString("yyyy-MM-dd");
-	            var url = $"https://www.statarea.com/toppredictions/date/{iso}/";
-				//var url = $"http://www.statarea.com/toppredictions/date/{iso}/";
-	
-	            // scrape that specific date
-	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
-	            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-	            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html, null, 0);
-	
-	            var payload = new DataPayload(html, titles, table);
-	            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-	
-	            // save per-date file
-	            await Top10PerDateFiles.SaveAsync(d, snap, ct);
-	
-	            if (d == center)
-	                lastToday = snap; // keep "current day" as the in-memory Top10
-	        }
-			
-			// PRUNE: keep only day-3..today files in /var/lib/datasvc/top10
-            var keep = dates.Select(d => d.ToString("yyyy-MM-dd"))
-                            .ToHashSet(StringComparer.Ordinal);
-            PruneOldFiles(Top10PerDateFiles.Dir, keep);              // PRUNE
-			
-	        // keep legacy current-day store behavior
-	        if (lastToday is not null)
-	        {
-	            _store.Set(lastToday);
-	            await Top10Files.SaveAsync(lastToday);                // your existing single-file store
-	        }
-	
-	        return lastToday ?? new DataSnapshot(DateTimeOffset.UtcNow, false, null, "No today snapshot");
-	    }
-	    catch (Exception ex)
-	    {
-	        var last = _store.Current;
-	        var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-	        _store.Set(snap);
-	        await Top10Files.SaveAsync(snap);
-	        return snap;
-	    }
-	}
-	static void PruneOldFiles(string dir, HashSet<string> keep)
-	{
-	    if (!Directory.Exists(dir)) return;
-	    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
-	    {
-	        var name = System.IO.Path.GetFileNameWithoutExtension(f);
-	        if (!keep.Contains(name)) { try { File.Delete(f); } catch { } }
-	    }
-	}
-}
-
-public sealed class Top10RefreshJob : BackgroundService
-{
-    private readonly Top10ScraperService _svc;
-    private readonly Top10Store _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public Top10RefreshJob(Top10ScraperService svc, Top10Store store)
-    {
-        _svc = svc;
-        _store = store;
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Warm from disk
-        var prev = await Top10Files.LoadAsync();
-        if (prev is not null) _store.Set(prev);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Also tick at the top of each hour
-        _ = HourlyLoop(stoppingToken);
-
-        // Keep the 5-minute cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunSafelyOnce(stoppingToken);
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce(ct);
-
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
-                    await RunSafelyOnce(ct);
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
-        {
-            await _svc.FetchAndStoreAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[Top10] run failed: {ex}");
         }
         finally
         {
