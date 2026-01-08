@@ -12,6 +12,17 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 
+using DataSvc.Models;
+using DataSvc.ModelHelperCalls;
+using DataSvc.VIPHandler;
+using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+using DataSvc.MainHelpers; // MainHelpers
+using DataSvc.Likes; // MainHelpers
+using DataSvc.Services; // Services
+using DataSvc.Analyzer;
+using DataSvc.ClubElo;
+using DataSvc.MainHelpers;
+
 namespace DataSvc.Details;
 
 public static class DetailsEndpointMapping
