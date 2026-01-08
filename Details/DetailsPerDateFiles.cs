@@ -6,6 +6,17 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
+using DataSvc.Models;
+using DataSvc.ModelHelperCalls;
+using DataSvc.VIPHandler;
+using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
+using DataSvc.MainHelpers; // MainHelpers
+using DataSvc.Likes; // MainHelpers
+using DataSvc.Services; // Services
+using DataSvc.Analyzer;
+using DataSvc.ClubElo;
+using DataSvc.MainHelpers;
+
 namespace DataSvc.Details;
 
 public static class DetailsPerDateFiles
