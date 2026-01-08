@@ -2142,6 +2142,7 @@ public static class GetStartupMainTableDataGroup2024
                                     teamonescore,
                                     teamtwoscore,
 									teamtwo,
+									likepositive,
                                     //renameTeam.renameTeamNameToFitDisplayLabel(teamtwo ?? ""),
                                     tip?.InnerText,
                                     //likebuttonimage,
