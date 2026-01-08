@@ -1966,7 +1966,6 @@ public static class GetStartupMainTableDataGroup2024
                                     tip?.InnerText,
                                     //likebuttonimage,
                                     //dislikebuttonimage,
-                                    likepositive,
                                     //likenegative,
 									computed,
 									computedFmt,
