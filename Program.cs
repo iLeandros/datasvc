@@ -40,6 +40,7 @@ using DataSvc.Parsed;
 using DataSvc.Details;
 using DataSvc.LiveScores;
 using DataSvc.Top10;
+using DataSvc.Tips;
 using Google.Apis.Auth;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -98,10 +99,6 @@ builder.Services.AddSingleton<ResultStore>();
 builder.Services.AddSingleton<ScraperService>();
 builder.Services.AddHostedService<RefreshJob>();
 
-builder.Services.AddSingleton<TipsStore>();
-builder.Services.AddSingleton<TipsScraperService>();
-builder.Services.AddHostedService<TipsRefreshJob>();
-
 builder.Services.AddDetailsServices();
 
 builder.Services.AddParsedServices();
@@ -109,6 +106,8 @@ builder.Services.AddParsedServices();
 builder.Services.AddLiveScoresServices();
 
 builder.Services.AddTop10Services();
+
+builder.Services.AddTipsServices();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
 
@@ -138,6 +137,7 @@ app.MapParsedEndpoints();
 app.MapDetailsEndpoints();
 app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
+app.MapTipsEndpoints();
 
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Build"] = "likes-post-only";
@@ -569,34 +569,6 @@ app.MapPost("/data/likes/recompute", async (
     }
 });
 
-// GET /data/tips/dates  -> lists available per-date snapshots for Tips
-app.MapGet("/data/tips/dates", () =>
-{
-    var center = ScraperConfig.TodayLocal();
-    return Results.Ok(new
-    {
-        window = new {
-            today = center.ToString("yyyy-MM-dd"),
-            from  = center.AddDays(-3).ToString("yyyy-MM-dd"),
-            to    = center.ToString("yyyy-MM-dd")
-        },
-        dates = TipsPerDateFiles.ListDates()
-    });
-});
-
-// /data/tips/date/{yyyy-MM-dd}
-app.MapGet("/data/tips/date/{date}", (string date) =>
-{
-    if (!DateOnly.TryParse(date, out var d))
-        return Results.BadRequest(new { message = "invalid date", expectedFormat = "yyyy-MM-dd" });
-
-    var snap = TipsPerDateFiles.Load(d);
-    if (snap?.Payload?.TableDataGroup is null)
-        return Results.NotFound(new { message = "No tips for date", date });
-
-    return Results.Json(snap.Payload.TableDataGroup);
-});
-
 app.MapPost("/webhooks/trade",
     ([FromBody] TradeSignal payload, [FromServices] TradeSignalStore store) =>
 {
@@ -900,18 +872,6 @@ app.MapGet("/data/titles", ([FromServices] ResultStore store) =>
     return Results.Json(s.Payload.TitlesAndHrefs);
 });
 
-
-// /data/tips -> groups with metadata + items (store-backed, same as /data/parsed)
-app.MapGet("/data/tips", ([FromServices] TipsStore store) =>
-{
-    var s = store.Current;
-    if (s is null || s.Payload is null)
-        return Results.NotFound(new { message = "No data yet" });
-
-    var groups = s.Payload.TableDataGroup ?? new ObservableCollection<TableDataGroup>();
-    return Results.Json(groups);
-});
-
 // Saved JSON snapshot (full)
 //app.MapGet("/data/snapshot", () => Results.File("/var/lib/datasvc/latest.json", "application/json"));
 
@@ -986,227 +946,6 @@ public static class DataFiles
             return JsonSerializer.Deserialize<DataSnapshot>(json);
         }
         catch { return null; }
-    }
-}
-
-// ---------- Tips storage / service / job ----------
-// ---------- Tips per-date files ----------
-public static class TipsPerDateFiles
-{
-    public const string Dir = "/var/lib/datasvc/tips";
-    public static string PathFor(DateOnly d) => System.IO.Path.Combine(Dir, $"{d:yyyy-MM-dd}.json");
-
-    public static async Task SaveAsync(DateOnly d, DataSnapshot snap, CancellationToken ct = default)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        await File.WriteAllTextAsync(PathFor(d), json, ct);
-    }
-
-    public static DataSnapshot? Load(DateOnly d)
-    {
-        var p = PathFor(d);
-        if (!File.Exists(p)) return null;
-        try { return JsonSerializer.Deserialize<DataSnapshot>(File.ReadAllText(p)); }
-        catch { return null; }
-    }
-	// NEW: list available date keys (yyyy-MM-dd), sorted
-    public static IReadOnlyList<string> ListDates()
-    {
-        if (!Directory.Exists(Dir)) return Array.Empty<string>();
-        var keys = new List<string>();
-        foreach (var f in Directory.EnumerateFiles(Dir, "*.json"))
-        {
-            var name = Path.GetFileNameWithoutExtension(f);
-            if (DateOnly.TryParse(name, out _)) keys.Add(name);
-        }
-        keys.Sort(StringComparer.Ordinal);
-        return keys;
-    }
-}
-
-public static class TipsFiles
-{
-    public const string Dir  = "/var/lib/datasvc";
-    public const string File = "/var/lib/datasvc/tips.json";
-
-    public static async Task SaveAsync(DataSnapshot snap)
-    {
-        Directory.CreateDirectory(Dir);
-        var json = JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false });
-        var tmp = File + ".tmp";
-        await System.IO.File.WriteAllTextAsync(tmp, json);
-        System.IO.File.Move(tmp, File, overwrite: true);
-    }
-
-    public static async Task<DataSnapshot?> LoadAsync()
-    {
-        if (!System.IO.File.Exists(File)) return null;
-        try
-        {
-            var json = await System.IO.File.ReadAllTextAsync(File);
-            return JsonSerializer.Deserialize<DataSnapshot>(json);
-        }
-        catch { return null; }
-    }
-}
-
-public sealed class TipsStore
-{
-    private readonly object _gate = new();
-    private DataSnapshot? _current;
-    public DataSnapshot? Current { get { lock (_gate) return _current; } }
-    public void Set(DataSnapshot snap) { lock (_gate) _current = snap; }
-}
-
-public sealed class TipsScraperService
-{
-    private readonly TipsStore _store;
-    public TipsScraperService([FromServices] TipsStore store) => _store = store;
-
-    public async Task<DataSnapshot> FetchAndStoreAsync(CancellationToken ct = default)
-	{
-	    try
-	    {
-	        var center = ScraperConfig.TodayLocal();
-	        var dates = ScraperConfig.DateWindow(center, 3, 0);      // back:3, ahead:0
-	
-	        DataSnapshot? lastToday = null;
-	
-	        foreach (var d in dates)
-	        {
-	            ct.ThrowIfCancellationRequested();
-	
-	            var iso = d.ToString("yyyy-MM-dd");
-	            var url = $"https://www.statarea.com/tips/date/{iso}/";
-				//var url = $"http://www.statarea.com/tips/date/{iso}/";
-	
-	            var html   = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
-	            var titles = GetStartupMainTitlesAndHrefs2024.GetStartupMainTitlesAndHrefs(html);
-	            var table  = GetStartupMainTableDataGroup2024.GetStartupMainTableDataGroup(html);
-	
-	            var payload = new DataPayload(html, titles, table);
-	            var snap = new DataSnapshot(DateTimeOffset.UtcNow, true, payload, null);
-	
-	            await TipsPerDateFiles.SaveAsync(d, snap, ct);
-	
-	            if (d == center)
-	                lastToday = snap;
-	        }
-
-			// PRUNE: keep only day-3..today files in /var/lib/datasvc/top10
-            var keep = dates.Select(d => d.ToString("yyyy-MM-dd"))
-                            .ToHashSet(StringComparer.Ordinal);
-            PruneOldFiles(TipsPerDateFiles.Dir, keep);              // PRUNE
-			
-	        if (lastToday is not null)
-	        {
-	            _store.Set(lastToday);
-	            await TipsFiles.SaveAsync(lastToday);                 // keep current-day behavior
-	        }
-	
-	        return lastToday ?? new DataSnapshot(DateTimeOffset.UtcNow, false, null, "No today snapshot");
-	    }
-	    catch (Exception ex)
-	    {
-	        var last = _store.Current;
-	        var snap = new DataSnapshot(DateTimeOffset.UtcNow, last?.Ready ?? false, last?.Payload, ex.Message);
-	        _store.Set(snap);
-	        await TipsFiles.SaveAsync(snap);
-	        return snap;
-	    }
-	}
-	static void PruneOldFiles(string dir, HashSet<string> keep)
-	{
-	    if (!Directory.Exists(dir)) return;
-	    foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
-	    {
-	        var name = System.IO.Path.GetFileNameWithoutExtension(f);
-	        if (!keep.Contains(name)) { try { File.Delete(f); } catch { } }
-	    }
-	}
-}
-
-public sealed class TipsRefreshJob : BackgroundService
-{
-    private readonly TipsScraperService _svc;
-    private readonly TipsStore _store;
-    private readonly SemaphoreSlim _gate = new(1, 1);
-    private readonly TimeZoneInfo _tz;
-
-    public TipsRefreshJob(TipsScraperService svc, TipsStore store)
-    {
-        _svc = svc;
-        _store = store;
-        var tzId = Environment.GetEnvironmentVariable("TOP_OF_HOUR_TZ");
-        _tz = !string.IsNullOrWhiteSpace(tzId)
-            ? TimeZoneInfo.FindSystemTimeZoneById(tzId)
-            : TimeZoneInfo.Local;
-    }
-
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        // Warm from disk
-        var prev = await TipsFiles.LoadAsync();
-        if (prev is not null) _store.Set(prev);
-
-        // Initial run
-        await RunSafelyOnce(stoppingToken);
-
-        // Also tick at the top of each hour
-        _ = HourlyLoop(stoppingToken);
-
-        // Keep the 5-minute cadence
-        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
-        try
-        {
-            while (await timer.WaitForNextTickAsync(stoppingToken))
-                await RunSafelyOnce(stoppingToken);
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task HourlyLoop(CancellationToken ct)
-    {
-        try
-        {
-            while (!ct.IsCancellationRequested)
-            {
-                var nowLocal = TimeZoneInfo.ConvertTime(DateTimeOffset.UtcNow, _tz);
-                int nextHour = nowLocal.Minute == 0 && nowLocal.Second == 0 ? nowLocal.Hour : nowLocal.Hour + 1;
-                if (nextHour == 24) nextHour = 0;
-                var nextTopLocal = new DateTimeOffset(nowLocal.Year, nowLocal.Month, nowLocal.Day, nextHour, 0, 0, nowLocal.Offset);
-                if (nextTopLocal <= nowLocal) nextTopLocal = nextTopLocal.AddHours(1);
-
-                var delay = nextTopLocal - nowLocal;
-                if (delay > TimeSpan.Zero)
-                    await Task.Delay(delay, ct);
-
-                await RunSafelyOnce(ct);
-
-                using var hourly = new PeriodicTimer(TimeSpan.FromHours(1));
-                while (await hourly.WaitForNextTickAsync(ct))
-                    await RunSafelyOnce(ct);
-            }
-        }
-        catch (OperationCanceledException) { }
-    }
-
-    private async Task RunSafelyOnce(CancellationToken ct)
-    {
-        if (!await _gate.WaitAsync(0, ct)) return;
-        try
-        {
-            await _svc.FetchAndStoreAsync(ct);
-        }
-        catch (Exception ex)
-        {
-            Debug.WriteLine($"[tips] run failed: {ex}");
-        }
-        finally
-        {
-            _gate.Release();
-        }
     }
 }
 
