@@ -99,11 +99,11 @@ public static class LiveScoresFiles
                                         m.GetProperty("Time").GetString() ?? "",
                                         m.GetProperty("Status").GetString() ?? "",
                                         m.GetProperty("HomeTeam").GetString() ?? "",
+                                        m.GetProperty("HomeGoals").GetString() ?? "",
+                                        m.GetProperty("AwayGoals").GetString() ?? "",
                                         m.GetProperty("AwayTeam").GetString() ?? "",
-                                        m.GetProperty("HomeScore").GetInt32(),
-                                        m.GetProperty("AwayScore").GetInt32(),
-                                        m.GetProperty("Href").GetString() ?? "",
-                                        actions
+                                    				actions,
+                                    				m.GetProperty("MatchID").GetString() ?? ""
                                     ));
                                 }
                             }
