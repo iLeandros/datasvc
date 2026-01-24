@@ -134,7 +134,16 @@ app.UseResponseCompression();
 
 app.UseRouting(); 
 
-app.UseCors("AllowAll");
+//app.UseCors("AllowAll");
+builder.Services.AddCors(o =>
+{
+    o.AddDefaultPolicy(p =>
+        p.AllowAnyOrigin()
+         .AllowAnyHeader()
+         .AllowAnyMethod());
+});
+
+app.UseCors();
 
 app.UseAuthentication();
 app.UseAuthorization();
