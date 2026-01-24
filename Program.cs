@@ -148,9 +148,19 @@ app.MapTipsEndpoints();
 app.Use(async (ctx, next) =>
 {
     if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/verify-consumable"))
-        Console.WriteLine($"RAW={ctx.Request.RawTarget} METHOD={ctx.Request.Method} CT={ctx.Request.ContentType}");
+    {
+        Console.WriteLine(
+            $"IAP-IN  method={ctx.Request.Method} " +
+            $"scheme={ctx.Request.Scheme} host={ctx.Request.Host} " +
+            $"pathbase={ctx.Request.PathBase} path={ctx.Request.Path} " +
+            $"query={ctx.Request.QueryString} " +
+            $"ct={ctx.Request.ContentType} cl={ctx.Request.ContentLength}"
+        );
+    }
+
     await next();
 });
+
 
 
 app.Use(async (ctx, next) => {
