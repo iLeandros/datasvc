@@ -112,6 +112,8 @@ builder.Services.AddTipsServices();
 
 builder.Services.AddHostedService<OldDataCleanupJob >();
 
+builder.Services.AddSingleton<GooglePlayClient>();
+
 // ClubElo DI
 builder.Services.AddSingleton<ClubEloStore>();
 builder.Services.AddSingleton<ClubEloScraperService>();
