@@ -154,15 +154,13 @@ app.Use(async (ctx, next) =>
 {
     if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/verify-consumable"))
     {
+        var f = ctx.Features.Get<IHttpRequestFeature>();
         Console.WriteLine(
-            $"IAP-IN  method={ctx.Request.Method} " +
-            $"scheme={ctx.Request.Scheme} host={ctx.Request.Host} " +
-            $"pathbase={ctx.Request.PathBase} path={ctx.Request.Path} " +
-            $"query={ctx.Request.QueryString} " +
-            $"ct={ctx.Request.ContentType} cl={ctx.Request.ContentLength}"
+            $"RAW  method={f?.Method} rawTarget={f?.RawTarget} " +
+            $"path={ctx.Request.Path} ct={ctx.Request.ContentType} cl={ctx.Request.ContentLength} " +
+            $"x-http-method-override={ctx.Request.Headers["X-HTTP-Method-Override"].ToString()}"
         );
     }
-
     await next();
 });
 
