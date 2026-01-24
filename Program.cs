@@ -18,6 +18,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Routing.Patterns;
 using Microsoft.AspNetCore.Http.Metadata;
+using Microsoft.AspNetCore.Http.Features;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
