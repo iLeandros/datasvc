@@ -134,7 +134,7 @@ app.UseResponseCompression();
 
 app.UseRouting(); 
 
-app.UseCors();
+app.UseCors("AllowAll");
 
 app.UseAuthentication();
 app.UseAuthorization();
@@ -144,6 +144,14 @@ app.MapDetailsEndpoints();
 app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
+
+app.Use(async (ctx, next) =>
+{
+    if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/verify-consumable"))
+        Console.WriteLine($"RAW={ctx.Request.RawTarget} METHOD={ctx.Request.Method} CT={ctx.Request.ContentType}");
+    await next();
+});
+
 
 app.Use(async (ctx, next) => {
     ctx.Response.Headers["X-Build"] = "likes-post-only";
