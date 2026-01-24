@@ -131,6 +131,9 @@ var app = builder.Build();
 app.Services.WarmParsedSnapshotsFromDisk();
 
 app.UseResponseCompression();
+
+app.UseRouting(); 
+
 app.UseCors();
 
 app.UseAuthentication();
