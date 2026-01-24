@@ -542,7 +542,7 @@ public sealed class IapController : ControllerBase
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"{ex} GetMyEntitlement failed for user {UserId}");
+            Console.WriteLine($"{ex} GetMyEntitlement failed for user");
             return Problem("GetMyEntitlement failed: " + ex.Message);
         }
     }
