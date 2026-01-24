@@ -183,9 +183,6 @@ public sealed class IapController : ControllerBase
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
-        Console.WriteLine("IAP-IN MALAKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-        return null;
-    /*
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var userId))
@@ -327,7 +324,6 @@ public sealed class IapController : ControllerBase
             await tx.RollbackAsync(ct);
             throw;
         }
-        */
     }
 
     /*
