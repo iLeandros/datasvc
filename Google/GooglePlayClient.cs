@@ -2,6 +2,8 @@ using Google.Apis.AndroidPublisher.v3;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
 
+namespace DataSvc.Google;
+
 public sealed class GooglePlayClient
 {
     private readonly AndroidPublisherService _svc;
