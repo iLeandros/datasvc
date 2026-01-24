@@ -176,13 +176,15 @@ public sealed class IapController : ControllerBase
     */
 
     [HttpPost("google/verify-consumable")]
-    //[AllowAnonymous]
-    [Authorize]
+    [AllowAnonymous]
+    //[Authorize]
     public async Task<IActionResult> VerifyConsumable(
         [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
+    return null;
+    /*
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var userId))
@@ -324,6 +326,7 @@ public sealed class IapController : ControllerBase
             await tx.RollbackAsync(ct);
             throw;
         }
+        */
     }
 
     /*
