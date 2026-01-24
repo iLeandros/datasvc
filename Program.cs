@@ -126,9 +126,10 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = null;       // keep PascalCase
     o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
 });
+/*
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => 
     p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
-
+*/
 var app = builder.Build();
 
 app.Services.WarmParsedSnapshotsFromDisk();
