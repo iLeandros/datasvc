@@ -1,4 +1,5 @@
 using Google.Apis.AndroidPublisher.v3;
+using Google.Apis.AndroidPublisher.v3.Data;
 using Google.Apis.Auth.OAuth2;
 using Google.Apis.Services;
 
@@ -11,9 +12,10 @@ public sealed class GooglePlayClient
 
     public GooglePlayClient(IConfiguration cfg)
     {
-        _packageName = cfg["GooglePlay:com.companyname.aiscorespredictor"]
-            ?? throw new InvalidOperationException("Missing GooglePlay:com.companyname.aiscorespredictor");
+        _packageName = cfg["GooglePlay:PackageName"]
+            ?? throw new InvalidOperationException("Missing GooglePlay:PackageName");
 
+        // Uses ADC (service account via GOOGLE_APPLICATION_CREDENTIALS, or workload identity)
         var cred = GoogleCredential.GetApplicationDefault()
             .CreateScoped(AndroidPublisherService.Scope.Androidpublisher);
 
@@ -24,20 +26,9 @@ public sealed class GooglePlayClient
         });
     }
 
-    public async Task<AndroidPublisherService.PurchasesResource.ProductsResource.GetRequest> BuildGet(
-        string sku, string token)
-    {
-        return _svc.Purchases.Products.Get(_packageName, sku, token);
-    }
+    public Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct) =>
+        _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
 
-    public async Task<Google.Apis.AndroidPublisher.v3.Data.ProductPurchase> GetProductAsync(
-        string sku, string token, CancellationToken ct)
-    {
-        return await _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
-    }
-
-    public async Task ConsumeAsync(string sku, string token, CancellationToken ct)
-    {
-        await _svc.Purchases.Products.Consume(_packageName, sku, token).ExecuteAsync(ct);
-    }
+    public Task ConsumeAsync(string sku, string token, CancellationToken ct) =>
+        _svc.Purchases.Products.Consume(_packageName, sku, token).ExecuteAsync(ct);
 }
