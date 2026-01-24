@@ -183,6 +183,7 @@ public sealed class IapController : ControllerBase
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
+        Console.WriteLine("Malaka Lean");
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
         if (!TryGetUserId(out var userId))
