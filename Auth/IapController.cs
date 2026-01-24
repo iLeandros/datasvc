@@ -511,11 +511,6 @@ public sealed class IapController : ControllerBase
         return Ok(ent);
     }
     */
-    private readonly ILogger<IapController> _logger;
-    public IapController(ILogger<IapController> logger, /* other deps */)
-    {
-        _logger = logger;
-    }
     
     [HttpGet("entitlements/me")]
     [Authorize]
