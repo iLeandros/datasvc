@@ -480,7 +480,7 @@ public sealed class IapController : ControllerBase
     
         return Ok(rows);
     }
-    
+    /*
     // GET /v1/iap/entitlements/me  (client uses this on app start / restore)
     [HttpGet("entitlements/me")]
     [Authorize]
@@ -510,4 +510,46 @@ public sealed class IapController : ControllerBase
         if (ent is null) return NotFound(new { message = "No entitlement" });
         return Ok(ent);
     }
+    */
+    private readonly ILogger<IapController> _logger;
+    public IapController(ILogger<IapController> logger, /* other deps */)
+    {
+        _logger = logger;
+    }
+    
+    [HttpGet("entitlements/me")]
+    [Authorize]
+    public async Task<IActionResult> GetMyEntitlement(CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var userId))
+            return Unauthorized();
+    
+        try
+        {
+            await using var conn = new MySqlConnection(_connString);
+            var ent = await conn.QuerySingleOrDefaultAsync<EntitlementDto>(@"
+                SELECT user_id AS UserId,
+                       feature AS Feature,
+                       source_platform AS SourcePlatform,
+                       product_id AS ProductId,
+                       starts_at AS StartsAt,
+                       expires_at AS ExpiresAt,
+                       status AS Status
+                FROM entitlements
+                WHERE user_id=@userId AND feature='vip'
+                LIMIT 1;",
+                new { userId });
+    
+            if (ent is null) return NotFound(new { message = "No entitlement" });
+            return Ok(ent);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"{ex} GetMyEntitlement failed for user {UserId}");
+            return Problem("GetMyEntitlement failed: " + ex.Message);
+        }
+    }
+
 }
