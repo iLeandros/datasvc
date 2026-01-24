@@ -125,6 +125,8 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = null;       // keep PascalCase
     o.SerializerOptions.DictionaryKeyPolicy = null;        // (optional)
 });
+builder.Services.AddCors(o => o.AddDefaultPolicy(p => 
+    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
 
 var app = builder.Build();
 
@@ -135,13 +137,7 @@ app.UseResponseCompression();
 app.UseRouting(); 
 
 //app.UseCors("AllowAll");
-builder.Services.AddCors(o =>
-{
-    o.AddDefaultPolicy(p =>
-        p.AllowAnyOrigin()
-         .AllowAnyHeader()
-         .AllowAnyMethod());
-});
+
 
 app.UseCors();
 
