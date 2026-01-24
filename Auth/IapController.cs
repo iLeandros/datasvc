@@ -14,10 +14,9 @@ public sealed class IapController : ControllerBase
 {
     private readonly GooglePlayClient _gp;
     private readonly string? _connString;
-    public IapController(IConfiguration cfg, GooglePlayClient gp)
+    public IapController(IConfiguration cfg)
     {
         _connString = cfg.GetConnectionString("Default");
-        _gp = gp;
     }
 
     // --- DTOs ---
@@ -178,7 +177,10 @@ public sealed class IapController : ControllerBase
 
     [HttpPost("google/verify-consumable")]
     [Authorize]
-    public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, CancellationToken ct)
+    public async Task<IActionResult> VerifyConsumable(
+        [FromBody] VerifyReq req,
+        [FromServices] GooglePlayClient gp,
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
@@ -204,7 +206,7 @@ public sealed class IapController : ControllerBase
             if (product.Days <= 0 || string.IsNullOrWhiteSpace(product.Sku))
                 return BadRequest("Unknown product.");
     
-            // 2) Idempotency: if we already processed this token, just return entitlement
+            // 2) Idempotency: if already processed, just return entitlement
             var existingState = await conn.ExecuteScalarAsync<string?>(@"
                 SELECT state
                 FROM purchases
@@ -227,93 +229,90 @@ public sealed class IapController : ControllerBase
             }
     
             // 3) Verify with Google (purchases.products.get)
-            var gp = await _gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
+            var gpPurchase = await gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
     
             // PurchaseState: 0=Purchased, 1=Canceled, 2=Pending
-            if (gp.PurchaseState != 0)
-                return BadRequest($"Not purchased (purchaseState={gp.PurchaseState}).");
+            if (gpPurchase.PurchaseState != 0)
+                return BadRequest($"Not purchased (purchaseState={gpPurchase.PurchaseState}).");
     
-            // Optional safety: if client supplied orderId, require match
+            // Optional: if client supplied orderId, require match
             if (!string.IsNullOrWhiteSpace(req.OrderId) &&
-                !string.IsNullOrWhiteSpace(gp.OrderId) &&
-                !string.Equals(req.OrderId, gp.OrderId, StringComparison.OrdinalIgnoreCase))
+                !string.IsNullOrWhiteSpace(gpPurchase.OrderId) &&
+                !string.Equals(req.OrderId, gpPurchase.OrderId, StringComparison.OrdinalIgnoreCase))
             {
                 return BadRequest("OrderId mismatch.");
             }
     
-            // 4) Write purchase ledger (server-truth)
+            // 4) Write purchase ledger
             const string ledgerSql = @"
-                                        INSERT INTO purchases (
-                                          user_id, platform, product_id, order_id, purchase_token,
-                                          state, purchased_at, last_checked_at, provider_payload
-                                        ) VALUES (
-                                          @userId, 'google', @alias, @orderId, @token,
-                                          'granted', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3),
-                                          JSON_OBJECT(
-                                            'sku', @sku,
-                                            'gp_orderId', @gpOrderId,
-                                            'purchaseState', @purchaseState,
-                                            'ackState', @ackState,
-                                            'consumptionState', @consumptionState,
-                                            'purchaseTimeMillis', @purchaseTimeMillis
-                                          )
-                                        )
-                                        AS new
-                                        ON DUPLICATE KEY UPDATE
-                                          last_checked_at = UTC_TIMESTAMP(3),
-                                          state = purchases.state;";
+                INSERT INTO purchases (
+                  user_id, platform, product_id, order_id, purchase_token,
+                  state, purchased_at, last_checked_at, provider_payload
+                ) VALUES (
+                  @userId, 'google', @alias, @orderId, @token,
+                  'granted', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3),
+                  JSON_OBJECT(
+                    'sku', @sku,
+                    'gp_orderId', @gpOrderId,
+                    'purchaseState', @purchaseState,
+                    'ackState', @ackState,
+                    'consumptionState', @consumptionState,
+                    'purchaseTimeMillis', @purchaseTimeMillis
+                  )
+                )
+                ON DUPLICATE KEY UPDATE
+                  last_checked_at = UTC_TIMESTAMP(3);";
     
             await conn.ExecuteAsync(ledgerSql, new
             {
                 userId,
                 alias = req.ProductId,
-                orderId = gp.OrderId ?? req.OrderId,
+                orderId = gpPurchase.OrderId ?? req.OrderId,
                 token = req.PurchaseToken,
                 sku = product.Sku,
-                gpOrderId = gp.OrderId,
-                purchaseState = gp.PurchaseState,
-                ackState = gp.AcknowledgementState,
-                consumptionState = gp.ConsumptionState,
-                purchaseTimeMillis = gp.PurchaseTimeMillis
+                gpOrderId = gpPurchase.OrderId,
+                purchaseState = gpPurchase.PurchaseState,
+                ackState = gpPurchase.AcknowledgementState,
+                consumptionState = gpPurchase.ConsumptionState,
+                purchaseTimeMillis = gpPurchase.PurchaseTimeMillis
             }, tx);
     
             // 5) Stack entitlement once
             const string entSql = @"
-                                    INSERT INTO entitlements (
-                                      user_id, feature, source_platform, product_id, starts_at, expires_at, status
-                                    )
-                                    VALUES (
-                                      @userId, 'vip', 'google', @alias,
-                                      UTC_TIMESTAMP(3),
-                                      DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
-                                      'active'
-                                    )
-                                    ON DUPLICATE KEY UPDATE
-                                      expires_at = DATE_ADD(
-                                        CASE
-                                          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
-                                            THEN UTC_TIMESTAMP(3)
-                                          ELSE entitlements.expires_at
-                                        END,
-                                        INTERVAL @days DAY
-                                      ),
-                                      status = 'active',
-                                      product_id = VALUES(product_id),
-                                      source_platform = VALUES(source_platform);";
+                INSERT INTO entitlements (
+                  user_id, feature, source_platform, product_id, starts_at, expires_at, status
+                )
+                VALUES (
+                  @userId, 'vip', 'google', @alias,
+                  UTC_TIMESTAMP(3),
+                  DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
+                  'active'
+                )
+                ON DUPLICATE KEY UPDATE
+                  expires_at = DATE_ADD(
+                    CASE
+                      WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
+                        THEN UTC_TIMESTAMP(3)
+                      ELSE entitlements.expires_at
+                    END,
+                    INTERVAL @days DAY
+                  ),
+                  status = 'active',
+                  product_id = VALUES(product_id),
+                  source_platform = VALUES(source_platform);";
     
             await conn.ExecuteAsync(entSql, new { userId, alias = req.ProductId, days = product.Days }, tx);
     
-            // 6) (Optional) consume server-side.
-            // If you do this, keep the client consume as best-effort (it may fail / already consumed).
-            // try { await _gp.ConsumeAsync(product.Sku, req.PurchaseToken, ct); } catch { }
+            // 6) Optional consume server-side (usually not needed if client consumes)
+            // try { await gp.ConsumeAsync(product.Sku, req.PurchaseToken, ct); } catch { }
     
             // 7) Return entitlement
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
-                                                                    SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
-                                                                           product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
-                                                                    FROM entitlements
-                                                                    WHERE user_id=@userId AND feature='vip'
-                                                                    LIMIT 1;",
+                SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
+                       product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
+                FROM entitlements
+                WHERE user_id=@userId AND feature='vip'
+                LIMIT 1;",
                 new { userId }, tx);
     
             await tx.CommitAsync(ct);
