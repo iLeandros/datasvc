@@ -12,8 +12,8 @@ public sealed class GooglePlayClient
 
     public GooglePlayClient(IConfiguration cfg)
     {
-        _packageName = cfg["GooglePlay:PackageName"]
-            ?? throw new InvalidOperationException("Missing GooglePlay:PackageName");
+        _packageName = cfg["GooglePlay:com.companyname.aiscorespredictor"]
+            ?? throw new InvalidOperationException("Missing GooglePlay:com.companyname.aiscorespredictor");
 
         // Uses ADC (service account via GOOGLE_APPLICATION_CREDENTIALS, or workload identity)
         var cred = GoogleCredential.GetApplicationDefault()
