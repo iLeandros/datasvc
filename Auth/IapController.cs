@@ -4,6 +4,7 @@ using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
+using DataSvc.Google;
 
 namespace DataSvc.Iap;
 
@@ -11,10 +12,12 @@ namespace DataSvc.Iap;
 [Route("v1/iap")]
 public sealed class IapController : ControllerBase
 {
+    private readonly GooglePlayClient _gp;
     private readonly string? _connString;
-    public IapController(IConfiguration cfg)
+    public IapController(IConfiguration cfg, GooglePlayClient gp)
     {
         _connString = cfg.GetConnectionString("Default");
+        _gp = gp;
     }
 
     // --- DTOs ---
@@ -173,6 +176,157 @@ public sealed class IapController : ControllerBase
     }
     */
 
+    [HttpPost("google/verify-consumable")]
+    [Authorize]
+    public async Task<IActionResult> VerifyConsumable([FromBody] VerifyReq req, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+        if (!TryGetUserId(out var userId))
+            return Unauthorized();
+        if (string.IsNullOrWhiteSpace(req.ProductId) || string.IsNullOrWhiteSpace(req.PurchaseToken))
+            return BadRequest("Missing productId or purchaseToken.");
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+        await using var tx = await conn.BeginTransactionAsync(ct);
+    
+        try
+        {
+            // 1) Look up product (alias -> store SKU + duration)
+            var product = await conn.QuerySingleOrDefaultAsync<(int Days, string Sku)>(@"
+                SELECT duration_days AS Days, store_sku AS Sku
+                FROM products
+                WHERE platform='google' AND product_id=@alias
+                LIMIT 1;",
+                new { alias = req.ProductId }, tx);
+    
+            if (product.Days <= 0 || string.IsNullOrWhiteSpace(product.Sku))
+                return BadRequest("Unknown product.");
+    
+            // 2) Idempotency: if we already processed this token, just return entitlement
+            var existingState = await conn.ExecuteScalarAsync<string?>(@"
+                SELECT state
+                FROM purchases
+                WHERE platform='google' AND purchase_token=@token
+                LIMIT 1;",
+                new { token = req.PurchaseToken }, tx);
+    
+            if (existingState is "consumed" or "granted")
+            {
+                var ent0 = await conn.QuerySingleAsync<EntitlementDto>(@"
+                    SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
+                           product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
+                    FROM entitlements
+                    WHERE user_id=@userId AND feature='vip'
+                    LIMIT 1;",
+                    new { userId }, tx);
+    
+                await tx.CommitAsync(ct);
+                return Ok(ent0);
+            }
+    
+            // 3) Verify with Google (purchases.products.get)
+            var gp = await _gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
+    
+            // PurchaseState: 0=Purchased, 1=Canceled, 2=Pending
+            if (gp.PurchaseState != 0)
+                return BadRequest($"Not purchased (purchaseState={gp.PurchaseState}).");
+    
+            // Optional safety: if client supplied orderId, require match
+            if (!string.IsNullOrWhiteSpace(req.OrderId) &&
+                !string.IsNullOrWhiteSpace(gp.OrderId) &&
+                !string.Equals(req.OrderId, gp.OrderId, StringComparison.OrdinalIgnoreCase))
+            {
+                return BadRequest("OrderId mismatch.");
+            }
+    
+            // 4) Write purchase ledger (server-truth)
+            const string ledgerSql = @"
+                                        INSERT INTO purchases (
+                                          user_id, platform, product_id, order_id, purchase_token,
+                                          state, purchased_at, last_checked_at, provider_payload
+                                        ) VALUES (
+                                          @userId, 'google', @alias, @orderId, @token,
+                                          'granted', UTC_TIMESTAMP(3), UTC_TIMESTAMP(3),
+                                          JSON_OBJECT(
+                                            'sku', @sku,
+                                            'gp_orderId', @gpOrderId,
+                                            'purchaseState', @purchaseState,
+                                            'ackState', @ackState,
+                                            'consumptionState', @consumptionState,
+                                            'purchaseTimeMillis', @purchaseTimeMillis
+                                          )
+                                        )
+                                        AS new
+                                        ON DUPLICATE KEY UPDATE
+                                          last_checked_at = UTC_TIMESTAMP(3),
+                                          state = purchases.state;";
+    
+            await conn.ExecuteAsync(ledgerSql, new
+            {
+                userId,
+                alias = req.ProductId,
+                orderId = gp.OrderId ?? req.OrderId,
+                token = req.PurchaseToken,
+                sku = product.Sku,
+                gpOrderId = gp.OrderId,
+                purchaseState = gp.PurchaseState,
+                ackState = gp.AcknowledgementState,
+                consumptionState = gp.ConsumptionState,
+                purchaseTimeMillis = gp.PurchaseTimeMillis
+            }, tx);
+    
+            // 5) Stack entitlement once
+            const string entSql = @"
+                                    INSERT INTO entitlements (
+                                      user_id, feature, source_platform, product_id, starts_at, expires_at, status
+                                    )
+                                    VALUES (
+                                      @userId, 'vip', 'google', @alias,
+                                      UTC_TIMESTAMP(3),
+                                      DATE_ADD(UTC_TIMESTAMP(3), INTERVAL @days DAY),
+                                      'active'
+                                    )
+                                    ON DUPLICATE KEY UPDATE
+                                      expires_at = DATE_ADD(
+                                        CASE
+                                          WHEN entitlements.expires_at IS NULL OR entitlements.expires_at < UTC_TIMESTAMP(3)
+                                            THEN UTC_TIMESTAMP(3)
+                                          ELSE entitlements.expires_at
+                                        END,
+                                        INTERVAL @days DAY
+                                      ),
+                                      status = 'active',
+                                      product_id = VALUES(product_id),
+                                      source_platform = VALUES(source_platform);";
+    
+            await conn.ExecuteAsync(entSql, new { userId, alias = req.ProductId, days = product.Days }, tx);
+    
+            // 6) (Optional) consume server-side.
+            // If you do this, keep the client consume as best-effort (it may fail / already consumed).
+            // try { await _gp.ConsumeAsync(product.Sku, req.PurchaseToken, ct); } catch { }
+    
+            // 7) Return entitlement
+            var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
+                                                                    SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
+                                                                           product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
+                                                                    FROM entitlements
+                                                                    WHERE user_id=@userId AND feature='vip'
+                                                                    LIMIT 1;",
+                new { userId }, tx);
+    
+            await tx.CommitAsync(ct);
+            return Ok(ent);
+        }
+        catch
+        {
+            await tx.RollbackAsync(ct);
+            throw;
+        }
+    }
+
+    /*
     // POST /v1/iap/google/verify-consumable
     [HttpPost("google/verify-consumable")]
     [Authorize]
@@ -272,7 +426,7 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
-    
+    */
     [HttpPost("google/mark-consumed")]
     [Authorize]
     public async Task<IActionResult> MarkConsumed([FromBody] dynamic body, CancellationToken ct)
