@@ -22,11 +22,7 @@ public static class Endpoints
                        .WithTags("Google")
                        .AllowAnonymous();
 
-        group.MapPost("/ping2", async (
-            HttpContext ctx,
-            VerifyReq req,
-            GooglePlayClient gp,
-            CancellationToken ct) =>
+        group.MapPost("/ping2", () =>
         {
             Console.WriteLine($"PING2 ENTERED | CL={ctx.Request.ContentLength}, CT={ctx.Request.ContentType}");
 
