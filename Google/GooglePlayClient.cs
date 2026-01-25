@@ -44,7 +44,7 @@ public sealed class GooglePlayClient
         {
             Console.WriteLine($"[GP] Purchases.Products.Get Subscription package={_packageName} sku={sku} tokenLen={token?.Length ?? 0}");
             var result = await _svc.Purchases.Subscriptions.Get(_packageName, sku, token).ExecuteAsync(ct);
-            Console.WriteLine($"[GP] OK Subscription orderId={result?.OrderId} purchaseState={result?.PurchaseState}");
+            Console.WriteLine($"[GP] OK Subscription orderId={result?.OrderId} expiry={result?.ExpiryTimeMillis} paymentState={result?.PaymentState}");");
             return result;
         }
         catch (Exception ex)
