@@ -176,7 +176,7 @@ public sealed class IapController : ControllerBase
     */
     [HttpPost("google/ping2")]
     [AllowAnonymous]
-    public IActionResult PingGooglePost(
+    public async IActionResult PingGooglePost(
         [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
