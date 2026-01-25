@@ -38,7 +38,7 @@ public sealed class GooglePlayClient
     public Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct) =>
         _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
     */
-    public Task<SubscriptionPurchase> GetSubscriptionAsync(string sku, string token, CancellationToken ct)
+    public async Task<SubscriptionPurchase> GetSubscriptionAsync(string sku, string token, CancellationToken ct)
     {
         try
         {
