@@ -18,10 +18,11 @@ public static class Endpoints
     }
     public static IEndpointRouteBuilder MapGoogleVerifyController(this IEndpointRouteBuilder app)
     {
-        app.MapPost("google/ping2"
+        // POST /data/livescores/refresh
+        app.MapPost("google/ping2",
             [FromBody] VerifyReq req,
             [FromServices] GooglePlayClient gp,
-            CancellationToken ct) =>
+            CancellationToken ct       =>
         {
             Console.WriteLine($"PING ACTION ENTERED | ContentLength={Request.ContentLength}, ContentType={Request.ContentType}");
         
@@ -42,6 +43,6 @@ public static class Endpoints
                 actualBodyLength = rawBody.Length,
                 bodyPreview = rawBody.Length > 200 ? rawBody.Substring(0, 200) + "..." : rawBody
             });
-        }
+        });
     }
 }
