@@ -178,10 +178,24 @@ public sealed class IapController : ControllerBase
     [AllowAnonymous]
     public async Task<IActionResult> PingGooglePost()
     {
-        return Ok(new
+        Console.WriteLine("PING ACTION REACHED - manual read mode");
+    
+        string rawBody = "no body read";
+        if (Request.ContentLength > 0)
         {
-            message = "POST google ping reached",
-            utc = DateTime.UtcNow
+            Request.EnableBuffering(); // important if body was already partially read
+            Request.Body.Position = 0;
+            using var reader = new StreamReader(Request.Body);
+            rawBody = await reader.ReadToEndAsync();
+        }
+    
+        return Ok(new 
+        { 
+            message = "reached with manual body read",
+            utc = DateTime.UtcNow,
+            contentType = Request.ContentType ?? "none",
+            contentLength = Request.ContentLength.GetValueOrDefault(0),
+            rawBody = rawBody  // or truncate if too long
         });
     }
 
