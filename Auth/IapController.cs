@@ -177,7 +177,10 @@ public sealed class IapController : ControllerBase
 
     [HttpPost("google/ping")]
     [AllowAnonymous]
-    public IActionResult PingGooglePost()
+    public IActionResult PingGooglePost(
+    [FromBody] VerifyReq req,
+        [FromServices] GooglePlayClient gp,
+        CancellationToken ct)
     {
         return Ok(new
         {
@@ -186,7 +189,7 @@ public sealed class IapController : ControllerBase
         });
     }
 
-    [HttpPost("google/verifyconsumable")]
+    [HttpPost("google/verify-consumable")]
     //[AllowAnonymous]
     //[Authorize]
     public async Task<IActionResult> VerifyConsumable(
