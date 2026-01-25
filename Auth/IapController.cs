@@ -206,7 +206,16 @@ public sealed class IapController : ControllerBase
         });
     }
     */
-    
+    [HttpPost("google/ping2")]
+    [AllowAnonymous]
+    public IActionResult PingGooglePost()
+    {
+        return Ok(new
+        {
+            message = "POST google ping reached",
+            utc = DateTime.UtcNow
+        });
+    }
     [HttpPost("google/ping")]
     [AllowAnonymous]
     public IActionResult PingGooglePostOld(
