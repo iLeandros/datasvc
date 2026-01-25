@@ -152,6 +152,14 @@ app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
 
+app.Use(async (ctx, next) =>
+{
+    Console.WriteLine($"REQ {ctx.Request.Method} {ctx.Request.Path}{ctx.Request.QueryString} Host={ctx.Request.Host} CT={ctx.Request.ContentType}");
+    await next();
+    Console.WriteLine($"RES {ctx.Response.StatusCode} Allow={string.Join(",", ctx.Response.Headers["Allow"])} X-Build={ctx.Response.Headers["X-Build"]}");
+});
+
+
 app.MapMethods("/debug/echo", new[] { "GET", "POST", "PUT", "DELETE", "OPTIONS" }, (HttpContext ctx) =>
 {
     return Results.Json(new
