@@ -152,6 +152,17 @@ app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
 
+app.MapGet("/debug/endpoints", (IEnumerable<EndpointDataSource> sources) =>
+{
+    return sources.SelectMany(s => s.Endpoints)
+        .OfType<RouteEndpoint>()
+        .Select(e => new
+        {
+            route = e.RoutePattern.RawText,
+            methods = e.Metadata.OfType<HttpMethodMetadata>().FirstOrDefault()?.HttpMethods
+        });
+});
+
 app.Use(async (ctx, next) =>
 {
     if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/ping"))
