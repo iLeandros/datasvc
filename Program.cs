@@ -152,6 +152,21 @@ app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
 
+app.MapMethods("/debug/echo", new[] { "GET", "POST", "PUT", "DELETE", "OPTIONS" }, (HttpContext ctx) =>
+{
+    return Results.Json(new
+    {
+        method = ctx.Request.Method,
+        path = ctx.Request.Path.Value,
+        query = ctx.Request.QueryString.Value,
+        host = ctx.Request.Host.Value,
+        contentType = ctx.Request.ContentType,
+        contentLength = ctx.Request.ContentLength,
+        xBuild = ctx.Response.Headers["X-Build"].ToString()
+    });
+});
+
+
 app.MapGet("/debug/endpoints", (IEnumerable<EndpointDataSource> sources) =>
 {
     return sources.SelectMany(s => s.Endpoints)
