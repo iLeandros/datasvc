@@ -24,7 +24,7 @@ public static class Endpoints
 
         group.MapPost("/ping2", async (
             HttpContext ctx,
-            //VerifyReq req,
+            VerifyReq req,
             GooglePlayClient gp,
             CancellationToken ct) =>
         {
