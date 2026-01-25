@@ -304,10 +304,15 @@ public sealed class IapController : ControllerBase
         catch (Exception ex)
         {
             await tx.RollbackAsync(ct);
-            // optional: log it so you don’t lose the real cause
             Console.WriteLine($"[VERIFY] Server exception: {ex}");
-            throw;
+        
+            // TEMP: return details so the client doesn't see fake 405
+            return Problem(
+                title: "verify-consumable failed",
+                detail: ex.Message,
+                statusCode: StatusCodes.Status500InternalServerError);
         }
+
     }
 
     
