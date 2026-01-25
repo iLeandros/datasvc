@@ -44,6 +44,7 @@ using DataSvc.Top10;
 using DataSvc.Tips;
 using Google.Apis.Auth;
 using DataSvc.Google;
+using DataSvc.Auth.GoogleVerifyController;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
 
