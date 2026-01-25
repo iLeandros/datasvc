@@ -179,7 +179,7 @@ public sealed class IapController : ControllerBase
     [AllowAnonymous]
     [Consumes("application/json")]
     public async Task<IActionResult> PingGooglePost(
-        [FromBody] string req,
+        [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
