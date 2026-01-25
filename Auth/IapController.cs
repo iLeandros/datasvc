@@ -242,7 +242,7 @@ public sealed class IapController : ControllerBase
     //[AllowAnonymous]
     [Authorize]
     public async Task<IActionResult> VerifyConsumable(
-        [FromQuery] VerifyReq req,
+        [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
