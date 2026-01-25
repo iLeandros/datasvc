@@ -299,8 +299,8 @@ public sealed class IapController : ControllerBase
             Console.WriteLine($"GooglePlayClient error ending: ");
     
             // PurchaseState: 0=Purchased, 1=Canceled, 2=Pending
-            if (gpPurchase.PurchaseState != 0)
-                return BadRequest($"Not purchased (purchaseState={gpPurchase.PurchaseState}).");
+            //if (gpPurchase.PurchaseState != 0)
+            //    return BadRequest($"Not purchased (purchaseState={gpPurchase.PurchaseState}).");
     
             // Optional: if client supplied orderId, require match
             if (!string.IsNullOrWhiteSpace(req.OrderId) &&
@@ -338,10 +338,10 @@ public sealed class IapController : ControllerBase
                 token = req.PurchaseToken,
                 sku = product.Sku,
                 gpOrderId = gpPurchase.OrderId,
-                purchaseState = gpPurchase.PurchaseState,
+                //purchaseState = gpPurchase.PurchaseState,
                 ackState = gpPurchase.AcknowledgementState,
-                consumptionState = gpPurchase.ConsumptionState,
-                purchaseTimeMillis = gpPurchase.PurchaseTimeMillis
+                //consumptionState = gpPurchase.ConsumptionState,
+                //purchaseTimeMillis = gpPurchase.PurchaseTimeMillis
             }, tx);
     
             // 5) Stack entitlement once
