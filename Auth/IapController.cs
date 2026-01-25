@@ -348,7 +348,7 @@ public sealed class IapController : ControllerBase
     
             if (existingState is "consumed" or "granted")
             {
-                var ent0 = await conn.QuerySingleAsync<EntitlementDto>(@"
+                var ent0 = await conn.QuerySingleOrDefaultAsync<EntitlementDto>(@"
                     SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
                            product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
                     FROM entitlements
@@ -360,7 +360,7 @@ public sealed class IapController : ControllerBase
                 return Ok(ent0);
             }
 
-            Console.WriteLine($"GooglePlayClient error starting: ");
+            Console.WriteLine("[VERIFY] Google check starting");
             // 3) Verify with Google (purchases.products.get)
             var gpPurchase = await gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
             Console.WriteLine($"GooglePlayClient error ending: {gpPurchase.PurchaseState}");
@@ -453,11 +453,24 @@ public sealed class IapController : ControllerBase
             await tx.CommitAsync(ct);
             return Ok(ent);
         }
+        /*
         catch
         {
             await tx.RollbackAsync(ct);
             throw;
         }
+        */
+        catch (global::Google.GoogleApiException ex)
+        {
+            await tx.RollbackAsync(ct);
+            return StatusCode((int)ex.HttpStatusCode, new
+            {
+                error = "google_api_error",
+                httpStatus = (int)ex.HttpStatusCode,
+                message = ex.Message
+            });
+        }
+
     }
 
     /*
