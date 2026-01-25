@@ -10,6 +10,7 @@ namespace DataSvc.Iap;
 
 [ApiController]
 [Route("v1/iap")]
+[ApiVersion("1.0")]
 public sealed class IapController : ControllerBase
 {
     private readonly GooglePlayClient _gp;
