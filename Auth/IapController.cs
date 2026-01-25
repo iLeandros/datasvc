@@ -295,7 +295,7 @@ public sealed class IapController : ControllerBase
 
             Console.WriteLine($"GooglePlayClient error starting: ");
             // 3) Verify with Google (purchases.products.get)
-            var gpPurchase = await gp.GetSubscriptionAsync(product.Sku, req.PurchaseToken, ct);
+            var gpPurchase = await gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
             Console.WriteLine($"GooglePlayClient error ending: ");
     
             // PurchaseState: 0=Purchased, 1=Canceled, 2=Pending
