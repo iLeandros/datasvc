@@ -49,8 +49,8 @@ public sealed class GooglePlayClient
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"[GP] Exception {ex.GetType().FullName}: {ex.Message}");
-            Console.WriteLine(ex.ToString());
+            Console.WriteLine($"GooglePlayClient error: {ex.GetType().FullName}: {ex.Message}");
+            Console.WriteLine($"GooglePlayClient error: {ex.ToString()}");
             throw;
         }
     }
