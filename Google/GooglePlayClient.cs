@@ -8,7 +8,7 @@ namespace DataSvc.Google;
 public sealed class GooglePlayClient
 {
     private readonly AndroidPublisherService _svc;
-    private readonly string _packageName;
+    private readonly string _packageName = "com.companyname.aiscorespredictor";
 
     public GooglePlayClient(IConfiguration cfg)
     {
