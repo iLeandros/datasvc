@@ -26,15 +26,6 @@ public static class Endpoints
         {
             Console.WriteLine($"PING2 ENTERED | CL={ctx.Request.ContentLength}, CT={ctx.Request.ContentType}");
 
-            ctx.Request.EnableBuffering();
-            ctx.Request.Body.Position = 0;
-
-            string rawBody;
-            using (var reader = new StreamReader(ctx.Request.Body, Encoding.UTF8, leaveOpen: true))
-                rawBody = await reader.ReadToEndAsync(ct);
-
-            ctx.Request.Body.Position = 0;
-
             return Results.Ok(new
             {
                 message = "manual read with EnableBuffering",
