@@ -209,7 +209,7 @@ public sealed class IapController : ControllerBase
 
     [HttpPost("google/ping3")]
     [AllowAnonymous]
-    public IActionResult Ping([FromQuery] VerifyReq req, [FromServices] GooglePlayClient gp)
+    public IActionResult Ping([FromBody] VerifyReq req, [FromServices] GooglePlayClient gp)
     {
         return Ok(new { message="POST ping reached", req, utc=DateTime.UtcNow });
     }
