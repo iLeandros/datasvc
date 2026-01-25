@@ -38,6 +38,22 @@ public sealed class GooglePlayClient
     public Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct) =>
         _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
     */
+    public Task<SubscriptionPurchase> GetSubscriptionAsync(string sku, string token, CancellationToken ct)
+    {
+        try
+        {
+            Console.WriteLine($"[GP] Purchases.Products.Get Subscription package={_packageName} sku={sku} tokenLen={token?.Length ?? 0}");
+            var result = await _svc.Purchases.Subscriptions.Get(_packageName, sku, token).ExecuteAsync(ct);
+            Console.WriteLine($"[GP] OK Subscription orderId={result?.OrderId} purchaseState={result?.PurchaseState}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"GooglePlayClient error Subscription: {ex.GetType().FullName}: {ex.Message}");
+            Console.WriteLine($"GooglePlayClient error Subscription: {ex.ToString()}");
+            throw;
+        }
+    }
     public async Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct)
     {
         try
