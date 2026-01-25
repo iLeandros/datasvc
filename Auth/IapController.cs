@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using DataSvc.Google;
-using Google;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DataSvc.Iap;
@@ -293,7 +292,7 @@ public sealed class IapController : ControllerBase
                 kind = p.Kind
             });
         }
-        catch (Google.GoogleApiException ex)
+        catch (global::Google.GoogleApiException ex)
         {
             // Return the Google error cleanly instead of exploding into /error -> fake 405
             return StatusCode((int)ex.HttpStatusCode, new
