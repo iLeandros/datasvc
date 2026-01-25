@@ -44,7 +44,6 @@ using DataSvc.Top10;
 using DataSvc.Tips;
 using Google.Apis.Auth;
 using DataSvc.Google;
-using DataSvc.GoogleVerifyController;
 
 Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
 
@@ -152,7 +151,6 @@ app.MapDetailsEndpoints();
 app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
-app.MapGoogleVerifyController();
 
 app.Use(async (ctx, next) =>
 {
