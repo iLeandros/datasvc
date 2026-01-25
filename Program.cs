@@ -154,6 +154,14 @@ app.MapTipsEndpoints();
 
 app.Use(async (ctx, next) =>
 {
+    if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/ping"))
+    {
+        Console.WriteLine($"PING REQ: Method={ctx.Request.Method}, Path={ctx.Request.Path}, ContentType={ctx.Request.ContentType}, Length={ctx.Request.ContentLength}, Headers={string.Join(";", ctx.Request.Headers.Select(h => $"{h.Key}:{h.Value}"))}");
+    }
+    await next();
+});
+app.Use(async (ctx, next) =>
+{
     if (ctx.Request.Path.StartsWithSegments("/v1/iap/google/verify-consumable"))
     {
         var f = ctx.Features.Get<IHttpRequestFeature>();
