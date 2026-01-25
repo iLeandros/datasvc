@@ -240,9 +240,9 @@ public sealed class IapController : ControllerBase
 
     [HttpPost("google/verify-consumable")]
     //[AllowAnonymous]
-    //[Authorize]
+    [Authorize]
     public async Task<IActionResult> VerifyConsumable(
-        [FromBody] VerifyReq req,
+        [FromQuery] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
