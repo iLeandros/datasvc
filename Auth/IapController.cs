@@ -206,6 +206,14 @@ public sealed class IapController : ControllerBase
         });
     }
     */
+
+    [HttpPost("google/ping3")]
+    [AllowAnonymous]
+    public IActionResult Ping([FromQuery] VerifyReq req)
+    {
+        return Ok(new { message="POST ping reached", req, utc=DateTime.UtcNow });
+    }
+    
     [HttpPost("google/ping2")]
     [AllowAnonymous]
     public IActionResult PingGooglePost()
