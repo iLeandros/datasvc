@@ -306,18 +306,18 @@ public sealed class IapController : ControllerBase
 
 
     [HttpPost("google/verify-consumable")]
-    //[AllowAnonymous]
     [Authorize]
     public async Task<IActionResult> VerifyConsumable(
         [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
-        Console.WriteLine("Malaka Lean");
         if (string.IsNullOrWhiteSpace(_connString))
             return Problem("Missing ConnectionStrings:Default.");
+    
         if (!TryGetUserId(out var userId))
             return Unauthorized();
+    
         if (string.IsNullOrWhiteSpace(req.ProductId) || string.IsNullOrWhiteSpace(req.PurchaseToken))
             return BadRequest("Missing productId or purchaseToken.");
     
@@ -338,7 +338,7 @@ public sealed class IapController : ControllerBase
             if (product.Days <= 0 || string.IsNullOrWhiteSpace(product.Sku))
                 return BadRequest("Unknown product.");
     
-            // 2) Idempotency: if already processed, just return entitlement
+            // 2) Idempotency
             var existingState = await conn.ExecuteScalarAsync<string?>(@"
                 SELECT state
                 FROM purchases
@@ -357,20 +357,18 @@ public sealed class IapController : ControllerBase
                     new { userId }, tx);
     
                 await tx.CommitAsync(ct);
-                return Ok(ent0);
+                return ent0 is null
+                    ? Ok(new { message = "Already processed", state = existingState })
+                    : Ok(ent0);
             }
-
-            Console.WriteLine("[VERIFY] Google check starting");
-            // 3) Verify with Google (purchases.products.get)
-            var gpPurchase = await gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
-            Console.WriteLine($"GooglePlayClient error ending: {gpPurchase.PurchaseState}");
-            Console.WriteLine($"GooglePlayClient error ending: ");
     
-            // PurchaseState: 0=Purchased, 1=Canceled, 2=Pending
+            Console.WriteLine("[VERIFY] Google check starting");
+            var gpPurchase = await gp.GetProductAsync(product.Sku, req.PurchaseToken, ct);
+            Console.WriteLine($"[VERIFY] Google purchaseState={gpPurchase.PurchaseState}");
+    
             if (gpPurchase.PurchaseState != 0)
                 return BadRequest($"Not purchased (purchaseState={gpPurchase.PurchaseState}).");
     
-            // Optional: if client supplied orderId, require match
             if (!string.IsNullOrWhiteSpace(req.OrderId) &&
                 !string.IsNullOrWhiteSpace(gpPurchase.OrderId) &&
                 !string.Equals(req.OrderId, gpPurchase.OrderId, StringComparison.OrdinalIgnoreCase))
@@ -438,10 +436,6 @@ public sealed class IapController : ControllerBase
     
             await conn.ExecuteAsync(entSql, new { userId, alias = req.ProductId, days = product.Days }, tx);
     
-            // 6) Optional consume server-side (usually not needed if client consumes)
-            // try { await gp.ConsumeAsync(product.Sku, req.PurchaseToken, ct); } catch { }
-    
-            // 7) Return entitlement
             var ent = await conn.QuerySingleAsync<EntitlementDto>(@"
                 SELECT user_id AS UserId, feature AS Feature, source_platform AS SourcePlatform,
                        product_id AS ProductId, starts_at AS StartsAt, expires_at AS ExpiresAt, status AS Status
@@ -453,13 +447,6 @@ public sealed class IapController : ControllerBase
             await tx.CommitAsync(ct);
             return Ok(ent);
         }
-        /*
-        catch
-        {
-            await tx.RollbackAsync(ct);
-            throw;
-        }
-        */
         catch (global::Google.GoogleApiException ex)
         {
             await tx.RollbackAsync(ct);
@@ -470,7 +457,13 @@ public sealed class IapController : ControllerBase
                 message = ex.Message
             });
         }
-
+        catch (Exception ex)
+        {
+            await tx.RollbackAsync(ct);
+            // optional: log it so you don’t lose the real cause
+            Console.WriteLine($"[VERIFY] Server exception: {ex}");
+            throw;
+        }
     }
 
     /*
