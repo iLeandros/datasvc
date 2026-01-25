@@ -186,7 +186,7 @@ public sealed class IapController : ControllerBase
         });
     }
 
-    [HttpPost("google/verify-consumable")]
+    [HttpPost("google/verifyconsumable")]
     //[AllowAnonymous]
     //[Authorize]
     public async Task<IActionResult> VerifyConsumable(
