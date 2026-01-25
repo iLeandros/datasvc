@@ -174,7 +174,7 @@ public sealed class IapController : ControllerBase
             throw;
         }
     }
-    */
+    
     [HttpPost("google/ping2")]
     [AllowAnonymous]
     [Consumes("application/json", "application/json; charset=utf-8")]
@@ -205,7 +205,8 @@ public sealed class IapController : ControllerBase
             bodyPreview = rawBody.Length > 200 ? rawBody.Substring(0, 200) + "..." : rawBody
         });
     }
-
+    */
+    
     [HttpPost("google/ping")]
     [AllowAnonymous]
     public IActionResult PingGooglePostOld(
