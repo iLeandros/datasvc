@@ -174,7 +174,7 @@ public sealed class IapController : ControllerBase
         }
     }
     */
-    [HttpPost("google/ping")]
+    [HttpPost("google/ping2")]
     [AllowAnonymous]
     public async Task<IActionResult> PingGooglePost()
     {
