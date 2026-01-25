@@ -34,9 +34,26 @@ public sealed class GooglePlayClient
             Console.WriteLine($"GooglePlayClient error: {ex.Message}");
         }
     }
-
+    /*
     public Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct) =>
         _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
+    */
+    public async Task<ProductPurchase> GetProductAsync(string sku, string token, CancellationToken ct)
+    {
+        try
+        {
+            Console.WriteLine($"[GP] Purchases.Products.Get package={_packageName} sku={sku} tokenLen={token?.Length ?? 0}");
+            var result = await _svc.Purchases.Products.Get(_packageName, sku, token).ExecuteAsync(ct);
+            Console.WriteLine($"[GP] OK orderId={result?.OrderId} purchaseState={result?.PurchaseState}");
+            return result;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[GP] Exception {ex.GetType().FullName}: {ex.Message}");
+            Console.WriteLine(ex.ToString());
+            throw;
+        }
+    }
 
     public Task ConsumeAsync(string sku, string token, CancellationToken ct) =>
         _svc.Purchases.Products.Consume(_packageName, sku, token).ExecuteAsync(ct);
