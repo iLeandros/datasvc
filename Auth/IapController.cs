@@ -176,7 +176,10 @@ public sealed class IapController : ControllerBase
     */
     [HttpPost("google/ping2")]
     [AllowAnonymous]
-    public async Task<IActionResult> PingGooglePost()
+    public async Task<IActionResult> PingGooglePost(
+        [FromBody] VerifyReq req,
+        [FromServices] GooglePlayClient gp,
+        CancellationToken ct)
     {
         Console.WriteLine($"PING ACTION ENTERED | ContentLength={Request.ContentLength}, ContentType={Request.ContentType}");
     
@@ -202,7 +205,7 @@ public sealed class IapController : ControllerBase
     [HttpPost("google/ping")]
     [AllowAnonymous]
     public IActionResult PingGooglePostOld(
-    [FromBody] VerifyReq req,
+        [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
         CancellationToken ct)
     {
