@@ -174,31 +174,28 @@ public sealed class IapController : ControllerBase
         }
     }
     */
-    [HttpPost("google/ping2")]
+    [HttpPost("google/ping")]
     [AllowAnonymous]
-    public async IActionResult PingGooglePost(
-        [FromBody] VerifyReq req,
-        [FromServices] GooglePlayClient gp,
-        CancellationToken ct)
+    public async Task<IActionResult> PingGooglePost()
     {
-        Console.WriteLine("PING ACTION REACHED - manual read mode");
+        Console.WriteLine($"PING ACTION ENTERED | ContentLength={Request.ContentLength}, ContentType={Request.ContentType}");
     
-        string rawBody = "no body read";
-        if (Request.ContentLength > 0)
-        {
-            Request.EnableBuffering(); // important if body was already partially read
-            Request.Body.Position = 0;
-            using var reader = new StreamReader(Request.Body);
-            rawBody = await reader.ReadToEndAsync();
-        }
+        Request.EnableBuffering();           // ← key line
+        Request.Body.Position = 0;           // rewind if already partially read
+    
+        string rawBody = await new StreamReader(Request.Body).ReadToEndAsync();
+    
+        // rewind again so downstream code could read it if needed
+        Request.Body.Position = 0;
     
         return Ok(new 
         { 
-            message = "reached with manual body read",
+            message = "manual read with EnableBuffering",
             utc = DateTime.UtcNow,
-            contentType = Request.ContentType ?? "none",
-            contentLength = Request.ContentLength.GetValueOrDefault(0),
-            rawBody = rawBody  // or truncate if too long
+            reportedContentType = Request.ContentType,
+            reportedContentLength = Request.ContentLength,
+            actualBodyLength = rawBody.Length,
+            bodyPreview = rawBody.Length > 200 ? rawBody.Substring(0, 200) + "..." : rawBody
         });
     }
 
