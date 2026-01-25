@@ -18,11 +18,11 @@ public static class Endpoints
     }
     public static IEndpointRouteBuilder MapGoogleVerifyController(this IEndpointRouteBuilder app)
     {
+        
         [HttpPost("google/ping2")]
         [AllowAnonymous]
         [Consumes("application/json", "application/json; charset=utf-8")]
         [Produces("application/json")]
-    
         public async Task<IActionResult> PingGooglePost(
             [FromBody] VerifyReq req,
             [FromServices] GooglePlayClient gp,
