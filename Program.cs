@@ -151,6 +151,7 @@ app.MapDetailsEndpoints();
 app.MapLiveScoresEndpoints();
 app.MapTop10Endpoints();
 app.MapTipsEndpoints();
+app.MapGoogleVerifyController();
 
 app.Use(async (ctx, next) =>
 {
