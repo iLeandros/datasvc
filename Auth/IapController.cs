@@ -175,6 +175,17 @@ public sealed class IapController : ControllerBase
     }
     */
 
+    [HttpPost("google/ping")]
+    [AllowAnonymous]
+    public IActionResult PingGooglePost()
+    {
+        return Ok(new
+        {
+            message = "POST google ping reached",
+            utc = DateTime.UtcNow
+        });
+    }
+
     [HttpPost("google/verify-consumable")]
     //[AllowAnonymous]
     //[Authorize]
