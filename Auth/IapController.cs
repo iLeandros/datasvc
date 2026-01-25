@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MySqlConnector;
 using DataSvc.Google;
+using Microsoft.AspNetCore.Mvc;
 
 namespace DataSvc.Iap;
 
@@ -176,6 +177,7 @@ public sealed class IapController : ControllerBase
     */
     [HttpPost("google/ping2")]
     [AllowAnonymous]
+    [Consumes("application/json")]
     public async Task<IActionResult> PingGooglePost(
         [FromBody] VerifyReq req,
         [FromServices] GooglePlayClient gp,
