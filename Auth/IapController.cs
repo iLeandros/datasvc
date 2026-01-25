@@ -238,6 +238,73 @@ public sealed class IapController : ControllerBase
         });
     }
 
+    [HttpPost("google/verify-consumable-state")]
+    [Authorize]
+    public async Task<IActionResult> VerifyConsumableState(
+        [FromBody] VerifyReq req,
+        [FromServices] GooglePlayClient gp,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(_connString))
+            return Problem("Missing ConnectionStrings:Default.");
+    
+        if (!TryGetUserId(out var userId))
+            return Unauthorized();
+    
+        if (string.IsNullOrWhiteSpace(req.ProductId) || string.IsNullOrWhiteSpace(req.PurchaseToken))
+            return BadRequest("Missing productId or purchaseToken.");
+    
+        await using var conn = new MySqlConnection(_connString);
+        await conn.OpenAsync(ct);
+    
+        // alias -> store sku
+        var sku = await conn.ExecuteScalarAsync<string?>(@"
+            SELECT store_sku
+            FROM products
+            WHERE platform='google' AND product_id=@alias
+            LIMIT 1;",
+            new { alias = req.ProductId });
+    
+        if (string.IsNullOrWhiteSpace(sku))
+            return BadRequest("Unknown product.");
+    
+        try
+        {
+            var p = await gp.GetProductAsync(sku, req.PurchaseToken, ct);
+    
+            // Optional: orderId check (useful in debugging mismatches)
+            var orderMatch =
+                string.IsNullOrWhiteSpace(req.OrderId) ||
+                string.IsNullOrWhiteSpace(p.OrderId) ||
+                string.Equals(req.OrderId, p.OrderId, StringComparison.OrdinalIgnoreCase);
+    
+            return Ok(new
+            {
+                userId,
+                alias = req.ProductId,
+                sku,
+                purchaseState = p.PurchaseState,            // 0 purchased, 1 canceled, 2 pending
+                consumptionState = p.ConsumptionState,      // 0 yet to be consumed, 1 consumed (for in-app)
+                acknowledgementState = p.AcknowledgementState,
+                orderId = p.OrderId,
+                orderMatch,
+                purchaseTimeMillis = p.PurchaseTimeMillis,
+                kind = p.Kind
+            });
+        }
+        catch (Google.GoogleApiException ex)
+        {
+            // Return the Google error cleanly instead of exploding into /error -> fake 405
+            return StatusCode((int)ex.HttpStatusCode, new
+            {
+                error = "google_api_error",
+                httpStatus = (int)ex.HttpStatusCode,
+                message = ex.Message
+            });
+        }
+    }
+
+
     [HttpPost("google/verify-consumable")]
     //[AllowAnonymous]
     [Authorize]
