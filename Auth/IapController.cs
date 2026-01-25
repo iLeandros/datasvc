@@ -176,7 +176,10 @@ public sealed class IapController : ControllerBase
     */
     [HttpPost("google/ping2")]
     [AllowAnonymous]
-    public async Task<IActionResult> PingGooglePost()
+    public IActionResult PingGooglePost(
+        [FromBody] VerifyReq req,
+        [FromServices] GooglePlayClient gp,
+        CancellationToken ct)
     {
         Console.WriteLine("PING ACTION REACHED - manual read mode");
     
