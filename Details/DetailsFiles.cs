@@ -95,9 +95,7 @@ namespace DataSvc.Details
             System.IO.File.Move(tmp, File, overwrite: true);
             store.MarkSaved(now);
         }
-
-        public IReadOnlyList<DetailsRecord> Snapshot()
-            => _map.Values.ToArray();
+        
     	/*
         public static async Task<IReadOnlyList<DetailsRecord>> LoadAsync()
         {
