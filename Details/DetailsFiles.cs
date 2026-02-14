@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 // keep this if your SaveAsync signature still shows [FromServices]
 using Microsoft.AspNetCore.Mvc;
@@ -21,12 +22,13 @@ using DataSvc.Parsed;
 using DataSvc.Details;
 using DataSvc.LiveScores;
 
+
 namespace DataSvc.Details
 {
     public static class DetailsFiles
     {
         public const string File = "/var/lib/datasvc/details.json";
-    
+        /*
         public static async Task SaveAsync( [FromServices] DetailsStore store )
         {
             var (items, now) = store.Export();
@@ -37,6 +39,65 @@ namespace DataSvc.Details
             System.IO.File.Move(tmp, File, overwrite: true);
             store.MarkSaved(now);
         }
+        */
+        
+        public static async Task SaveAsync(DetailsStore store)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var tmp = File + ".tmp";
+            Directory.CreateDirectory(Path.GetDirectoryName(File)!);
+        
+            // Snapshot once so the dictionary doesn't change while writing
+            var snapshot = store.Snapshot(); // you’ll add this (see below)
+        
+            await using var fs = new FileStream(
+                tmp,
+                FileMode.Create,
+                FileAccess.Write,
+                FileShare.None,
+                bufferSize: 64 * 1024,
+                options: FileOptions.Asynchronous
+            );
+        
+            var jsonOptions = new JsonSerializerOptions
+            {
+                WriteIndented = false,
+                DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+            };
+        
+            await using var writer = new Utf8JsonWriter(fs, new JsonWriterOptions
+            {
+                Indented = false,
+                SkipValidation = true
+            });
+        
+            writer.WriteStartObject();
+            writer.WriteString("lastSavedUtc", now);
+        
+            writer.WritePropertyName("items");
+            writer.WriteStartArray();
+        
+            int i = 0;
+            foreach (var rec in snapshot)
+            {
+                JsonSerializer.Serialize(writer, rec, jsonOptions);
+        
+                // Flush periodically so buffers don’t grow too much
+                if ((++i % 50) == 0) writer.Flush();
+            }
+        
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+            writer.Flush();
+        
+            await fs.FlushAsync();
+        
+            System.IO.File.Move(tmp, File, overwrite: true);
+            store.MarkSaved(now);
+        }
+
+        public IReadOnlyList<DetailsRecord> Snapshot()
+            => _map.Values.ToArray();
     	/*
         public static async Task<IReadOnlyList<DetailsRecord>> LoadAsync()
         {
