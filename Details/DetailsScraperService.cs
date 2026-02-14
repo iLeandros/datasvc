@@ -21,7 +21,7 @@ namespace DataSvc.Details
     	static int GetEnvInt(string name, int def)
         => int.TryParse(Environment.GetEnvironmentVariable(name), out var v) ? Math.Max(1, v) : def;
     
-    	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 16);   // was 4
+    	readonly int _maxParallel     = GetEnvInt("DETAILS_PARALLEL", 8);   // was 4
     	readonly int _timeoutSeconds  = GetEnvInt("DETAILS_TIMEOUT_SECONDS", 10); // was 30
     	readonly TimeSpan _ttl        = TimeSpan.FromMinutes(GetEnvInt("DETAILS_TTL_MINUTES", 1)); // 3h default
     
