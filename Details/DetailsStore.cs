@@ -35,6 +35,8 @@ namespace DataSvc.Details
     	
     	    _map[norm] = rec;
     	}
+        public IReadOnlyList<DetailsRecord> Snapshot()
+            => _map.Values.ToArray();
         public DetailsRecord? Get(string href) => _map.TryGetValue(Normalize(href), out var rec) ? rec : null;
     
         public List<(string href, DateTimeOffset lastUpdatedUtc)> Index()
