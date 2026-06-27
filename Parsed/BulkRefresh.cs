@@ -29,11 +29,16 @@ namespace DataSvc.Parsed;
 
 public static class BulkRefresh
 {
+    // Tracks past dates that have been fully processed (scraped + tips applied) in this
+    // service session. We only skip re-scraping a past date after we know all its fields
+    // are populated — not just because something exists in memory or on disk.
+    private static readonly HashSet<DateOnly> _sessionCompleted = new();
+
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
     	RefreshWindowAsync(
         SnapshotPerDateStore store,
         IConfiguration cfg,
-		    ParsedTipsService tips,          // <-- new
+		    ParsedTipsService tips,
         int? hourUtc = null,
         DateOnly? center = null, int back = 3, int ahead = 3,
         CancellationToken ct = default)
@@ -50,36 +55,29 @@ public static class BulkRefresh
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Past dates have final results — don't re-scrape them on every tick.
-                // If already in memory, keep that data. If not in memory but on disk, restore it once.
-                // Only today and future dates get live re-fetched every cycle.
-                if (d < c)
+                // Past dates: only skip if this session has already fully processed the date
+                // (scraped + all tips/analysis fields applied). A snapshot loaded from disk at
+                // warm-up is intentionally NOT counted — disk files lack the tip fields that
+                // ApplyTipsForDate writes, so they are incomplete.
+                if (d < c && _sessionCompleted.Contains(d) && store.TryGet(d, out _))
                 {
-                    if (store.TryGet(d, out _))
-                    {
-                        Console.Error.WriteLine($"[BulkRefresh] SKIP(mem) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
-                        refreshed.Add(d.ToString("yyyy-MM-dd"));
-                        continue;
-                    }
-                    if (TryLoadFromDisk(store, d))
-                    {
-                        Console.Error.WriteLine($"[BulkRefresh] SKIP(disk) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
-                        refreshed.Add(d.ToString("yyyy-MM-dd"));
-                        continue;
-                    }
-                    Console.Error.WriteLine($"[BulkRefresh] SCRAPE(past-missing) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
-                }
-                else
-                {
-                    Console.Error.WriteLine($"[BulkRefresh] SCRAPE {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
+                    Console.Error.WriteLine($"[BulkRefresh] SKIP {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
+                    refreshed.Add(d.ToString("yyyy-MM-dd"));
+                    continue;
                 }
 
+                Console.Error.WriteLine($"[BulkRefresh] SCRAPE {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
 
                 if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
                     await tips.ApplyTipsForDate(d, groups, ct);
 
                 store.Set(d, snap);
+
+                // Mark past date as fully processed so subsequent ticks can skip it.
+                if (d < c)
+                    _sessionCompleted.Add(d);
+
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
             catch (Exception ex)
@@ -109,6 +107,7 @@ public static class BulkRefresh
             }
         }
     }
+
     public static bool TryLoadFromDisk(SnapshotPerDateStore store, DateOnly date)
     {
         var path = ScraperConfig.SnapshotPath(date);
