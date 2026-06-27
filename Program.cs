@@ -23,7 +23,6 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using MySqlConnector;
-using Microsoft.Maui.Graphics;
 using Dapper;
 using System.Linq;
 using System.IO.Compression;
