@@ -50,15 +50,29 @@ public static class BulkRefresh
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Use the FetchOneDateAsync overload that takes IConfiguration
+                // Past dates have final results — don't re-scrape them on every tick.
+                // If already in memory, keep that data. If not in memory but on disk, restore it once.
+                // Only today and future dates get live re-fetched every cycle.
+                if (d < c)
+                {
+                    if (store.TryGet(d, out _))
+                    {
+                        refreshed.Add(d.ToString("yyyy-MM-dd"));
+                        continue;
+                    }
+                    if (TryLoadFromDisk(store, d))
+                    {
+                        refreshed.Add(d.ToString("yyyy-MM-dd"));
+                        continue;
+                    }
+                    // Not in memory or on disk — fall through and scrape once
+                }
+
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
-				
-				// Enrich: apply tips ONCE here, before putting it into the store
-		        if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
-		        {
-		            await tips.ApplyTipsForDate(d, groups, ct);
-		        }
-				
+
+                if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
+                    await tips.ApplyTipsForDate(d, groups, ct);
+
                 store.Set(d, snap);
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
