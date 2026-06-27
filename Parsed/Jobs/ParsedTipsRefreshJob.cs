@@ -1,5 +1,6 @@
 // Parsed/Jobs/ParsedTipsRefreshJob.cs
 using System;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Hosting;
@@ -7,13 +8,12 @@ using Microsoft.Extensions.Hosting;
 using DataSvc.Models;
 using DataSvc.ModelHelperCalls;
 using DataSvc.VIPHandler;
-using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
-using DataSvc.MainHelpers; // MainHelpers
-using DataSvc.Likes; // MainHelpers
-using DataSvc.Services; // Services
+using DataSvc.Auth;
+using DataSvc.MainHelpers;
+using DataSvc.Likes;
+using DataSvc.Services;
 using DataSvc.Analyzer;
 using DataSvc.ClubElo;
-using DataSvc.MainHelpers;
 using DataSvc.Parsed;
 using DataSvc.Details;
 using DataSvc.LiveScores;
@@ -54,6 +54,18 @@ public sealed class ParsedTipsRefreshJob : BackgroundService
             {
                 if (!_perDate.TryGet(d, out var snap) || snap?.Payload?.TableDataGroup is null || snap.Payload.TableDataGroup.Count == 0)
                     continue;
+
+                // Past dates: skip if every item that can have a tip already has VIPTip set.
+                // Re-running ApplyTipsForDate on past dates risks overwriting correct H2H/Elo
+                // analysis with weaker values when DetailsStore isn't fully loaded (e.g. after
+                // a service restart). Past results are final — freeze them once complete.
+                if (d < center)
+                {
+                    bool allComplete = snap.Payload.TableDataGroup
+                        .SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+                        .All(item => item.VIPTip != null);
+                    if (allComplete) continue;
+                }
 
                 await _tips.ApplyTipsForDate(d, snap.Payload.TableDataGroup, ct);
             }

@@ -49,24 +49,34 @@ public static class BulkRefresh
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Past dates: skip only when we already have a snapshot with actual match
-                // items (all key fields filled). Re-scraping risks overwriting good historical
-                // data with empty results (the source may no longer serve past-day data).
-                // Check memory first, then fall back to disk.
                 if (d < c)
                 {
-                    if (store.TryGet(d, out var mem) && HasMatchData(mem))
+                    // Locate existing snapshot — check memory first, then disk.
+                    DataSnapshot? existing = null;
+                    if (!store.TryGet(d, out existing) || !HasMatchData(existing))
                     {
+                        // Not in memory with data — try disk.
+                        if (TryLoadFromDisk(store, d))
+                            store.TryGet(d, out existing);
+                    }
+
+                    if (HasMatchData(existing))
+                    {
+                        // We have match data. If tips haven't been applied yet (e.g. snapshot
+                        // was loaded from a disk file saved before ApplyTipsForDate ran), apply
+                        // them now without re-scraping, then persist the complete version.
+                        if (!HasTipsApplied(existing) &&
+                            existing!.Payload?.TableDataGroup is { } g && g.Count > 0)
+                        {
+                            await tips.ApplyTipsForDate(d, g, ct);
+                            await SaveSnapshotAsync(existing, d, ct);
+                        }
+
                         refreshed.Add(d.ToString("yyyy-MM-dd"));
                         continue;
                     }
-                    // Try to restore from disk; if that snapshot also has data we can skip.
-                    if (TryLoadFromDisk(store, d) && store.TryGet(d, out var fromDisk) && HasMatchData(fromDisk))
-                    {
-                        refreshed.Add(d.ToString("yyyy-MM-dd"));
-                        continue;
-                    }
-                    // No usable data found — fall through and scrape once.
+
+                    // No usable data anywhere — fall through and scrape once.
                 }
 
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
@@ -76,14 +86,9 @@ public static class BulkRefresh
                     await tips.ApplyTipsForDate(d, groups, ct);
 
                     // For past dates, overwrite the disk file after tips are applied so that
-                    // future service restarts load fully-completed snapshots and can skip immediately.
+                    // future restarts load fully-completed snapshots and skip re-scraping.
                     if (d < c)
-                    {
-                        var path = ScraperConfig.SnapshotPath(d);
-                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                        await File.WriteAllTextAsync(path,
-                            JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false }), ct);
-                    }
+                        await SaveSnapshotAsync(snap, d, ct);
                 }
 
                 store.Set(d, snap);
@@ -98,13 +103,27 @@ public static class BulkRefresh
         return (refreshed, errors);
     }
 
-    // Returns true when the snapshot contains at least one group with match items.
-    // An empty snapshot (no items) does not qualify — we should try to (re-)scrape.
+    // True when the snapshot has at least one group containing match items.
     private static bool HasMatchData(DataSnapshot? snap) =>
         snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
         groups.Any(g => g?.Items?.Count > 0);
 
-	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
+    // True when every item that could carry a tip already has VIPTip set.
+    // An item with VIPTip == null means ApplyTipsForDate hasn't processed it yet.
+    private static bool HasTipsApplied(DataSnapshot? snap) =>
+        snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
+        groups.SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+              .All(item => item.VIPTip != null);
+
+    private static async Task SaveSnapshotAsync(DataSnapshot snap, DateOnly date, CancellationToken ct)
+    {
+        var path = ScraperConfig.SnapshotPath(date);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await File.WriteAllTextAsync(path,
+            JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false }), ct);
+    }
+
+    public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
     {
         var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
         store.PruneTo(keep);
