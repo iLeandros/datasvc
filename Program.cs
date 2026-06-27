@@ -1069,6 +1069,7 @@ public sealed class ScraperService
 	    int? hourUtc = null,
 	    CancellationToken ct = default)
 	{
+	    Console.Error.WriteLine($"[FetchOneDate] CALLED for {date:yyyy-MM-dd} stack={Environment.StackTrace.Split('\n').Skip(1).Take(4).Select(s => s.Trim()).FirstOrDefault()}");
 	    var url  = ScraperConfig.UrlFor(date);
 	    var html = await GetStartupMainPageFullInfo2024.GetStartupMainPageFullInfo(url);
 	
