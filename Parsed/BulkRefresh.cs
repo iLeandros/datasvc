@@ -13,13 +13,12 @@ using Microsoft.Extensions.Logging;
 using DataSvc.Models;
 using DataSvc.ModelHelperCalls;
 using DataSvc.VIPHandler;
-using DataSvc.Auth; // AuthController + SessionAuthHandler namespace
-using DataSvc.MainHelpers; // MainHelpers
-using DataSvc.Likes; // MainHelpers
-using DataSvc.Services; // Services
+using DataSvc.Auth;
+using DataSvc.MainHelpers;
+using DataSvc.Likes;
+using DataSvc.Services;
 using DataSvc.Analyzer;
 using DataSvc.ClubElo;
-using DataSvc.MainHelpers;
 using DataSvc.Parsed;
 using DataSvc.Details;
 using DataSvc.LiveScores;
@@ -29,11 +28,6 @@ namespace DataSvc.Parsed;
 
 public static class BulkRefresh
 {
-    // Tracks past dates that have been fully processed (scraped + tips applied) in this
-    // service session. We only skip re-scraping a past date after we know all its fields
-    // are populated — not just because something exists in memory or on disk.
-    private static readonly HashSet<DateOnly> _sessionCompleted = new();
-
     public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
     	RefreshWindowAsync(
         SnapshotPerDateStore store,
@@ -55,29 +49,44 @@ public static class BulkRefresh
             {
                 ct.ThrowIfCancellationRequested();
 
-                // Past dates: only skip if this session has already fully processed the date
-                // (scraped + all tips/analysis fields applied). A snapshot loaded from disk at
-                // warm-up is intentionally NOT counted — disk files lack the tip fields that
-                // ApplyTipsForDate writes, so they are incomplete.
-                if (d < c && _sessionCompleted.Contains(d) && store.TryGet(d, out _))
+                // Past dates: skip only when we already have a snapshot with actual match
+                // items (all key fields filled). Re-scraping risks overwriting good historical
+                // data with empty results (the source may no longer serve past-day data).
+                // Check memory first, then fall back to disk.
+                if (d < c)
                 {
-                    Console.Error.WriteLine($"[BulkRefresh] SKIP {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
-                    refreshed.Add(d.ToString("yyyy-MM-dd"));
-                    continue;
+                    if (store.TryGet(d, out var mem) && HasMatchData(mem))
+                    {
+                        refreshed.Add(d.ToString("yyyy-MM-dd"));
+                        continue;
+                    }
+                    // Try to restore from disk; if that snapshot also has data we can skip.
+                    if (TryLoadFromDisk(store, d) && store.TryGet(d, out var fromDisk) && HasMatchData(fromDisk))
+                    {
+                        refreshed.Add(d.ToString("yyyy-MM-dd"));
+                        continue;
+                    }
+                    // No usable data found — fall through and scrape once.
                 }
 
-                Console.Error.WriteLine($"[BulkRefresh] SCRAPE {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
 
                 if (snap.Payload?.TableDataGroup is { } groups && groups.Count > 0)
+                {
                     await tips.ApplyTipsForDate(d, groups, ct);
 
+                    // For past dates, overwrite the disk file after tips are applied so that
+                    // future service restarts load fully-completed snapshots and can skip immediately.
+                    if (d < c)
+                    {
+                        var path = ScraperConfig.SnapshotPath(d);
+                        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                        await File.WriteAllTextAsync(path,
+                            JsonSerializer.Serialize(snap, new JsonSerializerOptions { WriteIndented = false }), ct);
+                    }
+                }
+
                 store.Set(d, snap);
-
-                // Mark past date as fully processed so subsequent ticks can skip it.
-                if (d < c)
-                    _sessionCompleted.Add(d);
-
                 refreshed.Add(d.ToString("yyyy-MM-dd"));
             }
             catch (Exception ex)
@@ -89,18 +98,22 @@ public static class BulkRefresh
         return (refreshed, errors);
     }
 
+    // Returns true when the snapshot contains at least one group with match items.
+    // An empty snapshot (no items) does not qualify — we should try to (re-)scrape.
+    private static bool HasMatchData(DataSnapshot? snap) =>
+        snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
+        groups.Any(g => g?.Items?.Count > 0);
+
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
     {
         var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
-        // In-memory prune
         store.PruneTo(keep);
 
-        // On-disk prune
         var dir = Path.GetDirectoryName(ScraperConfig.SnapshotPath(center))!;
         if (!Directory.Exists(dir)) return;
         foreach (var file in Directory.EnumerateFiles(dir, "*.json"))
         {
-            var name = Path.GetFileNameWithoutExtension(file); // yyyy-MM-dd
+            var name = Path.GetFileNameWithoutExtension(file);
             if (DateOnly.TryParseExact(name, "yyyy-MM-dd", out var d) && !keep.Contains(d))
             {
                 try { File.Delete(file); } catch { /* ignore */ }
