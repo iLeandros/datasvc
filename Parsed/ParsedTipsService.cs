@@ -406,29 +406,37 @@ public sealed class ParsedTipsService
                     double? homeElo = null, awayElo = null;
                     if (TryGetElo(hostSafe, out var he)) homeElo = he;
                     if (TryGetElo(guestSafe, out var ae)) awayElo = ae;
+                    bool eloAvailable = homeElo.HasValue && awayElo.HasValue;
 
                     (probs, _) = await Task.Run(
                         () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, null, null),
                         ct
                     ).ConfigureAwait(false);
-                    (probsVIP, h2hEffMatches) = await Task.Run(
-                        () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
-                        ct
-                    ).ConfigureAwait(false);
 
-                    item.MassH2H = h2hEffMatches; // <- whatever field/property you want
-                    /*
-                    var vip = TipAnalyzer.PickVip(
-                        detailDto, hostSafe, guestSafe, probsVIP, homeElo, awayElo
-                    );
-                    item.VIPTip = vip.code;
-                    */
+                    // Only run Elo-adjusted analysis when both teams have ratings.
+                    // During international tournaments (e.g. World Cup), ClubElo has no
+                    // national team data, so we skip the duplicate analysis and leave
+                    // VIPTipElo null to signal "Elo not available" to the client.
+                    if (eloAvailable)
+                    {
+                        (probsVIP, h2hEffMatches) = await Task.Run(
+                            () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
+                            ct
+                        ).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        probsVIP = null;
+                        h2hEffMatches = 0;
+                    }
+
+                    item.MassH2H = h2hEffMatches;
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"[Tips] Analyze failed for href={normHref}, '{item.HostTeam}' vs '{item.GuestTeam}': {ex.Message}");
                     probs = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
-                    probsVIP = new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
+                    probsVIP = null;
                     analyzeFailed++;
                 }
 
@@ -437,9 +445,9 @@ public sealed class ParsedTipsService
                 item.ProposedResults = probs ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
                 item.ProposedResultsVIP = probsVIP ?? new List<DataSvc.Analyzer.TipAnalyzer.ProposedResult>();
                 if (item.ProposedResults.Count == 0) emptyProposed++;
-                //item.Tip = tipCode?.Code ?? item.Tip;
                 item.VIPTip = tipCode?.Code ?? item.Tip;
-                item.VIPTipElo = tipCodeVIP?.Code ?? item.Tip;
+                // Null when no Elo data (international teams) — client should check for null/empty
+                item.VIPTipElo = tipCodeVIP?.Code;
 
                 var backgroundTipColour = item.BackgroundTipColour;
                 var backgroundTipColourVIP = item.BackgroundTipColour;

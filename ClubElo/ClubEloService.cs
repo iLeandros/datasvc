@@ -80,6 +80,11 @@ public sealed class ClubEloStore
         LastFixturesFetchUtc = nowUtc;
     }
 
+    public void MarkFixturesFetchedUtc(DateTimeOffset nowUtc)
+    {
+        LastFixturesFetchUtc = nowUtc;
+    }
+
     public void ShrinkFixturesTo(HashSet<string> keepDates)
     {
         foreach (var key in _fixturesByDate.Keys)
@@ -386,52 +391,38 @@ public sealed class ClubEloRefreshJob : BackgroundService
                 //_store.SetRanks(ranks, nowUtc);
             }
 
-            // 2) Refresh fixtures if stale (> 12h)
-            var fixturesStale = _store.LastFixturesFetchUtc is null || (nowUtc - _store.LastFixturesFetchUtc.Value) > TimeSpan.FromHours(1);
+            // 2) Refresh fixtures if stale (> 6h)
+            // Use 6h instead of 1h — club fixtures only change once per day at most.
+            var fixturesStale = _store.LastFixturesFetchUtc is null || (nowUtc - _store.LastFixturesFetchUtc.Value) > TimeSpan.FromHours(6);
             if (fixturesStale)
             {
-                /*
-                var all = await _svc.FetchFixturesAsync(ct);
-
-                var center = ScraperConfig.TodayLocal();
-                var keep = ScraperConfig.DateWindow(center, back: 3, ahead: 3)
-                    .Select(d => d.ToString("yyyy-MM-dd"))
-                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-                var byDate = all
-                    .Where(f => keep.Contains(f.Date))
-                    .GroupBy(f => f.Date, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-
-                _store.SetFixturesWindow(byDate, nowUtc);
-                */
                 var center = ScraperConfig.TodayLocal();
                 var windowDates = ScraperConfig.DateWindow(center, back: 3, ahead: 3).ToList();
-                
+
                 var byDate = new Dictionary<string, List<ClubEloFixture>>(StringComparer.OrdinalIgnoreCase);
 
                 foreach (var d in windowDates)
                 {
                     ct.ThrowIfCancellationRequested();
-                
+
                     var iso = d.ToString("yyyy-MM-dd");
-                
-                    // New dated CSV endpoint: http://api.clubelo.com/YYYY-MM-DD/Fixtures
                     var items = await _svc.FetchFixturesByDateAsync(d, ct);
-                
-                    // Ensure the Date field is correct (defensive; API already includes it)
+
                     for (int i = 0; i < items.Count; i++)
                         items[i] = items[i] with { Date = iso };
-                
+
                     byDate[iso] = items;
                 }
-                
+
                 var hasAnyFixtures = byDate.Values.Any(list => list.Count > 0);
-                //_store.SetFixturesWindow(byDate, nowUtc);
                 if (hasAnyFixtures)
-                {
                     _store.SetFixturesWindow(byDate, nowUtc);
-                }
+
+                // Always mark the fetch timestamp even when no club fixtures are available
+                // (off-season / international tournaments). Without this the job would retry
+                // every 15 minutes forever because LastFixturesFetchUtc never advances.
+                if (_store.LastFixturesFetchUtc is null || _store.LastFixturesFetchUtc < nowUtc)
+                    _store.MarkFixturesFetchedUtc(nowUtc);
             }
 
             // 3) Always enforce rolling window for fixtures (in case only the day changed)
