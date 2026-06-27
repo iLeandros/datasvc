@@ -57,15 +57,21 @@ public static class BulkRefresh
                 {
                     if (store.TryGet(d, out _))
                     {
+                        Console.Error.WriteLine($"[BulkRefresh] SKIP(mem) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
                         refreshed.Add(d.ToString("yyyy-MM-dd"));
                         continue;
                     }
                     if (TryLoadFromDisk(store, d))
                     {
+                        Console.Error.WriteLine($"[BulkRefresh] SKIP(disk) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
                         refreshed.Add(d.ToString("yyyy-MM-dd"));
                         continue;
                     }
-                    // Not in memory or on disk — fall through and scrape once
+                    Console.Error.WriteLine($"[BulkRefresh] SCRAPE(past-missing) {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
+                }
+                else
+                {
+                    Console.Error.WriteLine($"[BulkRefresh] SCRAPE {d:yyyy-MM-dd} center={c:yyyy-MM-dd}");
                 }
 
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
@@ -84,7 +90,7 @@ public static class BulkRefresh
 
         return (refreshed, errors);
     }
-	
+
 	public static void CleanupRetention(SnapshotPerDateStore store, DateOnly center, int back, int ahead)
     {
         var keep = new HashSet<DateOnly>(ScraperConfig.DateWindow(center, back, ahead));
