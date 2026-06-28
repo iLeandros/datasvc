@@ -1,5 +1,6 @@
 // Parsed/Jobs/PerDateRefreshJob.cs
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,8 +11,6 @@ using DataSvc.MainHelpers;
 
 namespace DataSvc.Parsed;
 
-// FIX C6: Converted from IHostedService + System.Threading.Timer (async void callback)
-// to BackgroundService + PeriodicTimer — exceptions are properly observed.
 public sealed class PerDateRefreshJob : BackgroundService
 {
     private readonly SnapshotPerDateStore _store;
@@ -19,6 +18,10 @@ public sealed class PerDateRefreshJob : BackgroundService
     private readonly IConfiguration _cfg;
     private readonly ParsedTipsService _tips;
     private readonly SemaphoreSlim _gate = new(1, 1);
+
+    // Past dates processed successfully this session — never re-scraped until restart.
+    // A date is only added when it actually has match items (HasMatchData check inside BulkRefresh).
+    private readonly HashSet<DateOnly> _donePastDates = new();
 
     public PerDateRefreshJob(
         SnapshotPerDateStore store,
@@ -34,14 +37,11 @@ public sealed class PerDateRefreshJob : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        // Short startup delay so the main page can warm up first
         try { await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken); }
         catch (OperationCanceledException) { return; }
 
-        // Initial run immediately after startup delay
         await TickAsync(stoppingToken);
 
-        // Then run every 5 minutes
         using var timer = new PeriodicTimer(TimeSpan.FromMinutes(5));
         try
         {
@@ -63,6 +63,7 @@ public sealed class PerDateRefreshJob : BackgroundService
                 store: _store,
                 cfg: _cfg,
                 tips: _tips,
+                donePastDates: _donePastDates,
                 hourUtc: hourUtc,
                 center: center,
                 back: 3,

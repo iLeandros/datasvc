@@ -8,40 +8,40 @@ using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.Logging;
 
 using DataSvc.Models;
-using DataSvc.ModelHelperCalls;
-using DataSvc.VIPHandler;
-using DataSvc.Auth;
 using DataSvc.MainHelpers;
-using DataSvc.Likes;
-using DataSvc.Services;
-using DataSvc.Analyzer;
-using DataSvc.ClubElo;
-using DataSvc.Parsed;
-using DataSvc.Details;
-using DataSvc.LiveScores;
-
 
 namespace DataSvc.Parsed;
 
 public static class BulkRefresh
 {
-    public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string,string> Errors)>
-    	RefreshWindowAsync(
-        SnapshotPerDateStore store,
-        IConfiguration cfg,
-		    ParsedTipsService tips,
-        int? hourUtc = null,
-        DateOnly? center = null, int back = 3, int ahead = 3,
-        CancellationToken ct = default)
+    // Admin/manual callers pass null to bypass the session freeze and force a full re-scrape.
+    public static Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string, string> Errors)>
+        RefreshWindowAsync(
+            SnapshotPerDateStore store,
+            IConfiguration cfg,
+            ParsedTipsService tips,
+            int? hourUtc = null,
+            DateOnly? center = null, int back = 3, int ahead = 3,
+            CancellationToken ct = default)
+        => RefreshWindowAsync(store, cfg, tips, donePastDates: null, hourUtc, center, back, ahead, ct);
+
+    public static async Task<(IReadOnlyList<string> Refreshed, IReadOnlyDictionary<string, string> Errors)>
+        RefreshWindowAsync(
+            SnapshotPerDateStore store,
+            IConfiguration cfg,
+            ParsedTipsService tips,
+            HashSet<DateOnly>? donePastDates,
+            int? hourUtc = null,
+            DateOnly? center = null, int back = 3, int ahead = 3,
+            CancellationToken ct = default)
     {
         var c = center ?? ScraperConfig.TodayLocal();
         var dates = ScraperConfig.DateWindow(c, back, ahead).ToArray();
 
         var refreshed = new List<string>(dates.Length);
-        var errors = new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
+        var errors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var d in dates)
         {
@@ -51,32 +51,38 @@ public static class BulkRefresh
 
                 if (d < c)
                 {
-                    // Locate existing snapshot — check memory first, then disk.
-                    DataSnapshot? existing = null;
-                    if (!store.TryGet(d, out existing) || !HasMatchData(existing))
+                    // Past dates are processed exactly ONCE per session.
+                    // A date is only added to donePastDates after it has match items,
+                    // so empty scrapes don't permanently freeze the date.
+                    if (donePastDates != null && donePastDates.Contains(d))
                     {
-                        // Not in memory with data — try disk.
+                        refreshed.Add(d.ToString("yyyy-MM-dd"));
+                        continue;
+                    }
+
+                    // Try in-memory first, then disk.
+                    if (!store.TryGet(d, out var existing) || !HasMatchData(existing))
+                    {
                         if (TryLoadFromDisk(store, d))
                             store.TryGet(d, out existing);
                     }
 
                     if (HasMatchData(existing))
                     {
-                        // We have match data. If tips haven't been applied yet (e.g. snapshot
-                        // was loaded from a disk file saved before ApplyTipsForDate ran), apply
-                        // them now without re-scraping, then persist the complete version.
-                        if (!HasTipsApplied(existing) &&
-                            existing!.Payload?.TableDataGroup is { } g && g.Count > 0)
+                        // Apply tips once (uses whatever DetailsStore state we have right now).
+                        // After this we freeze — past results don't change.
+                        if (existing!.Payload?.TableDataGroup is { } g && g.Count > 0)
                         {
                             await tips.ApplyTipsForDate(d, g, ct);
                             await SaveSnapshotAsync(existing, d, ct);
                         }
 
+                        donePastDates?.Add(d);
                         refreshed.Add(d.ToString("yyyy-MM-dd"));
                         continue;
                     }
 
-                    // No usable data anywhere — fall through and scrape once.
+                    // No data in memory or on disk — fall through to scrape once.
                 }
 
                 var snap = await ScraperService.FetchOneDateAsync(d, cfg, hourUtc, ct);
@@ -85,10 +91,11 @@ public static class BulkRefresh
                 {
                     await tips.ApplyTipsForDate(d, groups, ct);
 
-                    // For past dates, overwrite the disk file after tips are applied so that
-                    // future restarts load fully-completed snapshots and skip re-scraping.
                     if (d < c)
+                    {
                         await SaveSnapshotAsync(snap, d, ct);
+                        donePastDates?.Add(d);
+                    }
                 }
 
                 store.Set(d, snap);
@@ -103,17 +110,9 @@ public static class BulkRefresh
         return (refreshed, errors);
     }
 
-    // True when the snapshot has at least one group containing match items.
     private static bool HasMatchData(DataSnapshot? snap) =>
         snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
         groups.Any(g => g?.Items?.Count > 0);
-
-    // True when every item that could carry a tip already has VIPTip set.
-    // An item with VIPTip == null means ApplyTipsForDate hasn't processed it yet.
-    private static bool HasTipsApplied(DataSnapshot? snap) =>
-        snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
-        groups.SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
-              .All(item => item.VIPTip != null);
 
     private static async Task SaveSnapshotAsync(DataSnapshot snap, DateOnly date, CancellationToken ct)
     {
@@ -135,7 +134,7 @@ public static class BulkRefresh
             var name = Path.GetFileNameWithoutExtension(file);
             if (DateOnly.TryParseExact(name, "yyyy-MM-dd", out var d) && !keep.Contains(d))
             {
-                try { File.Delete(file); } catch { /* ignore */ }
+                try { File.Delete(file); } catch { }
             }
         }
     }
@@ -145,7 +144,7 @@ public static class BulkRefresh
         var path = ScraperConfig.SnapshotPath(date);
         if (!File.Exists(path)) return false;
         var json = File.ReadAllText(path);
-        var snap = System.Text.Json.JsonSerializer.Deserialize<DataSnapshot>(json);
+        var snap = JsonSerializer.Deserialize<DataSnapshot>(json);
         if (snap is null) return false;
         store.Set(date, snap);
         return true;
