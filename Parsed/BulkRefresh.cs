@@ -69,9 +69,12 @@ public static class BulkRefresh
 
                     if (HasMatchData(existing))
                     {
-                        // Apply tips once (uses whatever DetailsStore state we have right now).
-                        // After this we freeze — past results don't change.
-                        if (existing!.Payload?.TableDataGroup is { } g && g.Count > 0)
+                        // If the snapshot already has tips applied (VIPTip set on all items),
+                        // freeze it as-is — avoids re-analysis with a potentially incomplete
+                        // DetailsStore after restart.
+                        // If tips are missing, apply them once now, then save and freeze.
+                        if (!HasTipsApplied(existing) &&
+                            existing!.Payload?.TableDataGroup is { } g && g.Count > 0)
                         {
                             await tips.ApplyTipsForDate(d, g, ct);
                             await SaveSnapshotAsync(existing, d, ct);
@@ -109,6 +112,14 @@ public static class BulkRefresh
 
         return (refreshed, errors);
     }
+
+    // True when every item that can carry a tip already has VIPTip set.
+    // VIPTip is only non-null after ApplyTipsForDate has processed the item
+    // (it falls back to item.Tip, so it's never null post-application).
+    private static bool HasTipsApplied(DataSnapshot? snap) =>
+        snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
+        groups.SelectMany(g => g?.Items ?? Enumerable.Empty<TableDataItem>())
+              .All(item => item.VIPTip != null);
 
     private static bool HasMatchData(DataSnapshot? snap) =>
         snap?.Payload?.TableDataGroup is { Count: > 0 } groups &&
