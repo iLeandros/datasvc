@@ -408,7 +408,9 @@ public sealed class ParsedTipsService
                     if (TryGetElo(guestSafe, out var ae)) awayElo = ae;
                     bool eloAvailable = homeElo.HasValue && awayElo.HasValue;
 
-                    (probs, _) = await Task.Run(
+                    // Basic analysis (no Elo) always runs — captures H2H count for teams
+                    // without ClubElo ratings (clubs outside tracked leagues, national teams).
+                    (probs, h2hEffMatches) = await Task.Run(
                         () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, null, null),
                         ct
                     ).ConfigureAwait(false);
@@ -419,15 +421,16 @@ public sealed class ParsedTipsService
                     // VIPTipElo null to signal "Elo not available" to the client.
                     if (eloAvailable)
                     {
-                        (probsVIP, h2hEffMatches) = await Task.Run(
+                        int eloH2H;
+                        (probsVIP, eloH2H) = await Task.Run(
                             () => TipAnalyzer.Analyze(detailDto, hostSafe, guestSafe, item.Tip, homeElo, awayElo),
                             ct
                         ).ConfigureAwait(false);
+                        h2hEffMatches = eloH2H;
                     }
                     else
                     {
                         probsVIP = null;
-                        h2hEffMatches = 0;
                     }
 
                     item.MassH2H = h2hEffMatches;
